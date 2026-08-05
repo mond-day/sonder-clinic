@@ -1,0 +1,66 @@
+'use client';
+
+export type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+  organizationId: string;
+  permissions: string[];
+};
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init,
+    credentials: 'include',
+    headers: {
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init?.headers,
+    },
+  });
+
+  if (response.status === 401 && retry && path !== '/auth/refresh') {
+    const refreshed = await fetch(`${API_URL}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (refreshed.ok) return request<T>(path, init, false);
+  }
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { message?: string | string[] } | null;
+    const detail = Array.isArray(payload?.message) ? payload.message.join(' ') : payload?.message;
+    throw new ApiError(detail ?? 'Não foi possível concluir a solicitação.', response.status);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export const api = {
+  get: <T>(path: string) => request<T>(path),
+  post: <T>(path: string, body?: unknown, headers?: HeadersInit) =>
+    request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body), headers }),
+  put: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
+  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+};
+
+export const authApi = {
+  login: (email: string, password: string) =>
+    request<{ user: AuthUser }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }, false),
+  refresh: () => request<{ user: AuthUser }>('/auth/refresh', { method: 'POST' }, false),
+  logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }, false),
+};

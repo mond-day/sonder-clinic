@@ -1,0 +1,17 @@
+node_modules/
+.next/
+dist/
+coverage/
+.turbo/
+.data/
+*.log
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+*.pfx
+*.p12
+secrets/
+**/a1-certificate*
+**/certificates/
+.DS_Store

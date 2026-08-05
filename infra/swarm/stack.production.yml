@@ -1,0 +1,114 @@
+version: "3.9"
+
+services:
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/mond-day/sonder-clinic-web:1.0.0}
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_URL: ${APP_URL:-https://app.sonder.clinic}
+      NEXT_PUBLIC_API_URL: ${API_URL:-https://api.sonder.clinic}
+      BRAND_NAME: ${BRAND_NAME:-Sonder Clinic}
+      BRAND_PRIMARY_COLOR: ${BRAND_PRIMARY_COLOR:-#176B5B}
+    networks: [traefik_public]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: ${WEB_REPLICAS:-1}
+      restart_policy: { condition: on-failure, delay: 5s, max_attempts: 5 }
+      resources:
+        limits: { cpus: "${WEB_CPU_LIMIT:-0.75}", memory: "${WEB_MEMORY_LIMIT:-768M}" }
+        reservations: { cpus: "${WEB_CPU_RESERVATION:-0.10}", memory: "${WEB_MEMORY_RESERVATION:-192M}" }
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik_public
+        - traefik.http.routers.sonder-web.rule=Host(`${APP_HOST:-app.sonder.clinic}`)
+        - traefik.http.routers.sonder-web.entrypoints=websecure
+        - traefik.http.routers.sonder-web.tls=true
+        - traefik.http.routers.sonder-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+        - traefik.http.services.sonder-web.loadbalancer.server.port=3000
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/mond-day/sonder-clinic-api:1.0.0}
+    environment:
+      NODE_ENV: production
+      API_PORT: "4000"
+      DATABASE_URL: ${DATABASE_URL:?Defina DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:?Defina REDIS_URL}
+      S3_ENDPOINT: ${S3_ENDPOINT:?Defina S3_ENDPOINT}
+      S3_BUCKET: ${S3_BUCKET:?Defina S3_BUCKET}
+      QUEUE_DRIVER: redis
+      STORAGE_DRIVER: s3
+      AV_DRIVER: ${AV_DRIVER:-disabled}
+      APP_URL: ${APP_URL:-https://app.sonder.clinic}
+      CORS_ORIGIN: ${APP_URL:-https://app.sonder.clinic}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-}
+      INTEGRATION_SCOPE_DEFAULT: ${INTEGRATION_SCOPE_DEFAULT:-CLINIC}
+      AI_PROVIDER: ${AI_PROVIDER:-OPENAI}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+    secrets:
+      - jwt_access_secret
+      - jwt_refresh_secret
+      - encryption_master_key
+      - s3_access_key
+      - s3_secret_key
+    networks: [digital_network, traefik_public]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/api/v1/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: ${API_REPLICAS:-1}
+      restart_policy: { condition: on-failure, delay: 5s, max_attempts: 5 }
+      resources:
+        limits: { cpus: "${API_CPU_LIMIT:-1.00}", memory: "${API_MEMORY_LIMIT:-1G}" }
+        reservations: { cpus: "${API_CPU_RESERVATION:-0.20}", memory: "${API_MEMORY_RESERVATION:-256M}" }
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik_public
+        - traefik.http.routers.sonder-api.rule=Host(`${API_HOST:-api.sonder.clinic}`)
+        - traefik.http.routers.sonder-api.entrypoints=websecure
+        - traefik.http.routers.sonder-api.tls=true
+        - traefik.http.routers.sonder-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+        - traefik.http.services.sonder-api.loadbalancer.server.port=4000
+
+  worker:
+    image: ${WORKER_IMAGE:-ghcr.io/mond-day/sonder-clinic-worker:1.0.0}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Defina DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:?Defina REDIS_URL}
+      S3_ENDPOINT: ${S3_ENDPOINT:?Defina S3_ENDPOINT}
+      S3_BUCKET: ${S3_BUCKET:?Defina S3_BUCKET}
+      QUEUE_DRIVER: redis
+      STORAGE_DRIVER: s3
+      AV_DRIVER: ${AV_DRIVER:-disabled}
+    secrets:
+      - encryption_master_key
+      - s3_access_key
+      - s3_secret_key
+    networks: [digital_network]
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+      restart_policy: { condition: on-failure, delay: 10s, max_attempts: 5 }
+      resources:
+        limits: { cpus: "${WORKER_CPU_LIMIT:-1.00}", memory: "${WORKER_MEMORY_LIMIT:-1G}" }
+        reservations: { cpus: "${WORKER_CPU_RESERVATION:-0.10}", memory: "${WORKER_MEMORY_RESERVATION:-256M}" }
+
+networks:
+  digital_network:
+    external: true
+  traefik_public:
+    external: true
+
+secrets:
+  jwt_access_secret: { external: true }
+  jwt_refresh_secret: { external: true }
+  encryption_master_key: { external: true }
+  s3_access_key: { external: true }
+  s3_secret_key: { external: true }

@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sonder
+      POSTGRES_PASSWORD: senha123
+      POSTGRES_DB: sonder_clinic
+      TZ: America/Cuiaba
+    ports:
+      - "5432:5432"
+    volumes:
+      - sonder_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonder -d sonder_clinic"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  sonder_postgres:
