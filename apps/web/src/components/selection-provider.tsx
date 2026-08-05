@@ -9,7 +9,7 @@ export type Clinic = {
   tradeName: string;
   units: Array<{ id: string; name: string; chairs: Array<{ id: string; name: string }> }>;
 };
-export type Professional = { id: string; name: string; croNumber?: string; croState?: string };
+export type Professional = { id: string; userId: string; name: string; croNumber?: string; croState?: string };
 
 type SelectionContextValue = {
   clinics: Clinic[];

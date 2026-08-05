@@ -17,6 +17,14 @@ const credentialsSchema = z.record(z.string(), z.string().min(1)).refine(
   (value) => Object.keys(value).length > 0,
   'Informe ao menos uma credencial.',
 );
+const providerCredentials = {
+  NIBO: z.object({ clientId: z.string().min(1), clientSecret: z.string().min(1), token: z.string().min(1), organizationId: z.string().min(1), accountId: z.string().min(1) }),
+  ABACATEPAY: z.object({ apiKey: z.string().min(1), webhookSecret: z.string().min(1) }),
+  EVOLUTION: z.object({ apiKey: z.string().min(1), instanceName: z.string().min(1) }),
+  CHATWOOT: z.object({ apiToken: z.string().min(1), webhookSecret: z.string().min(1) }),
+  GOOGLE_CALENDAR: z.object({ clientId: z.string().min(1), clientSecret: z.string().min(1) }),
+  OPENAI: z.object({ apiKey: z.string().min(1) }),
+} as const;
 const json = (value: unknown) => value as Prisma.InputJsonValue;
 
 export type SaveConnectionInput = {
@@ -76,8 +84,9 @@ export class IntegrationsService {
   async save(organizationId: string, actorId: string, input: SaveConnectionInput) {
     const clinic = await prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId } });
     if (!clinic) throw new NotFoundException('Clínica não encontrada.');
-    const credentials = parseWithZod(credentialsSchema, input.credentials);
     const provider = input.provider;
+    const schema = providerCredentials[provider] as z.ZodType<Record<string, string>>;
+    const credentials = parseWithZod(schema, input.credentials);
     const scopeType = input.scopeType ?? process.env.INTEGRATION_SCOPE_DEFAULT ?? 'CLINIC';
     const scopeId = input.scopeId ?? input.clinicId;
     const encryptedCredentials = this.encrypt(credentials);

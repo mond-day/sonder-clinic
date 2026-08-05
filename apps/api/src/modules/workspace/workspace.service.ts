@@ -1,0 +1,400 @@
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, prisma } from '@sonder/database';
+import { z } from 'zod';
+import { parseWithZod } from '../../common/zod-validation';
+
+const returnStatus = z.enum(['PENDING', 'CONTACTED', 'SCHEDULED', 'DONE', 'DISMISSED']);
+const returnChannel = z.enum(['WHATSAPP', 'PHONE', 'EMAIL', 'IN_PERSON']);
+const taskStatus = z.enum(['INBOX', 'TODAY', 'UPCOMING', 'DONE']);
+const taskPriority = z.enum(['LOW', 'NORMAL', 'HIGH']);
+const taskCategory = z.enum(['PATIENT', 'FINANCE', 'LAB', 'SCHEDULE', 'STOCK', 'ADMIN']);
+const labStatus = z.enum(['REQUESTED', 'IN_LAB', 'RETURNED', 'INSTALLED', 'CANCELLED']);
+const notificationCategory = z.enum(['CLINICAL', 'FINANCE', 'TASK', 'LAB', 'PATIENT']);
+
+const createReturnAlertSchema = z.object({
+  clinicId: z.string().uuid(),
+  patientId: z.string().uuid(),
+  professionalId: z.string().uuid().optional(),
+  assigneeId: z.string().uuid().optional(),
+  reason: z.string().trim().min(3),
+  specialty: z.string().trim().optional(),
+  dueAt: z.string().datetime(),
+  preferredChannel: returnChannel.optional(),
+  notes: z.string().trim().optional(),
+});
+const updateReturnAlertSchema = z.object({
+  status: returnStatus.optional(),
+  dueAt: z.string().datetime().optional(),
+  notes: z.string().trim().optional(),
+  contactAttempts: z.number().int().min(0).optional(),
+  assigneeId: z.string().uuid().nullable().optional(),
+  preferredChannel: returnChannel.optional(),
+  specialty: z.string().trim().nullable().optional(),
+  reason: z.string().trim().min(3).optional(),
+});
+const createTaskSchema = z.object({
+  clinicId: z.string().uuid(),
+  title: z.string().trim().min(3),
+  description: z.string().trim().optional(),
+  category: taskCategory,
+  priority: taskPriority.optional(),
+  status: taskStatus.optional(),
+  dueAt: z.string().datetime().optional(),
+  assigneeId: z.string().uuid().optional(),
+  patientId: z.string().uuid().optional(),
+});
+const updateTaskSchema = createTaskSchema.omit({ clinicId: true }).partial();
+const createLabCaseSchema = z.object({
+  clinicId: z.string().uuid(),
+  patientId: z.string().uuid(),
+  professionalId: z.string().uuid().optional(),
+  description: z.string().trim().min(3),
+  toothFdi: z.string().trim().optional(),
+  laboratoryName: z.string().trim().min(2),
+  specialty: z.string().trim().optional(),
+  dueAt: z.string().datetime().optional(),
+  cost: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
+  notes: z.string().trim().optional(),
+});
+
+type CreateReturnAlert = z.infer<typeof createReturnAlertSchema>;
+type UpdateReturnAlert = z.infer<typeof updateReturnAlertSchema>;
+type CreateTask = z.infer<typeof createTaskSchema>;
+type UpdateTask = z.infer<typeof updateTaskSchema>;
+type CreateLabCase = z.infer<typeof createLabCaseSchema>;
+
+const dayStart = (date = new Date()) => {
+  const value = new Date(date);
+  value.setHours(0, 0, 0, 0);
+  return value;
+};
+const addDays = (date: Date, days: number) => {
+  const value = new Date(date);
+  value.setDate(value.getDate() + days);
+  return value;
+};
+
+@Injectable()
+export class WorkspaceService {
+  private readonly returnAlertInclude = {
+    patient: { select: { id: true, fullName: true, primaryPhone: true, cpf: true } },
+    professional: { select: { id: true, name: true } },
+  } satisfies Prisma.ReturnAlertInclude;
+
+  private readonly taskInclude = {
+    patient: { select: { id: true, fullName: true } },
+  } satisfies Prisma.TaskInclude;
+
+  private readonly labCaseInclude = {
+    patient: { select: { id: true, fullName: true } },
+    professional: { select: { id: true, name: true } },
+  } satisfies Prisma.LabCaseInclude;
+
+  async returnAlerts(organizationId: string, query: {
+    clinicId?: string; status?: string; assigneeId?: string; specialty?: string; search?: string;
+  }) {
+    const status = query.status ? parseWithZod(returnStatus, query.status) : undefined;
+    const items = await prisma.returnAlert.findMany({
+      where: {
+        organizationId,
+        clinicId: query.clinicId,
+        status,
+        assigneeId: query.assigneeId,
+        specialty: query.specialty,
+        ...(query.search ? {
+          OR: [
+            { reason: { contains: query.search, mode: 'insensitive' } },
+            { patient: { fullName: { contains: query.search, mode: 'insensitive' } } },
+          ],
+        } : {}),
+      },
+      include: this.returnAlertInclude,
+      orderBy: { dueAt: 'asc' },
+      take: 200,
+    });
+    return this.withAssignees(items);
+  }
+
+  async returnAlertSummary(organizationId: string, clinicId?: string) {
+    const today = dayStart();
+    const tomorrow = addDays(today, 1);
+    const next7 = addDays(today, 7);
+    const last30 = addDays(new Date(), -30);
+    const base = { organizationId, clinicId };
+    const activeStatuses = ['PENDING', 'CONTACTED'] as const;
+    const [overdue, todayCount, next7Days, total, contacted, scheduled, recent] = await Promise.all([
+      prisma.returnAlert.count({ where: { ...base, status: { in: [...activeStatuses] }, dueAt: { lt: today } } }),
+      prisma.returnAlert.count({ where: { ...base, dueAt: { gte: today, lt: tomorrow } } }),
+      prisma.returnAlert.count({ where: { ...base, dueAt: { gte: today, lt: next7 } } }),
+      prisma.returnAlert.count({ where: { ...base, status: { not: 'DISMISSED' } } }),
+      prisma.returnAlert.count({ where: { ...base, status: 'CONTACTED' } }),
+      prisma.returnAlert.count({ where: { ...base, status: { in: ['SCHEDULED', 'DONE'] } } }),
+      prisma.returnAlert.findMany({
+        where: { ...base, createdAt: { gte: last30 } },
+        select: { status: true, contactAttempts: true },
+      }),
+    ]);
+    const funnel = {
+      generated: recent.length,
+      contacted: recent.filter((item) => item.contactAttempts > 0).length,
+      responded: recent.filter((item) => ['CONTACTED', 'SCHEDULED', 'DONE'].includes(item.status)).length,
+      scheduled: recent.filter((item) => ['SCHEDULED', 'DONE'].includes(item.status)).length,
+    };
+    return {
+      overdue,
+      today: todayCount,
+      next7Days,
+      total,
+      contacted,
+      scheduled,
+      conversionRate: funnel.generated ? Math.round((funnel.scheduled / funnel.generated) * 100) : 0,
+      funnel,
+    };
+  }
+
+  async createReturnAlert(organizationId: string, input: CreateReturnAlert) {
+    const data = parseWithZod(createReturnAlertSchema, input);
+    await this.assertWorkspaceResources(organizationId, data);
+    const item = await prisma.returnAlert.create({
+      data: { ...data, organizationId, dueAt: new Date(data.dueAt) },
+      include: this.returnAlertInclude,
+    });
+    return (await this.withAssignees([item]))[0];
+  }
+
+  async updateReturnAlert(organizationId: string, id: string, input: UpdateReturnAlert) {
+    const data = parseWithZod(updateReturnAlertSchema, input);
+    const existing = await prisma.returnAlert.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Alerta de retorno não encontrado.');
+    if (data.assigneeId) await this.assertUser(organizationId, data.assigneeId);
+    const item = await prisma.returnAlert.update({
+      where: { id },
+      data: {
+        ...data,
+        dueAt: data.dueAt ? new Date(data.dueAt) : undefined,
+        ...(data.status === 'CONTACTED' ? {
+          lastContactAt: new Date(),
+          contactAttempts: data.contactAttempts ?? { increment: 1 },
+        } : {}),
+      },
+      include: this.returnAlertInclude,
+    });
+    return (await this.withAssignees([item]))[0];
+  }
+
+  async scheduleReturnAlert(organizationId: string, id: string, appointmentId: string) {
+    parseWithZod(z.string().uuid(), appointmentId);
+    const [alert, appointment] = await Promise.all([
+      prisma.returnAlert.findFirst({ where: { id, organizationId } }),
+      prisma.appointment.findFirst({ where: { id: appointmentId, organizationId }, select: { id: true } }),
+    ]);
+    if (!alert) throw new NotFoundException('Alerta de retorno não encontrado.');
+    if (!appointment) throw new NotFoundException('Agendamento não encontrado.');
+    const item = await prisma.returnAlert.update({
+      where: { id },
+      data: { appointmentId, status: 'SCHEDULED' },
+      include: this.returnAlertInclude,
+    });
+    return (await this.withAssignees([item]))[0];
+  }
+
+  async tasks(organizationId: string, query: {
+    clinicId?: string; status?: string; assigneeId?: string; dueFrom?: string; dueTo?: string;
+  }) {
+    const status = query.status ? parseWithZod(taskStatus, query.status) : undefined;
+    const items = await prisma.task.findMany({
+      where: {
+        organizationId,
+        clinicId: query.clinicId,
+        status,
+        assigneeId: query.assigneeId,
+        dueAt: {
+          gte: query.dueFrom ? new Date(query.dueFrom) : undefined,
+          lte: query.dueTo ? new Date(query.dueTo) : undefined,
+        },
+      },
+      include: this.taskInclude,
+      orderBy: { dueAt: 'asc' },
+      take: 300,
+    });
+    return this.withAssignees(items);
+  }
+
+  async createTask(organizationId: string, createdById: string, input: CreateTask) {
+    const data = parseWithZod(createTaskSchema, input);
+    await this.assertWorkspaceResources(organizationId, data);
+    const item = await prisma.task.create({
+      data: { ...data, organizationId, createdById, dueAt: data.dueAt ? new Date(data.dueAt) : undefined },
+      include: this.taskInclude,
+    });
+    return (await this.withAssignees([item]))[0];
+  }
+
+  async updateTask(organizationId: string, id: string, input: UpdateTask) {
+    const data = parseWithZod(updateTaskSchema, input);
+    const existing = await prisma.task.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Tarefa não encontrada.');
+    if (data.assigneeId) await this.assertUser(organizationId, data.assigneeId);
+    if (data.patientId) await this.assertPatient(organizationId, data.patientId);
+    const item = await prisma.task.update({
+      where: { id },
+      data: {
+        ...data,
+        dueAt: data.dueAt ? new Date(data.dueAt) : undefined,
+        completedAt: data.status === 'DONE' ? new Date() : data.status ? null : undefined,
+      },
+      include: this.taskInclude,
+    });
+    return (await this.withAssignees([item]))[0];
+  }
+
+  labCases(organizationId: string, query: { clinicId?: string; status?: string; specialty?: string }) {
+    const status = query.status ? parseWithZod(labStatus, query.status) : undefined;
+    return prisma.labCase.findMany({
+      where: { organizationId, clinicId: query.clinicId, status, specialty: query.specialty },
+      include: this.labCaseInclude,
+      orderBy: { dueAt: 'asc' },
+    });
+  }
+
+  async createLabCase(organizationId: string, userId: string, input: CreateLabCase) {
+    const data = parseWithZod(createLabCaseSchema, input);
+    await this.assertWorkspaceResources(organizationId, data);
+    return prisma.$transaction(async (tx) => {
+      const sequence = await tx.labCase.count({ where: { organizationId } }) + 1;
+      const code = `LAB-${String(sequence).padStart(3, '0')}`;
+      return tx.labCase.create({
+        data: {
+          ...data,
+          organizationId,
+          code,
+          dueAt: data.dueAt ? new Date(data.dueAt) : undefined,
+          cost: data.cost ? new Prisma.Decimal(data.cost) : undefined,
+          events: { create: { status: 'REQUESTED', createdById: userId, notes: 'Caso criado.' } },
+        },
+        include: this.labCaseInclude,
+      });
+    }, { isolationLevel: 'Serializable' }).catch((error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Não foi possível gerar o código do caso. Tente novamente.');
+      }
+      throw error;
+    });
+  }
+
+  async updateLabCaseStatus(organizationId: string, userId: string, id: string, statusValue: string, notes?: string) {
+    const status = parseWithZod(labStatus, statusValue);
+    const existing = await prisma.labCase.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Caso laboratorial não encontrado.');
+    const now = new Date();
+    return prisma.labCase.update({
+      where: { id },
+      data: {
+        status,
+        sentAt: status === 'IN_LAB' ? now : undefined,
+        returnedAt: status === 'RETURNED' ? now : undefined,
+        installedAt: status === 'INSTALLED' ? now : undefined,
+        events: { create: { status, notes, createdById: userId } },
+      },
+      include: this.labCaseInclude,
+    });
+  }
+
+  async labCaseHistory(organizationId: string, id: string) {
+    const existing = await prisma.labCase.findFirst({ where: { id, organizationId }, select: { id: true } });
+    if (!existing) throw new NotFoundException('Caso laboratorial não encontrado.');
+    return prisma.labCaseEvent.findMany({ where: { labCaseId: id }, orderBy: { createdAt: 'asc' } });
+  }
+
+  async notifications(organizationId: string, userId: string, query: {
+    clinicId?: string; unreadOnly?: string; category?: string;
+  }) {
+    const category = query.category ? parseWithZod(notificationCategory, query.category) : undefined;
+    const scope = {
+      organizationId,
+      clinicId: query.clinicId,
+      OR: [{ userId }, { userId: null }],
+    } satisfies Prisma.NotificationWhereInput;
+    const [items, grouped] = await Promise.all([
+      prisma.notification.findMany({
+        where: { ...scope, category, readAt: query.unreadOnly === 'true' ? null : undefined },
+        select: {
+          id: true, category: true, severity: true, title: true, body: true,
+          linkPath: true, readAt: true, createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+      prisma.notification.groupBy({
+        by: ['category'],
+        where: { ...scope, readAt: null },
+        _count: true,
+      }),
+    ]);
+    const counts = { ALL: 0, CLINICAL: 0, FINANCE: 0, TASK: 0, LAB: 0, PATIENT: 0 };
+    for (const item of grouped) {
+      counts[item.category] = item._count;
+      counts.ALL += item._count;
+    }
+    return { items, unreadCount: counts.ALL, counts };
+  }
+
+  async readNotification(organizationId: string, userId: string, id: string) {
+    const notification = await prisma.notification.findFirst({
+      where: { id, organizationId, OR: [{ userId }, { userId: null }] },
+    });
+    if (!notification) throw new NotFoundException('Notificação não encontrada.');
+    const updated = notification.readAt
+      ? notification
+      : await prisma.notification.update({ where: { id }, data: { readAt: new Date() } });
+    return { id: updated.id, readAt: updated.readAt };
+  }
+
+  async readAllNotifications(organizationId: string, userId: string, clinicId?: string) {
+    if (clinicId) await this.assertClinic(organizationId, clinicId);
+    const result = await prisma.notification.updateMany({
+      where: { organizationId, clinicId, readAt: null, OR: [{ userId }, { userId: null }] },
+      data: { readAt: new Date() },
+    });
+    return { updated: result.count };
+  }
+
+  private async withAssignees<T extends { assigneeId: string | null }>(items: T[]) {
+    const ids = [...new Set(items.flatMap((item) => item.assigneeId ? [item.assigneeId] : []))];
+    const users = await prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true },
+    });
+    const byId = new Map(users.map((user) => [user.id, user]));
+    return items.map((item) => ({ ...item, assignee: item.assigneeId ? byId.get(item.assigneeId) ?? null : null }));
+  }
+
+  private async assertWorkspaceResources(organizationId: string, input: {
+    clinicId: string; patientId?: string; professionalId?: string; assigneeId?: string;
+  }) {
+    const resources = await Promise.all([
+      this.assertClinic(organizationId, input.clinicId),
+      input.patientId ? this.assertPatient(organizationId, input.patientId) : Promise.resolve(),
+      input.professionalId ? prisma.professional.findFirst({
+        where: { id: input.professionalId, user: { organizationId } }, select: { id: true },
+      }) : Promise.resolve({ id: 'opcional' }),
+      input.assigneeId ? this.assertUser(organizationId, input.assigneeId) : Promise.resolve(),
+    ]);
+    if (!resources[2]) throw new NotFoundException('Profissional não encontrado.');
+  }
+
+  private async assertClinic(organizationId: string, id: string) {
+    const clinic = await prisma.clinic.findFirst({ where: { id, organizationId }, select: { id: true } });
+    if (!clinic) throw new NotFoundException('Clínica não encontrada.');
+  }
+
+  private async assertPatient(organizationId: string, id: string) {
+    const patient = await prisma.patient.findFirst({ where: { id, organizationId }, select: { id: true } });
+    if (!patient) throw new NotFoundException('Paciente não encontrado.');
+  }
+
+  private async assertUser(organizationId: string, id: string) {
+    const user = await prisma.user.findFirst({ where: { id, organizationId }, select: { id: true } });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+  }
+}

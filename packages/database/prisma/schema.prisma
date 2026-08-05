@@ -12,16 +12,19 @@ enum EntityStatus {
   INACTIVE
   ARCHIVED
 }
+
 enum UserStatus {
   ACTIVE
   INVITED
   BLOCKED
 }
+
 enum PatientStatus {
   ACTIVE
   INACTIVE
   ARCHIVED
 }
+
 enum AppointmentStatus {
   SCHEDULED
   CONFIRMED
@@ -31,6 +34,7 @@ enum AppointmentStatus {
   CANCELLED
   NO_SHOW
 }
+
 enum IntegrationProvider {
   NIBO
   ABACATEPAY
@@ -39,23 +43,27 @@ enum IntegrationProvider {
   GOOGLE_CALENDAR
   OPENAI
 }
+
 enum IntegrationStatus {
   ACTIVE
   DISABLED
   ERROR
 }
+
 enum JobStatus {
   PENDING
   PROCESSING
   SUCCEEDED
   FAILED
 }
+
 enum ClinicalEntryStatus {
   DRAFT
   SIGNED
   CORRECTED
   CANCELLED
 }
+
 enum TreatmentStatus {
   DRAFT
   PRESENTED
@@ -65,12 +73,14 @@ enum TreatmentStatus {
   COMPLETED
   CANCELLED
 }
+
 enum ToothFindingStatus {
   EXISTING
   PLANNED
   IN_PROGRESS
   COMPLETED
 }
+
 enum DocumentStatus {
   DRAFT
   GENERATED
@@ -78,6 +88,7 @@ enum DocumentStatus {
   SIGNED
   CANCELLED
 }
+
 enum FileStatus {
   PENDING
   UPLOADED
@@ -85,6 +96,7 @@ enum FileStatus {
   AVAILABLE
   REJECTED
 }
+
 enum ReceivableStatus {
   OPEN
   PARTIALLY_PAID
@@ -92,6 +104,7 @@ enum ReceivableStatus {
   OVERDUE
   CANCELLED
 }
+
 enum PaymentStatus {
   PENDING
   CONFIRMED
@@ -99,6 +112,7 @@ enum PaymentStatus {
   FAILED
   CANCELLED
 }
+
 enum CommissionStatus {
   FORECASTED
   GENERATED
@@ -107,6 +121,7 @@ enum CommissionStatus {
   REVERSED
   BLOCKED
 }
+
 enum DeliveryStatus {
   PENDING
   SENT
@@ -116,95 +131,164 @@ enum DeliveryStatus {
   CANCELLED
 }
 
+enum ReturnAlertStatus {
+  PENDING
+  CONTACTED
+  SCHEDULED
+  DONE
+  DISMISSED
+}
+
+enum ReturnChannel {
+  WHATSAPP
+  PHONE
+  EMAIL
+  IN_PERSON
+}
+
+enum TaskStatus {
+  INBOX
+  TODAY
+  UPCOMING
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+}
+
+enum TaskCategory {
+  PATIENT
+  FINANCE
+  LAB
+  SCHEDULE
+  STOCK
+  ADMIN
+}
+
+enum LabCaseStatus {
+  REQUESTED
+  IN_LAB
+  RETURNED
+  INSTALLED
+  CANCELLED
+}
+
+enum NotificationCategory {
+  CLINICAL
+  FINANCE
+  TASK
+  LAB
+  PATIENT
+}
+
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
 model Organization {
-  id        String   @id @default(uuid()) @db.Uuid
+  id        String       @id @default(uuid()) @db.Uuid
   legalName String
   tradeName String
-  taxId     String?  @unique
-  timezone  String   @default("America/Cuiaba")
+  taxId     String?      @unique
+  timezone  String       @default("America/Cuiaba")
   status    EntityStatus @default(ACTIVE)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
   clinics   Clinic[]
   users     User[]
   patients  Patient[]
   roles     Role[]
+  agendaTags AgendaTag[]
 }
 
 model Clinic {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
+  id             String                  @id @default(uuid()) @db.Uuid
+  organizationId String                  @db.Uuid
   legalName      String
   tradeName      String
   taxId          String?
   email          String?
   phone          String?
-  settingsJson   Json     @default("{}")
-  status         EntityStatus @default(ACTIVE)
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  settingsJson   Json                    @default("{}")
+  status         EntityStatus            @default(ACTIVE)
+  organization   Organization            @relation(fields: [organizationId], references: [id])
   units          Unit[]
   appointments   Appointment[]
   patientLinks   PatientClinic[]
   integrations   IntegrationConnection[]
   auditEvents    AuditEvent[]
+  returnAlerts   ReturnAlert[]
+  tasks          Task[]
+  labCases       LabCase[]
+  agendaTags      AgendaTag[]
+
   @@index([organizationId])
 }
 
 model Unit {
-  id          String @id @default(uuid()) @db.Uuid
-  clinicId    String @db.Uuid
-  name        String
-  phone       String?
-  timezone    String @default("America/Cuiaba")
-  status      EntityStatus @default(ACTIVE)
-  clinic      Clinic @relation(fields: [clinicId], references: [id])
-  chairs      Chair[]
+  id           String        @id @default(uuid()) @db.Uuid
+  clinicId     String        @db.Uuid
+  name         String
+  phone        String?
+  timezone     String        @default("America/Cuiaba")
+  status       EntityStatus  @default(ACTIVE)
+  clinic       Clinic        @relation(fields: [clinicId], references: [id])
+  chairs       Chair[]
   appointments Appointment[]
+
   @@index([clinicId])
 }
 
 model Chair {
-  id                  String @id @default(uuid()) @db.Uuid
-  unitId              String @db.Uuid
+  id                  String        @id @default(uuid()) @db.Uuid
+  unitId              String        @db.Uuid
   name                String
-  color               String @default("#176B5B")
-  isSchedulingEnabled Boolean @default(true)
-  status              EntityStatus @default(ACTIVE)
-  unit                Unit @relation(fields: [unitId], references: [id])
+  color               String        @default("#176B5B")
+  isSchedulingEnabled Boolean       @default(true)
+  status              EntityStatus  @default(ACTIVE)
+  unit                Unit          @relation(fields: [unitId], references: [id])
   appointments        Appointment[]
+
   @@index([unitId])
 }
 
 model User {
-  id             String @id @default(uuid()) @db.Uuid
-  organizationId String @db.Uuid
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
   name           String
   email          String
   passwordHash   String
-  status         UserStatus @default(ACTIVE)
+  status         UserStatus    @default(ACTIVE)
   lastLoginAt    DateTime?
-  createdAt      DateTime @default(now())
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime      @default(now())
+  organization   Organization  @relation(fields: [organizationId], references: [id])
   roles          UserRole[]
   sessions       Session[]
   professional   Professional?
+
   @@unique([organizationId, email])
 }
 
 model Role {
-  id             String @id @default(uuid()) @db.Uuid
-  organizationId String @db.Uuid
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
   name           String
   code           String
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  organization   Organization     @relation(fields: [organizationId], references: [id])
   users          UserRole[]
   permissions    RolePermission[]
+
   @@unique([organizationId, code])
 }
 
 model Permission {
-  id          String @id @default(uuid()) @db.Uuid
-  code        String @unique
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique
   description String
   roles       RolePermission[]
 }
@@ -212,82 +296,92 @@ model Permission {
 model UserRole {
   userId String @db.Uuid
   roleId String @db.Uuid
-  user   User @relation(fields: [userId], references: [id])
-  role   Role @relation(fields: [roleId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+  role   Role   @relation(fields: [roleId], references: [id])
+
   @@id([userId, roleId])
 }
 
 model RolePermission {
-  roleId       String @db.Uuid
-  permissionId String @db.Uuid
-  role         Role @relation(fields: [roleId], references: [id])
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id])
   permission   Permission @relation(fields: [permissionId], references: [id])
+
   @@id([roleId, permissionId])
 }
 
 model Session {
-  id               String @id @default(uuid()) @db.Uuid
-  userId           String @db.Uuid
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
   refreshTokenHash String
   userAgent        String?
   ipAddress        String?
   expiresAt        DateTime
   revokedAt        DateTime?
-  createdAt        DateTime @default(now())
-  user             User @relation(fields: [userId], references: [id])
+  createdAt        DateTime  @default(now())
+  user             User      @relation(fields: [userId], references: [id])
+
   @@index([userId, revokedAt])
 }
 
 model Professional {
-  id               String @id @default(uuid()) @db.Uuid
-  userId           String @unique @db.Uuid
+  id               String        @id @default(uuid()) @db.Uuid
+  userId           String        @unique @db.Uuid
   name             String
-  cpf              String? @unique
+  cpf              String?       @unique
   croNumber        String?
   croState         String?
-  professionalType String @default("DENTIST")
-  status           EntityStatus @default(ACTIVE)
-  user             User @relation(fields: [userId], references: [id])
+  professionalType String        @default("DENTIST")
+  status           EntityStatus  @default(ACTIVE)
+  user             User          @relation(fields: [userId], references: [id])
   appointments     Appointment[]
+  returnAlerts     ReturnAlert[]
+  labCases         LabCase[]
 }
 
 model Patient {
-  id             String @id @default(uuid()) @db.Uuid
-  organizationId String @db.Uuid
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
   fullName       String
   preferredName  String?
   cpf            String?
   passportNumber String?
-  birthDate      DateTime? @db.Date
+  birthDate      DateTime?         @db.Date
   email          String?
   primaryPhone   String
   secondaryPhone String?
-  isMinor        Boolean @default(false)
-  status         PatientStatus @default(ACTIVE)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  isMinor        Boolean           @default(false)
+  status         PatientStatus     @default(ACTIVE)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  organization   Organization      @relation(fields: [organizationId], references: [id])
   clinics        PatientClinic[]
   guardians      PatientGuardian[]
   appointments   Appointment[]
   alerts         PatientAlert[]
+  returnAlerts   ReturnAlert[]
+  tasks          Task[]
+  labCases       LabCase[]
+
   @@unique([organizationId, cpf])
   @@unique([organizationId, passportNumber])
   @@index([organizationId, fullName])
 }
 
 model PatientClinic {
-  patientId    String @db.Uuid
-  clinicId     String @db.Uuid
+  patientId    String       @db.Uuid
+  clinicId     String       @db.Uuid
   internalCode String?
   status       EntityStatus @default(ACTIVE)
-  patient      Patient @relation(fields: [patientId], references: [id])
-  clinic       Clinic @relation(fields: [clinicId], references: [id])
+  patient      Patient      @relation(fields: [patientId], references: [id])
+  clinic       Clinic       @relation(fields: [clinicId], references: [id])
+
   @@id([patientId, clinicId])
 }
 
 model Guardian {
-  id           String @id @default(uuid()) @db.Uuid
+  id           String            @id @default(uuid()) @db.Uuid
   name         String
   cpf          String?
   phone        String
@@ -297,491 +391,673 @@ model Guardian {
 }
 
 model PatientGuardian {
-  patientId      String @db.Uuid
-  guardianId     String @db.Uuid
-  isLegalGuardian Boolean @default(true)
-  canSign        Boolean @default(true)
-  isPrimary      Boolean @default(false)
-  patient        Patient @relation(fields: [patientId], references: [id])
-  guardian       Guardian @relation(fields: [guardianId], references: [id])
+  patientId       String   @db.Uuid
+  guardianId      String   @db.Uuid
+  isLegalGuardian Boolean  @default(true)
+  canSign         Boolean  @default(true)
+  isPrimary       Boolean  @default(false)
+  patient         Patient  @relation(fields: [patientId], references: [id])
+  guardian        Guardian @relation(fields: [guardianId], references: [id])
+
   @@id([patientId, guardianId])
 }
 
 model PatientAlert {
-  id        String @id @default(uuid()) @db.Uuid
-  patientId String @db.Uuid
+  id        String  @id @default(uuid()) @db.Uuid
+  patientId String  @db.Uuid
   type      String
   message   String
-  severity  String @default("WARNING")
+  severity  String  @default("WARNING")
   active    Boolean @default(true)
   patient   Patient @relation(fields: [patientId], references: [id])
 }
 
 model Appointment {
-  id             String @id @default(uuid()) @db.Uuid
-  organizationId String @db.Uuid
-  clinicId       String @db.Uuid
-  unitId         String @db.Uuid
-  patientId      String @db.Uuid
-  professionalId String @db.Uuid
-  chairId        String? @db.Uuid
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  clinicId       String            @db.Uuid
+  unitId         String            @db.Uuid
+  patientId      String            @db.Uuid
+  professionalId String            @db.Uuid
+  chairId        String?           @db.Uuid
   startAt        DateTime
   endAt          DateTime
   status         AppointmentStatus @default(SCHEDULED)
-  source         String @default("INTERNAL")
+  source         String            @default("INTERNAL")
   notes          String?
-  version        Int @default(1)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  clinic         Clinic @relation(fields: [clinicId], references: [id])
-  unit           Unit @relation(fields: [unitId], references: [id])
-  patient        Patient @relation(fields: [patientId], references: [id])
-  professional   Professional @relation(fields: [professionalId], references: [id])
-  chair          Chair? @relation(fields: [chairId], references: [id])
+  category       String?
+  version        Int               @default(1)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  clinic         Clinic            @relation(fields: [clinicId], references: [id])
+  unit           Unit              @relation(fields: [unitId], references: [id])
+  patient        Patient           @relation(fields: [patientId], references: [id])
+  professional   Professional      @relation(fields: [professionalId], references: [id])
+  chair          Chair?            @relation(fields: [chairId], references: [id])
+  tags           AppointmentTag[]
+  reminders      AppointmentReminder[]
+
   @@index([organizationId, startAt])
   @@index([professionalId, startAt, endAt])
   @@index([chairId, startAt, endAt])
 }
 
+model AgendaTag {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  clinicId       String           @db.Uuid
+  name           String
+  color          String           @default("#159a96")
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  clinic         Clinic           @relation(fields: [clinicId], references: [id])
+  appointments   AppointmentTag[]
+
+  @@unique([clinicId, name])
+  @@index([organizationId, clinicId, active])
+}
+
+model AppointmentTag {
+  appointmentId String      @db.Uuid
+  tagId         String      @db.Uuid
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  tag           AgendaTag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([appointmentId, tagId])
+  @@index([tagId])
+}
+
+model AppointmentReminder {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @db.Uuid
+  appointmentId  String      @db.Uuid
+  channel        String      @default("WHATSAPP")
+  leadMinutes    Int         @default(1440)
+  scheduledFor   DateTime
+  status         String      @default("DISABLED")
+  statusReason   String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  appointment    Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@unique([appointmentId, channel])
+  @@index([organizationId, status, scheduledFor])
+}
+
+model ReturnAlert {
+  id               String            @id @default(uuid()) @db.Uuid
+  organizationId   String            @db.Uuid
+  clinicId         String            @db.Uuid
+  patientId        String            @db.Uuid
+  professionalId   String?           @db.Uuid
+  assigneeId       String?           @db.Uuid
+  reason           String
+  specialty        String?
+  dueAt            DateTime
+  status           ReturnAlertStatus @default(PENDING)
+  preferredChannel ReturnChannel     @default(WHATSAPP)
+  contactAttempts  Int               @default(0)
+  lastContactAt    DateTime?
+  notes            String?
+  appointmentId    String?           @db.Uuid
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  clinic           Clinic            @relation(fields: [clinicId], references: [id])
+  patient          Patient           @relation(fields: [patientId], references: [id])
+  professional     Professional?     @relation(fields: [professionalId], references: [id])
+
+  @@index([organizationId, clinicId, status, dueAt])
+}
+
+model Task {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  clinicId       String       @db.Uuid
+  title          String
+  description    String?
+  category       TaskCategory @default(ADMIN)
+  priority       TaskPriority @default(NORMAL)
+  status         TaskStatus   @default(INBOX)
+  dueAt          DateTime?
+  assigneeId     String?      @db.Uuid
+  patientId      String?      @db.Uuid
+  createdById    String?      @db.Uuid
+  completedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  clinic         Clinic       @relation(fields: [clinicId], references: [id])
+  patient        Patient?     @relation(fields: [patientId], references: [id])
+
+  @@index([organizationId, clinicId, status, dueAt])
+}
+
+model LabCase {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  clinicId       String         @db.Uuid
+  patientId      String         @db.Uuid
+  professionalId String?        @db.Uuid
+  code           String
+  description    String
+  toothFdi       String?
+  laboratoryName String
+  specialty      String?
+  status         LabCaseStatus  @default(REQUESTED)
+  sentAt         DateTime?
+  dueAt          DateTime?
+  returnedAt     DateTime?
+  installedAt    DateTime?
+  cost           Decimal?       @db.Decimal(12, 2)
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  clinic         Clinic         @relation(fields: [clinicId], references: [id])
+  patient        Patient        @relation(fields: [patientId], references: [id])
+  professional   Professional?  @relation(fields: [professionalId], references: [id])
+  events         LabCaseEvent[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, clinicId, status, dueAt])
+}
+
+model LabCaseEvent {
+  id          String        @id @default(uuid()) @db.Uuid
+  labCaseId   String        @db.Uuid
+  status      LabCaseStatus
+  notes       String?
+  createdById String?       @db.Uuid
+  createdAt   DateTime      @default(now())
+  labCase     LabCase       @relation(fields: [labCaseId], references: [id])
+
+  @@index([labCaseId, createdAt])
+}
+
+model Notification {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @db.Uuid
+  clinicId       String?              @db.Uuid
+  userId         String?              @db.Uuid
+  category       NotificationCategory
+  severity       NotificationSeverity @default(INFO)
+  title          String
+  body           String
+  linkPath       String?
+  readAt         DateTime?
+  createdAt      DateTime             @default(now())
+
+  @@index([organizationId, userId, readAt, createdAt])
+}
+
 model IntegrationConnection {
-  id                   String @id @default(uuid()) @db.Uuid
-  clinicId             String @db.Uuid
+  id                   String              @id @default(uuid()) @db.Uuid
+  clinicId             String              @db.Uuid
   provider             IntegrationProvider
-  scopeType            String @default("CLINIC")
-  scopeId              String @db.Uuid
+  scopeType            String              @default("CLINIC")
+  scopeId              String              @db.Uuid
   encryptedCredentials String?
-  configuration        Json @default("{}")
-  status               IntegrationStatus @default(ACTIVE)
+  configuration        Json                @default("{}")
+  status               IntegrationStatus   @default(ACTIVE)
   lastSyncAt           DateTime?
-  clinic               Clinic @relation(fields: [clinicId], references: [id])
+  clinic               Clinic              @relation(fields: [clinicId], references: [id])
   jobs                 IntegrationJob[]
+
   @@unique([clinicId, provider, scopeType, scopeId])
 }
 
 model IntegrationJob {
-  id           String @id @default(uuid()) @db.Uuid
-  connectionId String @db.Uuid
+  id           String                @id @default(uuid()) @db.Uuid
+  connectionId String                @db.Uuid
   operation    String
-  status       JobStatus @default(PENDING)
-  attempts     Int @default(0)
+  status       JobStatus             @default(PENDING)
+  attempts     Int                   @default(0)
   lastError    String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
   connection   IntegrationConnection @relation(fields: [connectionId], references: [id])
 }
 
 model OutboxEvent {
-  id            String @id @default(uuid()) @db.Uuid
+  id            String    @id @default(uuid()) @db.Uuid
   aggregateType String
   aggregateId   String
   eventType     String
   payload       Json
-  createdAt     DateTime @default(now())
+  createdAt     DateTime  @default(now())
   processedAt   DateTime?
-  attempts      Int @default(0)
+  attempts      Int       @default(0)
   lastError     String?
+
   @@index([processedAt, createdAt])
 }
 
 model WebhookReceipt {
-  id          String @id @default(uuid()) @db.Uuid
+  id          String              @id @default(uuid()) @db.Uuid
   provider    IntegrationProvider
   eventId     String
   payloadHash String
-  receivedAt  DateTime @default(now())
+  receivedAt  DateTime            @default(now())
   processedAt DateTime?
-  status      JobStatus @default(PENDING)
+  status      JobStatus           @default(PENDING)
+
   @@unique([provider, eventId])
 }
 
 model AuditEvent {
-  id            String @id @default(uuid()) @db.Uuid
-  actorId       String? @db.Uuid
+  id            String   @id @default(uuid()) @db.Uuid
+  actorId       String?  @db.Uuid
   action        String
   entity        String
   entityId      String?
-  clinicId      String? @db.Uuid
+  clinicId      String?  @db.Uuid
   changes       Json?
   ipAddress     String?
   userAgent     String?
-  correlationId String @db.Uuid
+  correlationId String   @db.Uuid
   createdAt     DateTime @default(now())
-  clinic        Clinic? @relation(fields: [clinicId], references: [id])
+  clinic        Clinic?  @relation(fields: [clinicId], references: [id])
+
   @@index([clinicId, createdAt])
   @@index([entity, entityId])
 }
 
 model ClinicalRecord {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String   @db.Uuid
-  patientId      String   @db.Uuid
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @db.Uuid
+  clinicId       String                @db.Uuid
+  patientId      String                @db.Uuid
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
   entries        ClinicalEntry[]
   privateNotes   PrivateClinicalNote[]
+
   @@unique([clinicId, patientId])
   @@index([organizationId, patientId])
 }
 
 model ClinicalEntry {
-  id              String              @id @default(uuid()) @db.Uuid
-  clinicalRecordId String              @db.Uuid
-  professionalId  String              @db.Uuid
-  appointmentId   String?             @db.Uuid
-  treatmentId     String?             @db.Uuid
+  id               String                    @id @default(uuid()) @db.Uuid
+  clinicalRecordId String                    @db.Uuid
+  professionalId   String                    @db.Uuid
+  appointmentId    String?                   @db.Uuid
+  treatmentId      String?                   @db.Uuid
   type             String
-  structuredData  Json                @default("{}")
-  renderedText    String
-  clinicalDate    DateTime
-  status           ClinicalEntryStatus @default(DRAFT)
+  structuredData   Json                      @default("{}")
+  renderedText     String
+  clinicalDate     DateTime
+  status           ClinicalEntryStatus       @default(DRAFT)
   signedAt         DateTime?
   contentHash      String?
-  createdAt        DateTime            @default(now())
-  record           ClinicalRecord      @relation(fields: [clinicalRecordId], references: [id])
+  createdAt        DateTime                  @default(now())
+  record           ClinicalRecord            @relation(fields: [clinicalRecordId], references: [id])
   corrections      ClinicalEntryCorrection[]
+
   @@index([clinicalRecordId, clinicalDate])
 }
 
 model ClinicalEntryCorrection {
-  id              String   @id @default(uuid()) @db.Uuid
-  clinicalEntryId String   @db.Uuid
-  authorId        String   @db.Uuid
-  reason          String
+  id               String        @id @default(uuid()) @db.Uuid
+  clinicalEntryId  String        @db.Uuid
+  authorId         String        @db.Uuid
+  reason           String
   correctedContent Json
-  signatureHash   String?
-  createdAt       DateTime @default(now())
-  entry           ClinicalEntry @relation(fields: [clinicalEntryId], references: [id])
+  signatureHash    String?
+  createdAt        DateTime      @default(now())
+  entry            ClinicalEntry @relation(fields: [clinicalEntryId], references: [id])
+
   @@index([clinicalEntryId, createdAt])
 }
 
 model PrivateClinicalNote {
-  id               String   @id @default(uuid()) @db.Uuid
-  clinicalRecordId String   @db.Uuid
-  authorId         String   @db.Uuid
+  id               String         @id @default(uuid()) @db.Uuid
+  clinicalRecordId String         @db.Uuid
+  authorId         String         @db.Uuid
   content          String
-  createdAt        DateTime @default(now())
+  createdAt        DateTime       @default(now())
   record           ClinicalRecord @relation(fields: [clinicalRecordId], references: [id])
+
   @@index([clinicalRecordId, createdAt])
 }
 
 model AnamnesisTemplate {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
+  id             String              @id @default(uuid()) @db.Uuid
+  organizationId String              @db.Uuid
   name           String
   audience       String
-  version        Int      @default(1)
+  version        Int                 @default(1)
   schemaJson     Json
-  validityMonths Int      @default(6)
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now())
+  validityMonths Int                 @default(6)
+  active         Boolean             @default(true)
+  createdAt      DateTime            @default(now())
   responses      AnamnesisResponse[]
+
   @@unique([organizationId, name, version])
 }
 
 model AnamnesisResponse {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String   @db.Uuid
-  patientId      String   @db.Uuid
-  templateId     String   @db.Uuid
+  id              String            @id @default(uuid()) @db.Uuid
+  organizationId  String            @db.Uuid
+  clinicId        String            @db.Uuid
+  patientId       String            @db.Uuid
+  templateId      String            @db.Uuid
   templateVersion Int
-  answers        Json
-  alerts         Json     @default("[]")
-  completedById  String   @db.Uuid
-  signedById     String?  @db.Uuid
-  signedAt       DateTime?
-  validUntil     DateTime @db.Date
-  contentHash    String?
-  createdAt      DateTime @default(now())
-  template       AnamnesisTemplate @relation(fields: [templateId], references: [id])
+  answers         Json
+  alerts          Json              @default("[]")
+  completedById   String            @db.Uuid
+  signedById      String?           @db.Uuid
+  signedAt        DateTime?
+  validUntil      DateTime          @db.Date
+  contentHash     String?
+  createdAt       DateTime          @default(now())
+  template        AnamnesisTemplate @relation(fields: [templateId], references: [id])
+
   @@index([organizationId, patientId, createdAt])
 }
 
 model Odontogram {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String   @db.Uuid
-  patientId      String   @db.Uuid
-  professionalId String   @db.Uuid
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  clinicId       String         @db.Uuid
+  patientId      String         @db.Uuid
+  professionalId String         @db.Uuid
   dentitionType  String
-  version        Int      @default(1)
-  recordedAt     DateTime @default(now())
+  version        Int            @default(1)
+  recordedAt     DateTime       @default(now())
   findings       ToothFinding[]
+
   @@index([organizationId, patientId, recordedAt])
 }
 
 model OdontogramCondition {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
   code           String
   name           String
   color          String
   icon           String?
-  rules          Json     @default("{}")
-  active         Boolean  @default(true)
+  rules          Json           @default("{}")
+  active         Boolean        @default(true)
   findings       ToothFinding[]
+
   @@unique([organizationId, code])
 }
 
 model ToothFinding {
-  id           String             @id @default(uuid()) @db.Uuid
-  odontogramId String             @db.Uuid
-  conditionId  String             @db.Uuid
+  id           String              @id @default(uuid()) @db.Uuid
+  odontogramId String              @db.Uuid
+  conditionId  String              @db.Uuid
   toothFdi     String
   face         String?
-  status       ToothFindingStatus @default(EXISTING)
+  status       ToothFindingStatus  @default(EXISTING)
   notes        String?
-  createdAt    DateTime           @default(now())
-  odontogram   Odontogram         @relation(fields: [odontogramId], references: [id])
+  createdAt    DateTime            @default(now())
+  odontogram   Odontogram          @relation(fields: [odontogramId], references: [id])
   condition    OdontogramCondition @relation(fields: [conditionId], references: [id])
+
   @@index([odontogramId, toothFdi])
 }
 
 model Procedure {
-  id               String   @id @default(uuid()) @db.Uuid
-  organizationId   String   @db.Uuid
-  internalCode     String
-  tussCode         String?
-  name             String
-  specialty        String?
-  defaultDuration  Int
-  defaultSessions  Int      @default(1)
-  requiresTooth    Boolean  @default(false)
-  requiresFace     Boolean  @default(false)
-  requiresConsent  Boolean  @default(false)
-  active           Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  priceItems       PriceTableItem[]
-  treatmentItems   TreatmentItem[]
+  id              String           @id @default(uuid()) @db.Uuid
+  organizationId  String           @db.Uuid
+  internalCode    String
+  tussCode        String?
+  name            String
+  specialty       String?
+  defaultDuration Int
+  defaultSessions Int              @default(1)
+  requiresTooth   Boolean          @default(false)
+  requiresFace    Boolean          @default(false)
+  requiresConsent Boolean          @default(false)
+  active          Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  priceItems      PriceTableItem[]
+  treatmentItems  TreatmentItem[]
+
   @@unique([organizationId, internalCode])
 }
 
 model PriceTable {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String?  @db.Uuid
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  clinicId       String?          @db.Uuid
   name           String
   type           String
-  active         Boolean  @default(true)
-  validFrom      DateTime @db.Date
-  validUntil     DateTime? @db.Date
+  active         Boolean          @default(true)
+  validFrom      DateTime         @db.Date
+  validUntil     DateTime?        @db.Date
   items          PriceTableItem[]
+
   @@index([organizationId, active])
 }
 
 model PriceTableItem {
-  id           String   @id @default(uuid()) @db.Uuid
-  priceTableId String   @db.Uuid
-  procedureId  String   @db.Uuid
-  price        Decimal  @db.Decimal(12, 2)
-  cost         Decimal  @default(0) @db.Decimal(12, 2)
-  discountRules Json    @default("{}")
-  table        PriceTable @relation(fields: [priceTableId], references: [id])
-  procedure    Procedure @relation(fields: [procedureId], references: [id])
+  id            String     @id @default(uuid()) @db.Uuid
+  priceTableId  String     @db.Uuid
+  procedureId   String     @db.Uuid
+  price         Decimal    @db.Decimal(12, 2)
+  cost          Decimal    @default(0) @db.Decimal(12, 2)
+  discountRules Json       @default("{}")
+  table         PriceTable @relation(fields: [priceTableId], references: [id])
+  procedure     Procedure  @relation(fields: [procedureId], references: [id])
+
   @@unique([priceTableId, procedureId])
 }
 
 model TreatmentPlan {
-  id                String          @id @default(uuid()) @db.Uuid
-  organizationId    String          @db.Uuid
-  clinicId          String          @db.Uuid
-  patientId         String          @db.Uuid
-  professionalId    String          @db.Uuid
-  status            TreatmentStatus @default(DRAFT)
-  title             String
-  presentedAt       DateTime?
-  validUntil        DateTime?       @db.Date
-  subtotal          Decimal         @db.Decimal(12, 2)
-  discount          Decimal         @default(0) @db.Decimal(12, 2)
-  total             Decimal         @db.Decimal(12, 2)
-  notes             String?
-  priceSnapshot     Json            @default("{}")
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  items             TreatmentItem[]
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  clinicId       String          @db.Uuid
+  patientId      String          @db.Uuid
+  professionalId String          @db.Uuid
+  status         TreatmentStatus @default(DRAFT)
+  title          String
+  presentedAt    DateTime?
+  validUntil     DateTime?       @db.Date
+  subtotal       Decimal         @db.Decimal(12, 2)
+  discount       Decimal         @default(0) @db.Decimal(12, 2)
+  total          Decimal         @db.Decimal(12, 2)
+  notes          String?
+  priceSnapshot  Json            @default("{}")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  items          TreatmentItem[]
+  receivables    Receivable[]
+
   @@index([organizationId, clinicId, patientId])
 }
 
 model TreatmentItem {
-  id                  String   @id @default(uuid()) @db.Uuid
-  treatmentPlanId     String   @db.Uuid
-  procedureId         String   @db.Uuid
-  professionalId      String   @db.Uuid
-  toothFdi            String?
-  face                String?
-  quantity            Int      @default(1)
-  unitPrice           Decimal  @db.Decimal(12, 2)
-  discount            Decimal  @default(0) @db.Decimal(12, 2)
-  total               Decimal  @db.Decimal(12, 2)
-  priority            Int      @default(0)
-  sortOrder           Int
-  urgent              Boolean  @default(false)
-  plannedSessions     Int      @default(1)
-  estimatedMinutes    Int?
-  materialCost        Decimal  @default(0) @db.Decimal(12, 2)
-  laboratoryCost      Decimal  @default(0) @db.Decimal(12, 2)
-  warrantyDays        Int?
-  status              String   @default("PLANNED")
-  approvedAt          DateTime?
-  plan                TreatmentPlan @relation(fields: [treatmentPlanId], references: [id])
-  procedure           Procedure @relation(fields: [procedureId], references: [id])
-  sessions            TreatmentSession[]
+  id               String             @id @default(uuid()) @db.Uuid
+  treatmentPlanId  String             @db.Uuid
+  procedureId      String             @db.Uuid
+  professionalId   String             @db.Uuid
+  toothFdi         String?
+  face             String?
+  quantity         Int                @default(1)
+  unitPrice        Decimal            @db.Decimal(12, 2)
+  discount         Decimal            @default(0) @db.Decimal(12, 2)
+  total            Decimal            @db.Decimal(12, 2)
+  priority         Int                @default(0)
+  sortOrder        Int
+  urgent           Boolean            @default(false)
+  plannedSessions  Int                @default(1)
+  estimatedMinutes Int?
+  materialCost     Decimal            @default(0) @db.Decimal(12, 2)
+  laboratoryCost   Decimal            @default(0) @db.Decimal(12, 2)
+  warrantyDays     Int?
+  status           String             @default("PLANNED")
+  approvedAt       DateTime?
+  plan             TreatmentPlan      @relation(fields: [treatmentPlanId], references: [id])
+  procedure        Procedure          @relation(fields: [procedureId], references: [id])
+  sessions         TreatmentSession[]
+
   @@index([treatmentPlanId, sortOrder])
 }
 
 model TreatmentSession {
-  id              String   @id @default(uuid()) @db.Uuid
-  treatmentItemId String   @db.Uuid
-  appointmentId   String?  @db.Uuid
-  professionalId  String   @db.Uuid
-  executionNotes  String
-  materials       Json     @default("[]")
-  complications   String?
-  patientSignatureHash String?
+  id                        String        @id @default(uuid()) @db.Uuid
+  treatmentItemId           String        @db.Uuid
+  appointmentId             String?       @db.Uuid
+  professionalId            String        @db.Uuid
+  executionNotes            String
+  materials                 Json          @default("[]")
+  complications             String?
+  patientSignatureHash      String?
   professionalSignatureHash String?
-  completedAt     DateTime @default(now())
-  item            TreatmentItem @relation(fields: [treatmentItemId], references: [id])
+  completedAt               DateTime      @default(now())
+  item                      TreatmentItem @relation(fields: [treatmentItemId], references: [id])
+
   @@index([treatmentItemId, completedAt])
 }
 
 model DocumentTemplate {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  type           String
-  name           String
+  id                String              @id @default(uuid()) @db.Uuid
+  organizationId    String              @db.Uuid
+  type              String
+  name              String
   structuredContent Json
-  allowedVariables Json
-  version        Int      @default(1)
-  signatureRules Json     @default("{}")
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  documents      GeneratedDocument[]
+  allowedVariables  Json
+  version           Int                 @default(1)
+  signatureRules    Json                @default("{}")
+  active            Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  documents         GeneratedDocument[]
+
   @@unique([organizationId, name, version])
 }
 
 model GeneratedDocument {
-  id             String         @id @default(uuid()) @db.Uuid
-  organizationId String         @db.Uuid
-  clinicId       String         @db.Uuid
-  templateId     String         @db.Uuid
+  id              String              @id @default(uuid()) @db.Uuid
+  organizationId  String              @db.Uuid
+  clinicId        String              @db.Uuid
+  templateId      String              @db.Uuid
   templateVersion Int
-  patientId      String         @db.Uuid
-  treatmentId    String?        @db.Uuid
-  frozenContent  Json
-  fileId         String?        @db.Uuid
-  contentHash    String
-  validationCode String         @unique
-  status         DocumentStatus @default(GENERATED)
-  generatedAt    DateTime       @default(now())
-  cancelledAt    DateTime?
-  cancelReason   String?
-  template       DocumentTemplate @relation(fields: [templateId], references: [id])
-  signatures     DocumentSignature[]
+  patientId       String              @db.Uuid
+  treatmentId     String?             @db.Uuid
+  frozenContent   Json
+  fileId          String?             @db.Uuid
+  contentHash     String
+  validationCode  String              @unique
+  status          DocumentStatus      @default(GENERATED)
+  generatedAt     DateTime            @default(now())
+  cancelledAt     DateTime?
+  cancelReason    String?
+  template        DocumentTemplate    @relation(fields: [templateId], references: [id])
+  signatures      DocumentSignature[]
+
   @@index([organizationId, patientId, generatedAt])
 }
 
 model DocumentSignature {
-  id                String   @id @default(uuid()) @db.Uuid
-  generatedDocumentId String @db.Uuid
-  signerId          String?
-  signerName        String
-  role              String
-  method            String
-  ipAddress         String?
-  userAgent         String?
-  evidence          Json     @default("{}")
-  signedHash        String
-  signedAt          DateTime @default(now())
-  document          GeneratedDocument @relation(fields: [generatedDocumentId], references: [id])
+  id                  String            @id @default(uuid()) @db.Uuid
+  generatedDocumentId String            @db.Uuid
+  signerId            String?
+  signerName          String
+  role                String
+  method              String
+  ipAddress           String?
+  userAgent           String?
+  evidence            Json              @default("{}")
+  signedHash          String
+  signedAt            DateTime          @default(now())
+  document            GeneratedDocument @relation(fields: [generatedDocumentId], references: [id])
+
   @@index([generatedDocumentId, signedAt])
 }
 
 model FileObject {
-  id             String     @id @default(uuid()) @db.Uuid
-  organizationId String     @db.Uuid
-  bucket         String
-  objectKey      String     @unique
-  originalName   String
-  mimeType       String
-  extension      String?
-  sizeBytes      BigInt
-  checksum       String?
-  status         FileStatus @default(PENDING)
-  antivirusStatus String    @default("PENDING")
-  encryption     Json       @default("{}")
-  createdById    String     @db.Uuid
-  retentionUntil DateTime?
-  metadata       Json       @default("{}")
-  createdAt      DateTime   @default(now())
-  media          PatientMedia[]
+  id              String         @id @default(uuid()) @db.Uuid
+  organizationId  String         @db.Uuid
+  bucket          String
+  objectKey       String         @unique
+  originalName    String
+  mimeType        String
+  extension       String?
+  sizeBytes       BigInt
+  checksum        String?
+  status          FileStatus     @default(PENDING)
+  antivirusStatus String         @default("PENDING")
+  encryption      Json           @default("{}")
+  createdById     String         @db.Uuid
+  retentionUntil  DateTime?
+  metadata        Json           @default("{}")
+  createdAt       DateTime       @default(now())
+  media           PatientMedia[]
+
   @@index([organizationId, status])
 }
 
 model PatientMedia {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  patientId      String   @db.Uuid
-  fileId         String   @db.Uuid
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  patientId      String            @db.Uuid
+  fileId         String            @db.Uuid
   type           String
   toothFdi       String?
-  appointmentId  String?  @db.Uuid
-  treatmentId    String?  @db.Uuid
-  examDate       DateTime? @db.Date
+  appointmentId  String?           @db.Uuid
+  treatmentId    String?           @db.Uuid
+  examDate       DateTime?         @db.Date
   notes          String?
-  createdAt      DateTime @default(now())
-  file           FileObject @relation(fields: [fileId], references: [id])
+  createdAt      DateTime          @default(now())
+  file           FileObject        @relation(fields: [fileId], references: [id])
   annotations    ImageAnnotation[]
+
   @@index([organizationId, patientId, createdAt])
 }
 
 model ImageAnnotation {
-  id             String   @id @default(uuid()) @db.Uuid
-  patientMediaId String   @db.Uuid
-  authorId       String   @db.Uuid
+  id             String       @id @default(uuid()) @db.Uuid
+  patientMediaId String       @db.Uuid
+  authorId       String       @db.Uuid
   type           String
   coordinates    Json
   text           String?
-  version        Int      @default(1)
-  createdAt      DateTime @default(now())
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now())
   media          PatientMedia @relation(fields: [patientMediaId], references: [id])
+
   @@index([patientMediaId, version])
 }
 
 model Receivable {
-  id             String           @id @default(uuid()) @db.Uuid
-  organizationId String           @db.Uuid
-  clinicId       String           @db.Uuid
-  patientId      String           @db.Uuid
-  treatmentId    String?          @db.Uuid
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @db.Uuid
+  clinicId       String               @db.Uuid
+  patientId      String               @db.Uuid
+  treatmentId    String?              @db.Uuid
   description    String
-  originalAmount Decimal          @db.Decimal(12, 2)
-  discount       Decimal          @default(0) @db.Decimal(12, 2)
-  surcharge      Decimal          @default(0) @db.Decimal(12, 2)
-  netAmount      Decimal          @db.Decimal(12, 2)
-  dueDate        DateTime         @db.Date
-  status         ReceivableStatus @default(OPEN)
+  originalAmount Decimal              @db.Decimal(12, 2)
+  discount       Decimal              @default(0) @db.Decimal(12, 2)
+  surcharge      Decimal              @default(0) @db.Decimal(12, 2)
+  netAmount      Decimal              @db.Decimal(12, 2)
+  dueDate        DateTime             @db.Date
+  status         ReceivableStatus     @default(OPEN)
   paymentMethod  String?
   provider       IntegrationProvider?
-  createdAt      DateTime         @default(now())
+  createdAt      DateTime             @default(now())
   payments       Payment[]
+  treatment      TreatmentPlan?       @relation(fields: [treatmentId], references: [id])
+
   @@index([organizationId, clinicId, dueDate, status])
 }
 
 model Payment {
-  id             String        @id @default(uuid()) @db.Uuid
-  receivableId   String        @db.Uuid
-  amount         Decimal       @db.Decimal(12, 2)
+  id             String               @id @default(uuid()) @db.Uuid
+  receivableId   String               @db.Uuid
+  amount         Decimal              @db.Decimal(12, 2)
   paidAt         DateTime?
   method         String
   provider       IntegrationProvider?
   externalId     String?
-  idempotencyKey String        @unique
-  status         PaymentStatus @default(PENDING)
-  fee            Decimal       @default(0) @db.Decimal(12, 2)
-  createdAt      DateTime      @default(now())
-  receivable     Receivable    @relation(fields: [receivableId], references: [id])
+  idempotencyKey String               @unique
+  status         PaymentStatus        @default(PENDING)
+  fee            Decimal              @default(0) @db.Decimal(12, 2)
+  createdAt      DateTime             @default(now())
+  receivable     Receivable           @relation(fields: [receivableId], references: [id])
   refunds        Refund[]
+
   @@index([receivableId, status])
 }
 
@@ -793,139 +1069,148 @@ model Refund {
   authorizedById String   @db.Uuid
   createdAt      DateTime @default(now())
   payment        Payment  @relation(fields: [paymentId], references: [id])
+
   @@index([paymentId, createdAt])
 }
 
 model Expense {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String   @db.Uuid
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  clinicId       String    @db.Uuid
   description    String
   category       String
-  amount         Decimal  @db.Decimal(12, 2)
-  dueDate        DateTime @db.Date
+  amount         Decimal   @db.Decimal(12, 2)
+  dueDate        DateTime  @db.Date
   paidAt         DateTime?
   externalId     String?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
+
   @@index([organizationId, clinicId, dueDate])
 }
 
 model FinancialReconciliation {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String   @db.Uuid
-  periodStart    DateTime @db.Date
-  periodEnd      DateTime @db.Date
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  clinicId       String    @db.Uuid
+  periodStart    DateTime  @db.Date
+  periodEnd      DateTime  @db.Date
   status         JobStatus @default(PENDING)
-  summary        Json     @default("{}")
-  divergences    Json     @default("[]")
-  createdAt      DateTime @default(now())
+  summary        Json      @default("{}")
+  divergences    Json      @default("[]")
+  createdAt      DateTime  @default(now())
   completedAt    DateTime?
+
   @@index([organizationId, clinicId, createdAt])
 }
 
 model CommissionRule {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String?  @db.Uuid
-  professionalId String?  @db.Uuid
-  procedureId    String?  @db.Uuid
-  specialty      String?
-  basis          String
-  calculationType String
-  value          Decimal  @db.Decimal(12, 4)
-  deductions     Json     @default("{}")
-  reversalBehavior String @default("REVERSE")
-  validFrom      DateTime @db.Date
-  validUntil     DateTime? @db.Date
-  priority       Int      @default(0)
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now())
+  id               String    @id @default(uuid()) @db.Uuid
+  organizationId   String    @db.Uuid
+  clinicId         String?   @db.Uuid
+  professionalId   String?   @db.Uuid
+  procedureId      String?   @db.Uuid
+  specialty        String?
+  basis            String
+  calculationType  String
+  value            Decimal   @db.Decimal(12, 4)
+  deductions       Json      @default("{}")
+  reversalBehavior String    @default("REVERSE")
+  validFrom        DateTime  @db.Date
+  validUntil       DateTime? @db.Date
+  priority         Int       @default(0)
+  active           Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+
   @@index([organizationId, active, priority])
 }
 
 model CommissionEntry {
-  id             String           @id @default(uuid()) @db.Uuid
-  organizationId String           @db.Uuid
-  clinicId       String           @db.Uuid
-  professionalId String           @db.Uuid
-  treatmentItemId String?         @db.Uuid
-  paymentId      String?          @db.Uuid
+  id              String             @id @default(uuid()) @db.Uuid
+  organizationId  String             @db.Uuid
+  clinicId        String             @db.Uuid
+  professionalId  String             @db.Uuid
+  treatmentItemId String?            @db.Uuid
+  paymentId       String?            @db.Uuid
   triggeringEvent String
-  snapshot       Json
-  baseAmount     Decimal          @db.Decimal(12, 2)
-  amount         Decimal          @db.Decimal(12, 2)
-  status         CommissionStatus @default(FORECASTED)
-  competence     DateTime         @db.Date
-  closingId      String?          @db.Uuid
-  createdAt      DateTime         @default(now())
-  closing        CommissionClosing? @relation(fields: [closingId], references: [id])
+  snapshot        Json
+  baseAmount      Decimal            @db.Decimal(12, 2)
+  amount          Decimal            @db.Decimal(12, 2)
+  status          CommissionStatus   @default(FORECASTED)
+  competence      DateTime           @db.Date
+  closingId       String?            @db.Uuid
+  createdAt       DateTime           @default(now())
+  closing         CommissionClosing? @relation(fields: [closingId], references: [id])
+
   @@index([organizationId, clinicId, professionalId, competence])
 }
 
 model CommissionClosing {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String   @db.Uuid
-  periodStart    DateTime @db.Date
-  periodEnd      DateTime @db.Date
-  status         String   @default("DRAFT")
-  total          Decimal  @default(0) @db.Decimal(12, 2)
-  approvedById   String?  @db.Uuid
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  clinicId       String            @db.Uuid
+  periodStart    DateTime          @db.Date
+  periodEnd      DateTime          @db.Date
+  status         String            @default("DRAFT")
+  total          Decimal           @default(0) @db.Decimal(12, 2)
+  approvedById   String?           @db.Uuid
   approvedAt     DateTime?
   paidAt         DateTime?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime          @default(now())
   entries        CommissionEntry[]
+
   @@index([organizationId, clinicId, periodStart])
 }
 
 model MessagingChannel {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String?  @db.Uuid
-  unitId         String?  @db.Uuid
-  professionalId String?  @db.Uuid
-  type           String
-  displayName    String
+  id                   String            @id @default(uuid()) @db.Uuid
+  organizationId       String            @db.Uuid
+  clinicId             String?           @db.Uuid
+  unitId               String?           @db.Uuid
+  professionalId       String?           @db.Uuid
+  type                 String
+  displayName          String
   encryptedCredentials String?
-  configuration  Json     @default("{}")
-  status         EntityStatus @default(ACTIVE)
-  createdAt      DateTime @default(now())
-  deliveries     MessageDelivery[]
+  configuration        Json              @default("{}")
+  status               EntityStatus      @default(ACTIVE)
+  createdAt            DateTime          @default(now())
+  deliveries           MessageDelivery[]
+
   @@index([organizationId, status])
 }
 
 model MessageTemplate {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  name           String
-  category       String
-  content        String
-  variables      Json
-  requiresConsent Boolean @default(true)
-  active         Boolean  @default(true)
-  deliveries     MessageDelivery[]
+  id              String            @id @default(uuid()) @db.Uuid
+  organizationId  String            @db.Uuid
+  name            String
+  category        String
+  content         String
+  variables       Json
+  requiresConsent Boolean           @default(true)
+  active          Boolean           @default(true)
+  deliveries      MessageDelivery[]
+
   @@unique([organizationId, name])
 }
 
 model MessageDelivery {
-  id             String         @id @default(uuid()) @db.Uuid
-  organizationId String         @db.Uuid
-  patientId      String?        @db.Uuid
-  appointmentId  String?        @db.Uuid
-  channelId      String         @db.Uuid
-  templateId     String?        @db.Uuid
-  recipient      String
+  id              String           @id @default(uuid()) @db.Uuid
+  organizationId  String           @db.Uuid
+  patientId       String?          @db.Uuid
+  appointmentId   String?          @db.Uuid
+  channelId       String           @db.Uuid
+  templateId      String?          @db.Uuid
+  recipient       String
   renderedContent String
-  status         DeliveryStatus @default(PENDING)
-  externalId     String?
-  sentAt         DateTime?
-  deliveredAt    DateTime?
-  readAt         DateTime?
-  error          String?
-  createdAt      DateTime       @default(now())
-  channel        MessagingChannel @relation(fields: [channelId], references: [id])
-  template       MessageTemplate? @relation(fields: [templateId], references: [id])
+  status          DeliveryStatus   @default(PENDING)
+  externalId      String?
+  sentAt          DateTime?
+  deliveredAt     DateTime?
+  readAt          DateTime?
+  error           String?
+  createdAt       DateTime         @default(now())
+  channel         MessagingChannel @relation(fields: [channelId], references: [id])
+  template        MessageTemplate? @relation(fields: [templateId], references: [id])
+
   @@index([organizationId, status, createdAt])
 }
 
@@ -938,6 +1223,7 @@ model CommunicationPreference {
   optedIn        Boolean  @default(true)
   changedAt      DateTime @default(now())
   source         String
+
   @@unique([organizationId, patientId, channel, category])
 }
 
@@ -953,24 +1239,26 @@ model AutomationRule {
   frequency      String?
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())
+
   @@index([organizationId, active, trigger])
 }
 
 model Prescription {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @db.Uuid
-  clinicId       String   @db.Uuid
-  patientId      String   @db.Uuid
-  professionalId String   @db.Uuid
-  purpose        String
-  items          Json
-  clinicalWarnings Json   @default("[]")
-  ignoredWarnings Json    @default("[]")
-  status         String   @default("DRAFT")
-  aiMetadata     Json?
-  contentHash    String?
-  reviewedAt     DateTime?
-  signedAt       DateTime?
-  createdAt      DateTime @default(now())
+  id               String    @id @default(uuid()) @db.Uuid
+  organizationId   String    @db.Uuid
+  clinicId         String    @db.Uuid
+  patientId        String    @db.Uuid
+  professionalId   String    @db.Uuid
+  purpose          String
+  items            Json
+  clinicalWarnings Json      @default("[]")
+  ignoredWarnings  Json      @default("[]")
+  status           String    @default("DRAFT")
+  aiMetadata       Json?
+  contentHash      String?
+  reviewedAt       DateTime?
+  signedAt         DateTime?
+  createdAt        DateTime  @default(now())
+
   @@index([organizationId, patientId, createdAt])
 }

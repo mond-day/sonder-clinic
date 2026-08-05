@@ -1,9 +1,11 @@
 import { Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { SchedulingService } from './scheduling.service';
+
+const appointmentStatuses = ['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW'] as const;
 
 class CreateAppointmentDto {
   @IsUUID() clinicId!: string;
@@ -14,6 +16,11 @@ class CreateAppointmentDto {
   @IsDateString() startAt!: string;
   @IsDateString() endAt!: string;
   @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsIn(appointmentStatuses) status?: typeof appointmentStatuses[number];
+  @IsOptional() @IsArray() @IsUUID(undefined, { each: true }) tagIds?: string[];
+  @IsOptional() reminderEnabled?: boolean;
+  @IsOptional() @IsInt() @Min(15) @Max(10080) reminderLeadMinutes?: number;
 }
 
 @ApiTags('appointments')

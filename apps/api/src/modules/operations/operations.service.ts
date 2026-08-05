@@ -183,7 +183,10 @@ export class OperationsService {
   receivables(organizationId: string, clinicId?: string) {
     return prisma.receivable.findMany({
       where: { organizationId, clinicId },
-      include: { payments: { include: { refunds: true } } },
+      include: {
+        payments: { include: { refunds: true } },
+        treatment: { select: { id: true, title: true, status: true, total: true } },
+      },
       orderBy: { dueDate: 'asc' },
     });
   }
@@ -255,13 +258,94 @@ export class OperationsService {
     return prisma.messageDelivery.findMany({ where: { organizationId }, orderBy: { createdAt: 'desc' }, take: 200 });
   }
 
-  reports(organizationId: string, clinicId?: string) {
-    return Promise.all([
-      prisma.appointment.groupBy({ by: ['status'], where: { organizationId, clinicId }, _count: true }),
-      prisma.receivable.groupBy({ by: ['status'], where: { organizationId, clinicId }, _sum: { netAmount: true }, _count: true }),
-      prisma.commissionEntry.groupBy({ by: ['status'], where: { organizationId, clinicId }, _sum: { amount: true }, _count: true }),
-      prisma.messageDelivery.groupBy({ by: ['status'], where: { organizationId }, _count: true }),
-    ]).then(([appointments, financial, commissions, communication]) => ({ appointments, financial, commissions, communication }));
+  async reports(organizationId: string, clinicId?: string, fromValue?: string, toValue?: string) {
+    const period = z.object({
+      from: z.string().date().optional(),
+      to: z.string().date().optional(),
+    }).refine((value) => !value.from || !value.to || value.from <= value.to, 'Período inválido.')
+      .parse({ from: fromValue, to: toValue });
+    const from = period.from ? new Date(`${period.from}T00:00:00.000Z`) : new Date(Date.now() - 30 * 86_400_000);
+    const to = period.to ? new Date(`${period.to}T23:59:59.999Z`) : new Date();
+    const dateRange = { gte: from, lte: to };
+    const clinicWhere = clinicId ? { clinicId } : {};
+    const [
+      appointmentRows, financial, commissionRows, communication, newPatients, activePatients,
+      inactivePatients, pendingReturns, treatments, payments,
+    ] = await Promise.all([
+      prisma.appointment.findMany({
+        where: { organizationId, ...clinicWhere, startAt: dateRange },
+        select: { status: true, startAt: true, endAt: true, professional: { select: { id: true, name: true } } },
+      }),
+      prisma.receivable.groupBy({
+        by: ['status'], where: { organizationId, ...clinicWhere, dueDate: dateRange },
+        _sum: { netAmount: true }, _count: true,
+      }),
+      prisma.commissionEntry.findMany({
+        where: { organizationId, ...clinicWhere, competence: dateRange },
+        select: { status: true, baseAmount: true, amount: true, professionalId: true },
+      }),
+      prisma.messageDelivery.groupBy({
+        by: ['status'], where: { organizationId, createdAt: dateRange }, _count: true,
+      }),
+      prisma.patient.count({ where: { organizationId, createdAt: dateRange } }),
+      prisma.patient.count({ where: { organizationId, status: 'ACTIVE', clinics: clinicId ? { some: { clinicId } } : undefined } }),
+      prisma.patient.count({ where: { organizationId, status: 'INACTIVE', clinics: clinicId ? { some: { clinicId } } : undefined } }),
+      prisma.returnAlert.count({ where: { organizationId, ...clinicWhere, status: { in: ['PENDING', 'CONTACTED'] } } }),
+      prisma.treatmentPlan.groupBy({
+        by: ['status'], where: { organizationId, ...clinicWhere, createdAt: dateRange },
+        _sum: { total: true }, _count: true,
+      }),
+      prisma.payment.aggregate({
+        where: { status: 'CONFIRMED', paidAt: dateRange, receivable: { organizationId, ...clinicWhere } },
+        _sum: { amount: true }, _count: true,
+      }),
+    ]);
+    const professionals = await prisma.professional.findMany({
+      where: { id: { in: [...new Set(commissionRows.map((item) => item.professionalId))] } },
+      select: { id: true, name: true },
+    });
+    const professionalNames = new Map(professionals.map((item) => [item.id, item.name]));
+    const byProfessional = new Map<string, { professionalId: string; professional: string; scheduled: number; completed: number; cancelled: number; minutes: number }>();
+    for (const item of appointmentRows) {
+      const current = byProfessional.get(item.professional.id) ?? {
+        professionalId: item.professional.id, professional: item.professional.name,
+        scheduled: 0, completed: 0, cancelled: 0, minutes: 0,
+      };
+      current.scheduled += 1;
+      if (item.status === 'COMPLETED') current.completed += 1;
+      if (['CANCELLED', 'NO_SHOW'].includes(item.status)) current.cancelled += 1;
+      if (!['CANCELLED', 'NO_SHOW'].includes(item.status)) current.minutes += Math.max(0, (item.endAt.getTime() - item.startAt.getTime()) / 60_000);
+      byProfessional.set(item.professional.id, current);
+    }
+    const days = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / 86_400_000));
+    const appointmentStatus = Object.entries(appointmentRows.reduce<Record<string, number>>((acc, item) => {
+      acc[item.status] = (acc[item.status] ?? 0) + 1;
+      return acc;
+    }, {})).map(([status, count]) => ({ status, count }));
+    const commissions = commissionRows.map((item) => ({
+      professionalId: item.professionalId,
+      professional: professionalNames.get(item.professionalId) ?? 'Profissional',
+      status: item.status,
+      baseAmount: item.baseAmount,
+      amount: item.amount,
+      percentage: item.baseAmount.isZero() ? 0 : Number(item.amount.div(item.baseAmount).mul(100).toFixed(2)),
+    }));
+    return {
+      period: { from: from.toISOString(), to: to.toISOString() },
+      agenda: {
+        byStatus: appointmentStatus,
+        byProfessional: [...byProfessional.values()].map((item) => ({
+          ...item,
+          occupancyRate: Math.min(100, Math.round((item.minutes / (days * 8 * 60)) * 100)),
+        })),
+      },
+      patients: { new: newPatients, active: activePatients, inactive: inactivePatients, pendingReturns },
+      financial: { byStatus: financial, received: payments._sum.amount ?? 0, payments: payments._count },
+      treatments,
+      commissions,
+      communication,
+      appointments: appointmentStatus.map((item) => ({ status: item.status, _count: item.count })),
+    };
   }
 
   async suggestPrescription(organizationId: string, input: {
@@ -278,5 +362,36 @@ export class OperationsService {
       missingInformation: ['Selecione medicamento e posologia; a sugestão exige revisão do dentista.'],
       privacy: { sentFields: ['purpose', 'ageRange', 'allergies', 'medications'], identifiersSent: false },
     };
+  }
+
+  prescriptions(organizationId: string, patientId: string) {
+    return prisma.prescription.findMany({
+      where: { organizationId, patientId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
+
+  async createPrescription(organizationId: string, input: {
+    clinicId: string; patientId: string; professionalId: string; purpose: string; items: unknown[];
+  }) {
+    const [clinic, patient, professional] = await Promise.all([
+      prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId }, select: { id: true } }),
+      prisma.patient.findFirst({ where: { id: input.patientId, organizationId }, select: { id: true } }),
+      prisma.professional.findFirst({ where: { id: input.professionalId, user: { organizationId } }, select: { id: true } }),
+    ]);
+    if (!clinic || !patient || !professional) throw new NotFoundException('Clínica, paciente ou profissional inválido.');
+    if (!input.items.length) throw new ConflictException('Informe ao menos um item da receita.');
+    return prisma.prescription.create({
+      data: {
+        organizationId,
+        clinicId: input.clinicId,
+        patientId: input.patientId,
+        professionalId: input.professionalId,
+        purpose: input.purpose.trim(),
+        items: json(input.items),
+        status: 'DRAFT',
+      },
+    });
   }
 }

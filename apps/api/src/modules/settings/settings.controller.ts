@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsHexColor, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { SettingsService } from './settings.service';
+import { CertificateService, type CertificateUpload } from './certificate.service';
 
 class BrandingDto {
   @IsUUID() clinicId!: string;
@@ -22,11 +24,23 @@ class LegalDto {
   @IsInt() @Min(1) version!: number;
 }
 
+class AgendaTagDto {
+  @IsUUID() clinicId!: string;
+  @IsString() @MinLength(2) name!: string;
+  @IsHexColor() color!: string;
+}
+
+class UpdateAgendaTagDto {
+  @IsOptional() @IsString() @MinLength(2) name?: string;
+  @IsOptional() @IsHexColor() color?: string;
+  @IsOptional() active?: boolean;
+}
+
 @ApiTags('settings')
 @Controller('settings')
 @UseGuards(AuthGuard, PermissionsGuard)
 export class SettingsController {
-  constructor(private readonly settings: SettingsService) {}
+  constructor(private readonly settings: SettingsService, private readonly certificates: CertificateService) {}
 
   @Get('context')
   @RequirePermissions('clinic.view')
@@ -62,7 +76,45 @@ export class SettingsController {
 
   @Get('certificate')
   @RequirePermissions('certificate.manage_own')
-  certificate() {
-    return this.settings.certificateBootstrap();
+  certificate(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId: string) {
+    return this.certificates.status(req.auth.organizationId, clinicId);
+  }
+
+  @Post('certificate')
+  @RequirePermissions('certificate.manage_own')
+  @UseInterceptors(FileInterceptor('file', {
+    limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  }))
+  uploadCertificate(
+    @Req() req: AuthenticatedRequest,
+    @UploadedFile() file: CertificateUpload,
+    @Body('clinicId') clinicId: string,
+    @Body('password') password: string,
+  ) {
+    return this.certificates.replace(req.auth.organizationId, clinicId, req.auth.userId, file, password);
+  }
+
+  @Delete('certificate')
+  @RequirePermissions('certificate.manage_own')
+  removeCertificate(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId: string) {
+    return this.certificates.remove(req.auth.organizationId, clinicId, req.auth.userId);
+  }
+
+  @Get('agenda-tags')
+  @RequirePermissions('clinic.view')
+  agendaTags(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId: string) {
+    return this.settings.agendaTags(req.auth.organizationId, clinicId);
+  }
+
+  @Post('agenda-tags')
+  @RequirePermissions('clinic.manage')
+  createAgendaTag(@Req() req: AuthenticatedRequest, @Body() body: AgendaTagDto) {
+    return this.settings.createAgendaTag(req.auth.organizationId, req.auth.userId, body);
+  }
+
+  @Patch('agenda-tags/:id')
+  @RequirePermissions('clinic.manage')
+  updateAgendaTag(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateAgendaTagDto) {
+    return this.settings.updateAgendaTag(req.auth.organizationId, req.auth.userId, id, body);
   }
 }

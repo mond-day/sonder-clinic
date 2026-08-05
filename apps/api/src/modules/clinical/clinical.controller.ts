@@ -14,6 +14,7 @@ class ClinicalEntryDto {
   @IsOptional() @IsObject() structuredData?: Record<string, unknown>;
   @IsDateString() clinicalDate!: string;
   @IsOptional() @IsUUID() appointmentId?: string;
+  @IsOptional() @IsUUID() treatmentId?: string;
 }
 class CorrectionDto {
   @IsString() @MinLength(5) reason!: string;

@@ -4,10 +4,11 @@ import { PermissionsGuard } from '../../common/permissions.guard';
 import { AuthModule } from '../auth/auth.module';
 import { SettingsController } from './settings.controller';
 import { SettingsService } from './settings.service';
+import { CertificateService } from './certificate.service';
 
 @Module({
   imports: [AuthModule],
   controllers: [SettingsController],
-  providers: [SettingsService, AuthGuard, PermissionsGuard],
+  providers: [SettingsService, CertificateService, AuthGuard, PermissionsGuard],
 })
 export class SettingsModule {}

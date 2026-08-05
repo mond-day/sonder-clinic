@@ -15,6 +15,7 @@ const clinicalEntrySchema = z.object({
   structuredData: z.record(z.string(), z.unknown()).optional(),
   clinicalDate: z.string().datetime(),
   appointmentId: z.string().uuid().optional(),
+  treatmentId: z.string().uuid().optional(),
 });
 const odontogramSchema = z.object({
   clinicId: z.string().uuid(),
@@ -46,16 +47,27 @@ export class ClinicalService {
 
   async addEntry(organizationId: string, patientId: string, input: {
     clinicId: string; professionalId: string; type: string; renderedText: string;
-    structuredData?: Record<string, unknown>; clinicalDate: string; appointmentId?: string;
+    structuredData?: Record<string, unknown>; clinicalDate: string; appointmentId?: string; treatmentId?: string;
   }) {
     parseWithZod(clinicalEntrySchema, input);
-    await this.assertProfessional(organizationId, input.professionalId);
+    await Promise.all([
+      this.assertProfessional(organizationId, input.professionalId),
+      input.treatmentId
+        ? prisma.treatmentPlan.findFirst({
+            where: { id: input.treatmentId, organizationId, patientId },
+            select: { id: true },
+          }).then((plan) => {
+            if (!plan) throw new NotFoundException('Tratamento não encontrado para este paciente.');
+          })
+        : Promise.resolve(),
+    ]);
     const record = await this.record(organizationId, input.clinicId, patientId);
     return prisma.clinicalEntry.create({
       data: {
         clinicalRecordId: record.id,
         professionalId: input.professionalId,
         appointmentId: input.appointmentId,
+        treatmentId: input.treatmentId,
         type: input.type,
         renderedText: input.renderedText,
         structuredData: json(input.structuredData ?? {}),

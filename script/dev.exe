@@ -1,15 +1,51 @@
 @echo off
 setlocal
-cd /d "%~dp0\.."
+cd /d "%~dp0.."
 
 where pnpm >nul 2>&1 || (
   echo pnpm nao encontrado. Execute: corepack enable
   exit /b 1
 )
 
-docker compose -f infra\docker\docker-compose.dev.yml up -d || exit /b 1
+if not exist .env (
+  if exist .env.example (
+    copy .env.example .env >nul
+    echo Arquivo .env criado a partir de .env.example.
+  ) else (
+    echo Arquivo .env nao encontrado.
+    exit /b 1
+  )
+)
+
+set DB_READY=
+for /f %%R in ('powershell -NoProfile -Command "(Test-NetConnection -ComputerName localhost -Port 5432 -InformationLevel Quiet)" 2^>nul') do set DB_READY=%%R
+
+if /i "%DB_READY%"=="True" (
+  echo PostgreSQL ja disponivel em localhost:5432.
+) else (
+  where docker >nul 2>&1 || (
+    echo Nenhum PostgreSQL em localhost:5432 e o Docker nao esta instalado.
+    echo Suba um PostgreSQL local conforme DATABASE_URL ou instale o Docker Desktop.
+    exit /b 1
+  )
+  echo Subindo PostgreSQL via Docker...
+  docker compose -f infra\docker\docker-compose.dev.yml up -d || exit /b 1
+  powershell -NoProfile -Command "for ($i=0; $i -lt 30; $i++) { if (Test-NetConnection -ComputerName localhost -Port 5432 -InformationLevel Quiet) { exit 0 }; Start-Sleep -Seconds 1 }; exit 1" || (
+    echo O PostgreSQL nao respondeu em localhost:5432.
+    exit /b 1
+  )
+)
+
 call pnpm install || exit /b 1
 call pnpm db:generate || exit /b 1
-call pnpm db:migrate || exit /b 1
+call pnpm db:deploy || exit /b 1
 call pnpm db:seed || exit /b 1
+
+echo.
+echo Web:     http://localhost:3000
+echo API:     http://localhost:4000/api/v1
+echo Swagger: http://localhost:4000/docs
+echo Login:   admin@sonder.local / Sonder@123
+echo.
+
 call pnpm dev

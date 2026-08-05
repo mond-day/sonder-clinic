@@ -8,6 +8,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { ClinicalModule } from './modules/clinical/clinical.module';
 import { OperationsModule } from './modules/operations/operations.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { WorkspaceModule } from './modules/workspace/workspace.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { SettingsModule } from './modules/settings/settings.module';
     ClinicalModule,
     OperationsModule,
     SettingsModule,
+    WorkspaceModule,
   ],
   controllers: [AppController],
 })

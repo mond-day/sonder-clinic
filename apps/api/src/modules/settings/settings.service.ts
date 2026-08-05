@@ -18,6 +18,12 @@ const legalSchema = z.object({
   content: z.string().min(20),
   version: z.number().int().min(1),
 });
+const agendaTagSchema = z.object({
+  clinicId: z.string().uuid(),
+  name: z.string().trim().min(2).max(40),
+  color: z.string().regex(/^#[0-9a-f]{6}$/i),
+});
+const updateAgendaTagSchema = agendaTagSchema.omit({ clinicId: true }).partial().extend({ active: z.boolean().optional() });
 
 export type BrandingSettings = {
   name: string;
@@ -53,7 +59,7 @@ export class SettingsService {
       }),
       prisma.professional.findMany({
         where: { user: { organizationId, status: 'ACTIVE' } },
-        select: { id: true, name: true, croNumber: true, croState: true },
+        select: { id: true, userId: true, name: true, croNumber: true, croState: true },
         orderBy: { name: 'asc' },
       }),
     ]).then(([clinics, professionals]) => ({ clinics, professionals }));
@@ -170,5 +176,54 @@ export class SettingsService {
       storage: 'secret-or-path',
       note: 'Certificado A1 e senha nunca são versionados; use secret/path ou upload criptografado.',
     };
+  }
+
+  async agendaTags(organizationId: string, clinicId: string) {
+    await this.assertClinic(organizationId, clinicId);
+    return prisma.agendaTag.findMany({
+      where: { organizationId, clinicId, active: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async createAgendaTag(organizationId: string, actorId: string, input: { clinicId: string; name: string; color: string }) {
+    const data = parseWithZod(agendaTagSchema, input);
+    await this.assertClinic(organizationId, data.clinicId);
+    return prisma.$transaction(async (tx) => {
+      const tag = await tx.agendaTag.create({ data: { organizationId, ...data } });
+      await tx.auditEvent.create({
+        data: {
+          actorId, action: 'agenda_tag.created', entity: 'AgendaTag', entityId: tag.id,
+          clinicId: data.clinicId, changes: { name: data.name, color: data.color }, correlationId: randomUUID(),
+        },
+      });
+      return tag;
+    });
+  }
+
+  async updateAgendaTag(
+    organizationId: string,
+    actorId: string,
+    id: string,
+    input: { name?: string; color?: string; active?: boolean },
+  ) {
+    const data = parseWithZod(updateAgendaTagSchema, input);
+    const existing = await prisma.agendaTag.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Etiqueta não encontrada.');
+    return prisma.$transaction(async (tx) => {
+      const tag = await tx.agendaTag.update({ where: { id }, data });
+      await tx.auditEvent.create({
+        data: {
+          actorId, action: 'agenda_tag.updated', entity: 'AgendaTag', entityId: id,
+          clinicId: existing.clinicId, changes: { fields: Object.keys(data) }, correlationId: randomUUID(),
+        },
+      });
+      return tag;
+    });
+  }
+
+  private async assertClinic(organizationId: string, clinicId: string) {
+    const clinic = await prisma.clinic.findFirst({ where: { id: clinicId, organizationId }, select: { id: true } });
+    if (!clinic) throw new NotFoundException('Clínica não encontrada.');
   }
 }

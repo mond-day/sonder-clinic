@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as argon2 from 'argon2';
+import { seedRichData } from './seed-rich-data';
 
 const prisma = new PrismaClient();
 
@@ -19,6 +20,8 @@ const permissions = [
   'commission.view_own', 'commission.view_all', 'commission.configure', 'commission.close',
   'integration.view', 'integration.manage',
   'report.view_clinical', 'report.view_financial', 'report.view_management', 'audit.view',
+  'return_alert.view', 'return_alert.manage', 'task.view', 'task.manage',
+  'lab_case.view', 'lab_case.manage', 'notification.view',
 ];
 
 async function main(): Promise<void> {
@@ -57,10 +60,10 @@ async function main(): Promise<void> {
   });
   const user = await prisma.user.upsert({
     where: { organizationId_email: { organizationId: organization.id, email: 'admin@sonder.local' } },
-    update: {},
+    update: { name: 'Daymond Lucas' },
     create: {
       organizationId: organization.id,
-      name: 'Marina Costa',
+      name: 'Daymond Lucas',
       email: 'admin@sonder.local',
       passwordHash: await argon2.hash('Sonder@123', { type: argon2.argon2id }),
       roles: { create: { roleId: role.id } },
@@ -68,7 +71,7 @@ async function main(): Promise<void> {
   });
   const professional = await prisma.professional.upsert({
     where: { userId: user.id },
-    update: {},
+    update: { name: user.name },
     create: { userId: user.id, name: user.name, croNumber: '12345', croState: 'MT' },
   });
   const anamnesisTemplates = [
@@ -150,6 +153,7 @@ async function main(): Promise<void> {
       },
     });
   }
+  await seedRichData(prisma, { organization, clinic, unit, role, admin: user, adminProfessional: professional });
   console.info('Seed concluído. Login: admin@sonder.local / Sonder@123');
 }
 

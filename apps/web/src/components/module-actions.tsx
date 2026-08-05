@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
 import type { Clinic, Professional } from './selection-provider';
+import { SearchableSelect } from './searchable-select';
+import { Disclosure } from './ui';
 
 type Item = Record<string, unknown>;
 type ModuleKey = 'agenda' | 'pacientes' | 'tratamentos' | 'documentos' | 'financeiro' | 'comissoes' | 'comunicacao' | 'integracoes' | 'relatorios';
@@ -68,15 +70,24 @@ const legalSchema = z.object({
   content: z.string().min(20, 'O texto legal deve ter ao menos 20 caracteres.'),
   version: z.coerce.number().int().min(1),
 });
-const integrationSchema = z.object({
-  provider: z.enum(['NIBO', 'ABACATEPAY', 'EVOLUTION', 'CHATWOOT', 'GOOGLE_CALENDAR', 'OPENAI']),
-  credentialName: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/, 'Nome da credencial inválido.'),
-  credentialValue: z.string().min(1, 'Informe o segredo.'),
-  secondCredentialName: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/, 'Nome da segunda credencial inválido.').optional(),
-  secondCredentialValue: z.string().optional(),
-}).refine((value) => Boolean(value.secondCredentialName) === Boolean(value.secondCredentialValue), {
-  message: 'Preencha nome e valor da segunda credencial.',
-});
+const integrationProviders = ['NIBO', 'ABACATEPAY', 'EVOLUTION', 'CHATWOOT', 'GOOGLE_CALENDAR', 'OPENAI'] as const;
+type IntegrationProvider = (typeof integrationProviders)[number];
+const integrationFields: Record<IntegrationProvider, Array<{ key: string; label: string; secret?: boolean; type?: string }>> = {
+  NIBO: [{ key: 'clientId', label: 'Client ID' }, { key: 'clientSecret', label: 'Client secret', secret: true }, { key: 'token', label: 'Token', secret: true }, { key: 'organizationId', label: 'Organização' }, { key: 'accountId', label: 'Conta' }],
+  ABACATEPAY: [{ key: 'apiKey', label: 'Chave da API', secret: true }, { key: 'webhookSecret', label: 'Segredo do webhook', secret: true }, { key: 'environment', label: 'Ambiente' }],
+  EVOLUTION: [{ key: 'baseUrl', label: 'URL base', type: 'url' }, { key: 'apiKey', label: 'Chave da API', secret: true }, { key: 'instanceName', label: 'Nome da instância' }, { key: 'webhookUrl', label: 'URL do webhook', type: 'url' }],
+  CHATWOOT: [{ key: 'baseUrl', label: 'URL base', type: 'url' }, { key: 'accountId', label: 'ID da conta' }, { key: 'inboxId', label: 'ID da caixa de entrada' }, { key: 'apiToken', label: 'Token da API', secret: true }, { key: 'webhookSecret', label: 'Segredo do webhook', secret: true }],
+  GOOGLE_CALENDAR: [{ key: 'clientId', label: 'Client ID' }, { key: 'clientSecret', label: 'Client secret', secret: true }],
+  OPENAI: [{ key: 'provider', label: 'Provedor' }, { key: 'apiKey', label: 'Chave da API', secret: true }, { key: 'model', label: 'Modelo' }],
+};
+const providerCredentialKeys: Record<IntegrationProvider, string[]> = {
+  NIBO: ['clientId', 'clientSecret', 'token', 'organizationId', 'accountId'],
+  ABACATEPAY: ['apiKey', 'webhookSecret'],
+  EVOLUTION: ['apiKey', 'instanceName'],
+  CHATWOOT: ['apiToken', 'webhookSecret'],
+  GOOGLE_CALENDAR: ['clientId', 'clientSecret'],
+  OPENAI: ['apiKey'],
+};
 
 function fields(form: HTMLFormElement) {
   return new FormData(form);
@@ -93,7 +104,7 @@ function MutationPanel({ title, description, children, message, error }: {
   return <section className="panel mutation-panel"><header className="panel-header"><div><h2>{title}</h2><p>{description}</p></div></header>{children}{message && <p className="form-success" role="status">{message}</p>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
-export function ModuleActions({ module, clinicId, clinics, professionals, patients, selectedPatientId, onPatientChange, onSaved }: {
+export function ModuleActions({ module, clinicId, clinics, professionals, patients, selectedPatientId, onPatientChange, onSaved, configurationKind }: {
   module: ModuleKey;
   clinicId: string;
   clinics: Clinic[];
@@ -102,6 +113,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   selectedPatientId: string;
   onPatientChange(value: string): void;
   onSaved(): void;
+  configurationKind?: 'branding' | 'legal' | 'integration';
 }) {
   const clinic = clinics.find((item) => item.id === clinicId);
   const unit = clinic?.units[0];
@@ -111,8 +123,13 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [appointments, setAppointments] = useState<Item[]>([]);
   const [receivables, setReceivables] = useState<Item[]>([]);
   const [conditions, setConditions] = useState<Item[]>([]);
-  const [patientToEdit, setPatientToEdit] = useState('');
+  const [patientToEdit, setPatientToEdit] = useState(selectedPatientId);
   const [resourceRevision, setResourceRevision] = useState(0);
+  const [integrationProvider, setIntegrationProvider] = useState<IntegrationProvider>('NIBO');
+
+  useEffect(() => {
+    if (module === 'pacientes' && selectedPatientId) setPatientToEdit(selectedPatientId);
+  }, [module, selectedPatientId]);
 
   useEffect(() => {
     if (module === 'agenda') {
@@ -188,12 +205,20 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         if (!parsed) return;
         void run(() => api.post('/appointments', { ...parsed, clinicId }), 'Consulta criada.', event.currentTarget);
       }}>
-        <label>Paciente<select name="patientId" required><option value="">Selecione</option>{patientOptions}</select></label>
-        <label>Profissional<select name="professionalId" required><option value="">Selecione</option>{professionalOptions}</select></label>
-        <label>Unidade<select name="unitId" required><option value="">Selecione</option>{clinic?.units.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label>Cadeira<select name="chairId"><option value="">Sem cadeira</option>{clinic?.units.flatMap((item) => item.chairs).map((chair) => <option key={chair.id} value={chair.id}>{chair.name}</option>)}</select></label>
-        <label>Início<input name="startAt" type="datetime-local" required /></label><label>Término<input name="endAt" type="datetime-local" required /></label>
-        <label className="span-2">Observações<input name="notes" /></label><button className="button primary" disabled={busy}>Criar consulta</button>
+        <Disclosure title="Informações principais" description="Paciente e equipe de atendimento">
+          <SearchableSelect name="patientId" label="Paciente" required options={patients.map((item) => ({ value: String(item.id), label: String(item.fullName) }))} />
+          <SearchableSelect name="professionalId" label="Profissional" required options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
+          <SearchableSelect name="unitId" label="Unidade" required options={(clinic?.units ?? []).map((item) => ({ value: item.id, label: item.name }))} />
+          <SearchableSelect name="chairId" label="Cadeira" placeholder="Sem cadeira" options={(clinic?.units ?? []).flatMap((item) => item.chairs).map((item) => ({ value: item.id, label: item.name }))} />
+        </Disclosure>
+        <Disclosure title="Data e duração" description="Conflitos são verificados pela API">
+          <label>Início<input name="startAt" type="datetime-local" required /></label><label>Término<input name="endAt" type="datetime-local" required /></label>
+        </Disclosure>
+        <Disclosure title="Detalhes e comunicação" defaultOpen={false}>
+          <label className="span-2">Observações<input name="notes" /></label>
+          <p className="muted-note span-2">Etiquetas e lembrete de WhatsApp podem ser ajustados nos detalhes após criar a consulta.</p>
+        </Disclosure>
+        <button className="button primary" disabled={busy}>Criar consulta</button>
       </form>
       <form className="mutation-form compact" onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget); const appointmentId = validate(uuid, data.get('appointmentId'));
@@ -287,6 +312,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
 
   if (module === 'integracoes') {
     return <MutationPanel title="Configurações seguras" description="Segredos são enviados uma vez, criptografados no servidor e nunca relidos em claro." message={message} error={error}>
+      {(!configurationKind || configurationKind === 'branding') && (
       <form className="mutation-form compact" onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
         const parsed = validate(brandingSchema, { name: data.get('name'), subtitle: data.get('subtitle'), primaryColor: data.get('primaryColor'), logoUrl: optional(data.get('logoUrl')), faviconUrl: optional(data.get('faviconUrl')) });
@@ -297,6 +323,8 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         <label>Cor principal<input name="primaryColor" type="color" defaultValue="#176b5b" /></label><label>URL do logo<input name="logoUrl" type="url" /></label>
         <label>URL do favicon<input name="faviconUrl" type="url" /></label><button className="button primary" disabled={busy}>Salvar branding</button>
       </form>
+      )}
+      {(!configurationKind || configurationKind === 'legal') && (
       <form className="mutation-form compact" onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
         const parsed = validate(legalSchema, { type: data.get('type'), title: data.get('title'), content: data.get('content'), version: data.get('version') });
@@ -307,26 +335,27 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         <label>Título<input name="title" required /></label><label>Versão<input name="version" type="number" min={1} defaultValue={1} required /></label>
         <label className="span-2">Conteúdo<textarea name="content" minLength={20} required /></label><button className="button primary" disabled={busy}>Salvar documento</button>
       </form>
+      )}
+      {(!configurationKind || configurationKind === 'integration') && (
       <form className="mutation-form compact" autoComplete="off" onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
-        const parsed = validate(integrationSchema, {
-          provider: data.get('provider'), credentialName: data.get('credentialName'), credentialValue: data.get('credentialValue'),
-          secondCredentialName: optional(data.get('secondCredentialName')), secondCredentialValue: optional(data.get('secondCredentialValue')),
+        const credentials: Record<string, string> = {};
+        const configuration: Record<string, string> = {};
+        integrationFields[integrationProvider].forEach((field) => {
+          const value = String(data.get(field.key) ?? '').trim();
+          if (providerCredentialKeys[integrationProvider].includes(field.key)) credentials[field.key] = value;
+          else configuration[field.key] = value;
         });
-        if (!parsed) return;
-        const credentials = {
-          [parsed.credentialName]: parsed.credentialValue,
-          ...(parsed.secondCredentialName && parsed.secondCredentialValue ? { [parsed.secondCredentialName]: parsed.secondCredentialValue } : {}),
-        };
-        void run(() => api.post('/integrations', { clinicId, provider: parsed.provider, credentials }), 'Credencial salva e mascarada.', event.currentTarget);
+        void run(() => api.post('/integrations', { clinicId, provider: integrationProvider, credentials, configuration }), 'Credenciais salvas e mascaradas.', event.currentTarget);
       }}>
-        <label>Provedor<select name="provider">{['NIBO', 'ABACATEPAY', 'EVOLUTION', 'CHATWOOT', 'GOOGLE_CALENDAR', 'OPENAI'].map((provider) => <option key={provider}>{provider}</option>)}</select></label>
-        <label>Nome da credencial<input name="credentialName" placeholder="API_KEY" autoComplete="off" required /></label>
-        <label>Segredo<input name="credentialValue" type="password" autoComplete="new-password" required /></label>
-        <label>Segunda credencial<input name="secondCredentialName" placeholder="BASE_URL (opcional)" autoComplete="off" /></label>
-        <label>Segundo segredo<input name="secondCredentialValue" type="password" autoComplete="new-password" /></label>
-        <button className="button primary" disabled={busy}>Salvar credencial</button>
+        <SearchableSelect name="provider" label="Provedor" value={integrationProvider} onChange={(value) => setIntegrationProvider(value as IntegrationProvider)} options={integrationProviders.map((provider) => ({ value: provider, label: provider === 'GOOGLE_CALENDAR' ? 'Google Agenda' : provider }))} />
+        {integrationFields[integrationProvider].map((field) => (
+          <label key={field.key}>{field.label}<input name={field.key} type={field.secret ? 'password' : field.type ?? 'text'} autoComplete={field.secret ? 'new-password' : 'off'} required /></label>
+        ))}
+        <p className="muted-note span-2">O sistema valida formato e presença dos campos. Nenhuma conexão externa é alegada sem endpoint seguro do adaptador.</p>
+        <button className="button primary" disabled={busy}>Salvar integração</button>
       </form>
+      )}
     </MutationPanel>;
   }
 

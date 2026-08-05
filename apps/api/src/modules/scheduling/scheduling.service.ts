@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { prisma } from '@sonder/database';
+import { Prisma, prisma } from '@sonder/database';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
 
@@ -12,6 +12,11 @@ const appointmentSchema = z.object({
   startAt: z.string().datetime(),
   endAt: z.string().datetime(),
   notes: z.string().trim().optional(),
+  category: z.string().trim().min(2).max(80).optional(),
+  status: z.enum(['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW']).optional(),
+  tagIds: z.array(z.string().uuid()).max(12).optional(),
+  reminderEnabled: z.boolean().optional(),
+  reminderLeadMinutes: z.number().int().min(15).max(10080).optional(),
 });
 
 export type AppointmentInput = {
@@ -23,7 +28,20 @@ export type AppointmentInput = {
   startAt: string;
   endAt: string;
   notes?: string;
+  category?: string;
+  status?: 'SCHEDULED' | 'CONFIRMED' | 'CHECKED_IN' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
+  tagIds?: string[];
+  reminderEnabled?: boolean;
+  reminderLeadMinutes?: number;
 };
+
+const appointmentInclude = {
+  patient: true,
+  professional: true,
+  chair: true,
+  tags: { include: { tag: true } },
+  reminders: true,
+} as const;
 
 @Injectable()
 export class SchedulingService {
@@ -37,7 +55,7 @@ export class SchedulingService {
           lt: to ? new Date(to) : undefined,
         },
       },
-      include: { patient: true, professional: true, chair: true },
+      include: appointmentInclude,
       orderBy: { startAt: 'asc' },
       take: 500,
     });
@@ -75,10 +93,19 @@ export class SchedulingService {
         });
       }
 
-      return transaction.appointment.create({
-        data: { organizationId, ...input, startAt, endAt },
-        include: { patient: true, professional: true, chair: true },
+      const { tagIds = [], reminderEnabled, reminderLeadMinutes = 1440, ...appointment } = input;
+      const created = await transaction.appointment.create({
+        data: {
+          organizationId,
+          ...appointment,
+          startAt,
+          endAt,
+          tags: { create: tagIds.map((tagId) => ({ tagId })) },
+        },
+        include: appointmentInclude,
       });
+      await this.configureReminder(transaction, organizationId, created.id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
+      return transaction.appointment.findUniqueOrThrow({ where: { id: created.id }, include: appointmentInclude });
     }, { isolationLevel: 'Serializable' });
   }
 
@@ -106,11 +133,20 @@ export class SchedulingService {
         },
       });
       if (conflict) throw new ConflictException('O horário selecionado está em conflito com outro agendamento.');
-      return transaction.appointment.update({
+      const { tagIds, reminderEnabled, reminderLeadMinutes = 1440, ...appointmentData } = input;
+      const updated = await transaction.appointment.update({
         where: { id },
-        data: { ...input, startAt, endAt, version: { increment: 1 } },
-        include: { patient: true, professional: true, chair: true },
+        data: {
+          ...appointmentData,
+          startAt,
+          endAt,
+          version: { increment: 1 },
+          ...(tagIds ? { tags: { deleteMany: {}, create: tagIds.map((tagId) => ({ tagId })) } } : {}),
+        },
+        include: appointmentInclude,
       });
+      await this.configureReminder(transaction, organizationId, id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
+      return transaction.appointment.findUniqueOrThrow({ where: { id: updated.id }, include: appointmentInclude });
     }, { isolationLevel: 'Serializable' });
   }
 
@@ -157,15 +193,65 @@ export class SchedulingService {
   }
 
   private async assertResources(organizationId: string, input: AppointmentInput) {
-    const [clinic, unit, patient, professional, chair] = await Promise.all([
+    const [clinic, unit, patient, professional, chair, tagCount] = await Promise.all([
       prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId, status: 'ACTIVE' }, select: { id: true } }),
       prisma.unit.findFirst({ where: { id: input.unitId, clinicId: input.clinicId, status: 'ACTIVE' }, select: { id: true } }),
       prisma.patient.findFirst({ where: { id: input.patientId, organizationId, status: { not: 'ARCHIVED' } }, select: { id: true } }),
       prisma.professional.findFirst({ where: { id: input.professionalId, user: { organizationId }, status: 'ACTIVE' }, select: { id: true } }),
       input.chairId ? prisma.chair.findFirst({ where: { id: input.chairId, unitId: input.unitId, status: 'ACTIVE', isSchedulingEnabled: true }, select: { id: true } }) : Promise.resolve({ id: 'optional' }),
+      input.tagIds?.length
+        ? prisma.agendaTag.count({ where: { id: { in: input.tagIds }, organizationId, clinicId: input.clinicId, active: true } })
+        : Promise.resolve(0),
     ]);
-    if (!clinic || !unit || !patient || !professional || !chair) {
+    if (!clinic || !unit || !patient || !professional || !chair || tagCount !== new Set(input.tagIds ?? []).size) {
       throw new NotFoundException('Clínica, unidade, paciente, profissional ou cadeira inválidos.');
+    }
+  }
+
+  private async configureReminder(
+    transaction: Prisma.TransactionClient,
+    organizationId: string,
+    appointmentId: string,
+    clinicId: string,
+    startAt: Date,
+    enabled = false,
+    leadMinutes = 1440,
+  ) {
+    if (!enabled) {
+      await transaction.appointmentReminder.deleteMany({ where: { appointmentId, channel: 'WHATSAPP' } });
+      return;
+    }
+    const evolution = await transaction.integrationConnection.findFirst({
+      where: { clinicId, provider: 'EVOLUTION', status: 'ACTIVE', encryptedCredentials: { not: null } },
+      select: { id: true },
+    });
+    const scheduledFor = new Date(startAt.getTime() - leadMinutes * 60_000);
+    const reminder = await transaction.appointmentReminder.upsert({
+      where: { appointmentId_channel: { appointmentId, channel: 'WHATSAPP' } },
+      update: {
+        leadMinutes,
+        scheduledFor,
+        status: evolution ? 'PENDING' : 'DISABLED',
+        statusReason: evolution ? null : 'Evolution não configurado.',
+      },
+      create: {
+        organizationId,
+        appointmentId,
+        leadMinutes,
+        scheduledFor,
+        status: evolution ? 'PENDING' : 'DISABLED',
+        statusReason: evolution ? undefined : 'Evolution não configurado.',
+      },
+    });
+    if (evolution) {
+      await transaction.outboxEvent.create({
+        data: {
+          aggregateType: 'AppointmentReminder',
+          aggregateId: reminder.id,
+          eventType: 'appointment.whatsapp-reminder.requested',
+          payload: { reminderId: reminder.id, appointmentId, scheduledFor: scheduledFor.toISOString() },
+        },
+      });
     }
   }
 }

@@ -65,6 +65,13 @@ class PrescriptionSuggestionDto {
   @IsOptional() @IsArray() @IsString({ each: true }) allergies?: string[];
   @IsOptional() @IsArray() @IsString({ each: true }) medications?: string[];
 }
+class PrescriptionDto {
+  @IsUUID() clinicId!: string;
+  @IsUUID() patientId!: string;
+  @IsUUID() professionalId!: string;
+  @IsString() @MinLength(3) purpose!: string;
+  @IsArray() items!: unknown[];
+}
 
 @ApiTags('operations')
 @Controller()
@@ -119,9 +126,22 @@ export class OperationsController {
   @Get('communication/deliveries') @RequirePermissions('integration.view')
   deliveries(@Req() req: AuthenticatedRequest) { return this.operations.deliveries(req.auth.organizationId); }
   @Get('reports/summary') @RequirePermissions('report.view_management')
-  reports(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) { return this.operations.reports(req.auth.organizationId, clinicId); }
+  reports(
+    @Req() req: AuthenticatedRequest,
+    @Query('clinicId') clinicId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) { return this.operations.reports(req.auth.organizationId, clinicId, from, to); }
   @Post('prescriptions/suggest') @RequirePermissions('medical_record.create')
   prescription(@Req() req: AuthenticatedRequest, @Body() body: PrescriptionSuggestionDto) { return this.operations.suggestPrescription(req.auth.organizationId, body); }
+  @Get('prescriptions') @RequirePermissions('medical_record.view')
+  prescriptions(@Req() req: AuthenticatedRequest, @Query('patientId') patientId: string) {
+    return this.operations.prescriptions(req.auth.organizationId, patientId);
+  }
+  @Post('prescriptions') @RequirePermissions('medical_record.create')
+  createPrescription(@Req() req: AuthenticatedRequest, @Body() body: PrescriptionDto) {
+    return this.operations.createPrescription(req.auth.organizationId, body);
+  }
 }
 
 @ApiTags('public')
