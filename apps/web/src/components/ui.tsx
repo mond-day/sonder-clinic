@@ -111,6 +111,36 @@ export function EmptyState({
   );
 }
 
+export function ErrorState({
+  title = 'Não foi possível carregar',
+  description,
+  onRetry,
+}: {
+  title?: string;
+  description?: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className="empty-state">
+      <h3>{title}</h3>
+      {description ? <p>{description}</p> : null}
+      {onRetry ? (
+        <button type="button" className="button soft" onClick={onRetry}>Tentar novamente</button>
+      ) : null}
+    </div>
+  );
+}
+
+export function Skeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="skeleton-stack" aria-hidden>
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="skeleton-line" />
+      ))}
+    </div>
+  );
+}
+
 export function UnavailableFeature({
   title,
   description,

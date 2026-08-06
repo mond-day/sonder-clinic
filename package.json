@@ -1,7 +1,7 @@
 {
   "name": "sonder-clinic",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "ERP Odontológico Interno — Sonder Clinic",
   "packageManager": "pnpm@9.15.0",
   "engines": {
@@ -17,6 +17,7 @@
     "typecheck": "corepack pnpm -r typecheck",
     "test": "corepack pnpm -r test",
     "test:integration": "corepack pnpm -r test:integration",
+    "test:e2e": "corepack pnpm --filter @sonder/web test:e2e",
     "db:generate": "corepack pnpm --filter @sonder/database generate",
     "db:migrate": "corepack pnpm --filter @sonder/database migrate:dev",
     "db:deploy": "corepack pnpm --filter @sonder/database migrate:deploy",

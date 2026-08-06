@@ -56,6 +56,7 @@ const navGroups: Array<{
   {
     label: 'Administração',
     items: [
+      { label: 'Usuários', href: '/usuarios', icon: Users },
       { label: 'Configurações', href: '/configuracoes', icon: Settings },
     ],
   },

@@ -44,7 +44,7 @@ html, body {
   min-height: 100%;
   background: var(--canvas);
   color: var(--ink);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-sans), "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   line-height: 1.45;
 }
@@ -959,4 +959,47 @@ button { cursor: pointer; }
 
 @media (max-width: 680px) {
   .disclosure-content { grid-template-columns: 1fr; }
+}
+
+/* V2 anamnese / relatórios / usuários — hierarquia dos protótipos aprovados */
+.page-heading h1, .brand strong { font-family: var(--font-display), "Source Serif 4", Georgia, serif; }
+.skeleton-stack { display: grid; gap: 10px; }
+.skeleton-line { height: 14px; border-radius: 8px; background: linear-gradient(90deg, #e7eeeb, #f7faf8, #e7eeeb); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.anamnesis-grid { display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 16px; }
+.section-rail, .risk-panel { display: grid; gap: 8px; align-content: start; }
+.section-rail button, .template-card, .report-card, .role-card {
+  width: 100%; text-align: left; border: 1px solid var(--line); background: var(--surface);
+  border-radius: 12px; padding: 12px 14px; display: grid; gap: 4px;
+}
+.section-rail button.active, .template-card:hover, .report-card.active, .role-card.active {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--accent-dark);
+}
+.section-rail button.done { color: var(--success); }
+.template-cards, .report-catalog, .role-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.choice-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.choice-pills button { border: 1px solid var(--line); background: var(--surface-soft); border-radius: 999px; padding: 7px 12px; }
+.choice-pills button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.question-block { margin-bottom: 18px; display: grid; gap: 6px; }
+.question-block label { display: grid; gap: 4px; font-weight: 650; }
+.question-block small, .muted-note { color: var(--muted); font-weight: 500; }
+.signature-pad canvas { border: 1px dashed var(--line); border-radius: 12px; background: #fff; }
+.checkbox-row { display: flex; gap: 8px; align-items: center; font-weight: 550; }
+.anamnesis-workspace .metric-grid, .reports-view .metric-grid, .users-view .metric-grid,
+.module-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.reports-layout, .users-layout { display: grid; grid-template-columns: 1.1fr 1.4fr; gap: 16px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chip { border: 1px solid var(--line); background: var(--surface-soft); border-radius: 999px; padding: 6px 12px; }
+.chip.active { background: var(--accent-soft); color: var(--accent-dark); border-color: #cde7e4; }
+.permission-matrix { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; max-height: 420px; overflow: auto; }
+.timeline { display: grid; gap: 10px; }
+.timeline-item { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.form-section { border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; background: var(--surface); }
+.form-section header h3 { margin: 0 0 4px; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(16, 36, 32, .45); display: grid; place-items: center; z-index: 90; }
+.modal-card { width: min(440px, calc(100% - 32px)); background: #fff; border-radius: 16px; padding: 22px; display: grid; gap: 12px; }
+.button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+@media (max-width: 980px) {
+  .anamnesis-grid, .reports-layout, .users-layout { grid-template-columns: 1fr; }
+  .anamnesis-workspace .metric-grid, .reports-view .metric-grid, .users-view .metric-grid { grid-template-columns: 1fr 1fr; }
 }

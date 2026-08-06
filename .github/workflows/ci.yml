@@ -12,7 +12,38 @@ concurrency:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sonder
+          POSTGRES_PASSWORD: senha123
+          POSTGRES_DB: sonder_clinic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonder -d sonder_clinic"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://sonder:senha123@localhost:5432/sonder_clinic?schema=public
+      JWT_ACCESS_SECRET: change-me-access-ci-only-min-32-chars!!
+      JWT_REFRESH_SECRET: change-me-refresh-ci-only-min-32-chars!
+      ENCRYPTION_MASTER_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      WEB_URL: http://localhost:3000
+      API_URL: http://localhost:4000
+      NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
+      CORS_ORIGIN: http://localhost:3000
+      STORAGE_DRIVER: local
+      AV_DRIVER: stub
+      NIBO_MOCK: 'true'
+      EVOLUTION_MOCK: 'true'
+      GOOGLE_CALENDAR_MOCK: 'true'
+      CHATWOOT_MOCK: 'true'
+      ABACATEPAY_MOCK: 'true'
+      OPENAI_MOCK: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -27,3 +58,26 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: pnpm db:deploy
+      - run: pnpm db:seed
+      - run: pnpm --filter @sonder/web test:e2e:install
+      - name: Start API and Web
+        run: |
+          pnpm --filter @sonder/api start > /tmp/api.log 2>&1 &
+          mkdir -p apps/web/.next/standalone/apps/web/.next
+          cp -R apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static
+          cp -R apps/web/public apps/web/.next/standalone/apps/web/public 2>/dev/null || true
+          cd apps/web/.next/standalone/apps/web
+          PORT=3000 HOSTNAME=0.0.0.0 NODE_ENV=production node server.js > /tmp/web.log 2>&1 &
+          cd -
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:4000/api/v1/health >/dev/null && curl -sf http://localhost:3000 >/dev/null; then
+              echo "services ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API log:"; tail -50 /tmp/api.log || true
+          echo "WEB log:"; tail -50 /tmp/web.log || true
+          exit 1
+      - run: pnpm test:e2e

@@ -20,10 +20,12 @@ import { FinanceView } from './finance-view';
 import { LabView } from './lab-view';
 import { ModuleActions } from './module-actions';
 import { PatientsBrowser } from './patients-browser';
+import { ReportsView } from './reports-view';
 import { ReturnsView } from './returns-view';
 import { useSelection } from './selection-provider';
 import { SettingsView } from './settings-view';
 import { TasksView } from './tasks-view';
+import { UsersView } from './users-view';
 import { EmptyState, PageHeader, Panel, StatusBadge } from './ui';
 
 type ModuleKey =
@@ -39,12 +41,13 @@ type ModuleKey =
   | 'relatorios'
   | 'retornos'
   | 'tarefas'
-  | 'laboratorio';
+  | 'laboratorio'
+  | 'usuarios';
 
 /** Módulos com tela dedicada; os demais caem no renderizador tabular genérico. */
 type GenericModuleKey = Exclude<
   ModuleKey,
-  'agenda' | 'pacientes' | 'financeiro' | 'retornos' | 'tarefas' | 'laboratorio' | 'configuracoes' | 'integracoes'
+  'agenda' | 'pacientes' | 'financeiro' | 'retornos' | 'tarefas' | 'laboratorio' | 'configuracoes' | 'integracoes' | 'relatorios' | 'usuarios'
 >;
 
 type ViewData = { columns: string[]; rows: string[][]; metrics: Array<[string, string, string]> };
@@ -63,6 +66,7 @@ const metadata: Record<ModuleKey, { name: string; description: string }> = {
   retornos: { name: 'Central de retornos', description: 'Alertas clínicos de retorno e reagendamento.' },
   tarefas: { name: 'Tarefas', description: 'Atividades da equipe com prazo e responsável.' },
   laboratorio: { name: 'Laboratório & casos', description: 'Controle de prótese, ortodontia e implantodontia.' },
+  usuarios: { name: 'Usuários e permissões', description: 'Equipe, convites, perfis e matriz RBAC.' },
 };
 
 async function loadModule(module: GenericModuleKey, clinicId: string, patientId: string, reportFrom?: string, reportTo?: string): Promise<ViewData> {
@@ -157,6 +161,8 @@ export function ModuleView({ module }: { module: string }) {
   if (key === 'tarefas') return <TasksView />;
   if (key === 'laboratorio') return <LabView />;
   if (key === 'configuracoes' || key === 'integracoes') return <SettingsView />;
+  if (key === 'relatorios') return <ReportsView />;
+  if (key === 'usuarios') return <UsersView />;
 
   return <GenericModuleView moduleKey={key} />;
 }
@@ -223,14 +229,6 @@ function GenericModuleView({ moduleKey: key }: { moduleKey: GenericModuleKey }) 
         onPatientChange={setSelectedPatientId}
         onSaved={() => { loadPatients(); load(); }}
       />
-      {key === 'relatorios' ? (
-        <Panel title="Período do relatório" description="Filtros aplicados diretamente às consultas agregadas">
-          <div className="filters">
-            <label>De<input type="date" value={reportFrom} onChange={(event) => setReportFrom(event.target.value)} /></label>
-            <label>Até<input type="date" value={reportTo} onChange={(event) => setReportTo(event.target.value)} /></label>
-          </div>
-        </Panel>
-      ) : null}
       {key === 'tratamentos' && selectedPatientId && (
         <div className="secure-notice">
           <div>

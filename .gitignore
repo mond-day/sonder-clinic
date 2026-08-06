@@ -15,3 +15,7 @@ secrets/
 **/a1-certificate*
 **/certificates/
 .DS_Store
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/

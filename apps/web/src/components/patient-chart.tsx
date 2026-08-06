@@ -22,6 +22,7 @@ import {
 import { useAuth } from './auth-provider';
 import { usePresentation } from './presentation-provider';
 import { useSelection } from './selection-provider';
+import { AnamnesisWorkspace } from '@/features/anamnesis/anamnesis-workspace';
 import { EmptyState, Panel, StatusBadge } from './ui';
 import { Modal } from './modal';
 import { SearchableSelect } from './searchable-select';
@@ -359,26 +360,12 @@ export function PatientChart({ patientId }: { patientId: string }) {
         </div>
       )}
 
-      {activeTab === 'anamnese' && (
-        <div className="patient-grid">
-          <Panel title="Modelos de anamnese" description="Templates disponíveis na organização" actions={<button className="button primary small" type="button" onClick={() => setActiveModal('anamnesis')}>Preencher anamnese</button>}>
-            {anamnesisTemplates.length === 0 ? (
-              <EmptyState title="Nenhum modelo" description="Cadastre modelos pela API POST /anamnesis/templates." />
-            ) : (
-              <div className="anamnese-list">
-                {anamnesisTemplates.map((item) => (
-                  <div className="anamnese-card" key={String(item.id)}>
-                    <div>
-                      <h3>{text(item.name)}</h3>
-                      <p>Público: {presentationLabel(item.audience)} · Validade: {text(item.validityMonths, '—')} meses</p>
-                    </div>
-                    <StatusBadge tone="blue">Modelo</StatusBadge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
-          <Panel title="Alertas gerados" description="Derivados do prontuário / anamnese">
+      {activeTab === 'anamnese' && clinicId && (
+        <div className="patient-grid anamnese-v2">
+          <div className="span-2">
+            <AnamnesisWorkspace patientId={patientId} clinicId={clinicId} />
+          </div>
+          <Panel title="Alertas do prontuário" description="Derivados da anamnese e demais registros">
             {alerts.length === 0 ? <EmptyState title="Sem alertas" /> : (
               <div className="health-alerts">
                 {alerts.map((alert, index) => (
