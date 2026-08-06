@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { seedRichData } from './seed-rich-data';
+import { seedAnamnesisCatalogs } from './seeds/anamnesis';
 
 const prisma = new PrismaClient();
 
@@ -12,6 +13,9 @@ const permissions = [
   'patient.document.manage', 'patient.consent.manage',
   'medical_record.view', 'medical_record.create', 'medical_record.correct', 'medical_record.private_note',
   'anamnesis.view', 'anamnesis.manage',
+  'anamnesis.template.view', 'anamnesis.template.create', 'anamnesis.template.update',
+  'anamnesis.template.publish', 'anamnesis.template.archive',
+  'anamnesis.response.view', 'anamnesis.response.create', 'anamnesis.response.sign', 'anamnesis.response.supersede',
   'treatment.view', 'treatment.create', 'treatment.update', 'treatment.approve', 'treatment.execute',
   'procedure_table.manage',
   'document.view', 'document.create', 'document.sign', 'document.template.manage',
@@ -19,9 +23,9 @@ const permissions = [
   'financial.view', 'financial.create', 'financial.discount', 'financial.refund', 'financial.cancel', 'financial.reconcile',
   'commission.view_own', 'commission.view_all', 'commission.configure', 'commission.close',
   'integration.view', 'integration.manage',
-  'report.view_clinical', 'report.view_financial', 'report.view_management', 'audit.view',
+  'report.view_clinical', 'report.view_financial', 'report.view_management', 'report.export', 'audit.view',
   'return_alert.view', 'return_alert.manage', 'task.view', 'task.manage',
-  'lab_case.view', 'lab_case.manage', 'notification.view',
+  'lab_case.view', 'lab_case.manage', 'laboratory.manage', 'notification.view',
 ];
 
 async function main(): Promise<void> {
@@ -74,29 +78,7 @@ async function main(): Promise<void> {
     update: { name: user.name },
     create: { userId: user.id, name: user.name, croNumber: '12345', croState: 'MT' },
   });
-  const anamnesisTemplates = [
-    { name: 'Anamnese adulto', audience: 'ADULT' },
-    { name: 'Anamnese infantil', audience: 'CHILD' },
-    { name: 'Anamnese idoso', audience: 'ELDERLY' },
-    { name: 'Anamnese gestante', audience: 'PREGNANT' },
-  ];
-  for (const template of anamnesisTemplates) {
-    await prisma.anamnesisTemplate.upsert({
-      where: { organizationId_name_version: { organizationId: organization.id, name: template.name, version: 1 } },
-      update: {},
-      create: {
-        organizationId: organization.id,
-        ...template,
-        schemaJson: {
-          fields: [
-            { key: 'allergies', type: 'allergy', label: 'Possui alergias?' },
-            { key: 'medications', type: 'medication', label: 'Medicamentos em uso' },
-            { key: 'medicalConditions', type: 'long_text', label: 'Condições médicas' },
-          ],
-        },
-      },
-    });
-  }
+  await seedAnamnesisCatalogs(prisma, organization.id);
   const conditions: Array<[string, string, string]> = [
     ['HEALTHY', 'Hígido', '#78A890'], ['CARIES', 'Cárie', '#B93A3A'],
     ['RESTORATION', 'Restauração existente', '#315E8A'], ['MISSING', 'Ausência dentária', '#68746F'],
