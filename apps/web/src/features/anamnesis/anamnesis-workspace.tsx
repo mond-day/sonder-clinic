@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { list, text, type RecordValue } from '@/lib/format';
 import { EmptyState, ErrorState, MetricCard, PageHeader, Panel, Skeleton, StatusBadge } from '@/components/ui';
+import { isGroupVisible, type ConditionGroup } from './conditions';
 import { QuestionRenderer } from './question-renderer';
 import { SignaturePad } from './signature-pad';
 
@@ -19,6 +20,7 @@ type Template = RecordValue & {
       code: string;
       title: string;
       order: number;
+      visibleWhen?: ConditionGroup;
       questions: Array<{
         id: string;
         code: string;
@@ -29,6 +31,7 @@ type Template = RecordValue & {
         options?: Array<{ value: string; label: string }>;
         unit?: string;
         details?: { enabled: boolean; label: string };
+        visibleWhen?: ConditionGroup;
       }>;
     }>;
   };
@@ -90,13 +93,26 @@ export function AnamnesisWorkspace({
   useEffect(() => { void load(); }, [load]);
 
   const sections = useMemo(
-    () => (activeTemplate?.schemaJson.sections ?? []).slice().sort((a, b) => a.order - b.order),
-    [activeTemplate],
+    () => (activeTemplate?.schemaJson.sections ?? [])
+      .slice()
+      .sort((a, b) => a.order - b.order)
+      .filter((section) => isGroupVisible(answers, section.visibleWhen)),
+    [activeTemplate, answers],
   );
   const section = sections[sectionIndex];
+  const visibleQuestions = useMemo(
+    () => (section?.questions ?? []).filter((question) => isGroupVisible(answers, question.visibleWhen)),
+    [section, answers],
+  );
   const progress = sections.length
     ? Math.round(((sectionIndex + 1) / sections.length) * 100)
     : 0;
+
+  useEffect(() => {
+    if (sectionIndex >= sections.length && sections.length > 0) {
+      setSectionIndex(sections.length - 1);
+    }
+  }, [sections.length, sectionIndex]);
 
   async function start(template: Template) {
     setBusy(true);
@@ -255,7 +271,7 @@ export function AnamnesisWorkspace({
           ))}
         </aside>
         <Panel title={section?.title ?? 'Seção'}>
-          {(section?.questions ?? []).map((question) => (
+          {visibleQuestions.map((question) => (
             <QuestionRenderer
               key={question.id}
               question={question}
@@ -263,6 +279,9 @@ export function AnamnesisWorkspace({
               onChange={(next) => setAnswers((current) => ({ ...current, [question.code]: next }))}
             />
           ))}
+          {!visibleQuestions.length ? (
+            <p className="muted-note">Nenhuma pergunta visível nesta seção com as respostas atuais.</p>
+          ) : null}
           <div className="heading-actions">
             <button type="button" className="button" disabled={sectionIndex === 0} onClick={() => setSectionIndex((i) => i - 1)}>← Anterior</button>
             <button

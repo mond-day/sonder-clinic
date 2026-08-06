@@ -1023,10 +1023,21 @@ button { cursor: pointer; }
 .checkbox-row { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; }
 .button.wide, .wide { width: 100%; }
 .editor-meta { margin-bottom: 4px; }
+.rules-panel {
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 10px 0; background: #f7fbfb;
+}
+.rules-panel.nested { margin-top: 12px; background: #fff; }
+.rules-panel summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.rules-panel h4 { margin: 12px 0 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.condition-editor, .alert-rule-card { display: grid; gap: 8px; margin-top: 8px; }
+.alert-rule-card { border: 1px dashed #d5e0de; border-radius: 10px; padding: 10px; }
+.condition-row { align-items: end; }
 
 .odontogram { display: grid; gap: 17px; }
-.arch { display: grid; grid-template-columns: repeat(16, minmax(38px, 1fr)); gap: 5px; overflow: auto; padding: 4px; }
-.tooth { min-width: 38px; }
+.arch { display: grid; grid-template-columns: repeat(auto-fit, minmax(38px, 1fr)); gap: 5px; overflow: auto; padding: 4px; max-width: 760px; }
+.tooth { min-width: 38px; cursor: pointer; }
+.odontogram-tools { display: grid; gap: 8px; }
+.condition-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .tooth-number { text-align: center; font-size: 9px; color: var(--muted); margin-bottom: 4px; }
 .tooth-shape {
   width: 38px; height: 45px; margin: auto; border: 1px solid #b9c8c3; border-radius: 12px 12px 8px 8px;

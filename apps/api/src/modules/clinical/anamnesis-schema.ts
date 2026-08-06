@@ -69,17 +69,36 @@ const sectionSchema = z.object({
   questions: z.array(questionSchema).min(1),
 });
 
+const riskRuleSchema = z.object({
+  id: z.string(),
+  label: z.string().min(1),
+  when: conditionGroupSchema,
+  contribution: z.number().int().min(0).max(100).default(10),
+  level: z.enum(['LOW', 'MODERATE', 'HIGH']).optional(),
+  messageTemplate: z.string().optional(),
+});
+
+const completionRuleSchema = z.object({
+  id: z.string(),
+  label: z.string().min(1),
+  when: conditionGroupSchema.optional(),
+  requiredQuestionCodes: z.array(z.string()).default([]),
+});
+
 export const anamnesisSchemaSchema = z.object({
   schemaVersion: z.literal(1),
   title: z.string().min(2),
   audience: z.enum(['ADULT', 'CHILD', 'ELDERLY', 'PREGNANT', 'CUSTOM']),
   sections: z.array(sectionSchema).min(1),
-  riskRules: z.array(z.unknown()).default([]),
-  completionRules: z.array(z.unknown()).default([]),
+  riskRules: z.array(riskRuleSchema).default([]),
+  // Formato legado (ex.: { type: 'REQUIRED_ACKNOWLEDGEMENTS' }) permanece aceito.
+  completionRules: z.array(z.union([completionRuleSchema, z.record(z.unknown())])).default([]),
 });
 
 export type AnamnesisSchema = z.infer<typeof anamnesisSchemaSchema>;
 export type AnamnesisQuestion = z.infer<typeof questionSchema>;
+export type ConditionGroup = z.infer<typeof conditionGroupSchema>;
+export type RiskRule = z.infer<typeof riskRuleSchema>;
 
 export function parseAnamnesisSchema(value: unknown): AnamnesisSchema {
   return anamnesisSchemaSchema.parse(value);
@@ -184,7 +203,20 @@ export function calculateAlertsAndRisk(schema: AnamnesisSchema, answers: Record<
       if (rule.severity === 'WARNING') warning += 1;
     }
   }
-  const score = Math.min(100, critical * 25 + warning * 10);
+  let riskBonus = 0;
+  for (const rule of schema.riskRules ?? []) {
+    if (!isGroupVisible(answers, rule.when)) continue;
+    riskBonus += rule.contribution;
+    if (rule.messageTemplate) {
+      alerts.push({
+        type: 'RISK_RULE',
+        severity: rule.level === 'HIGH' ? 'CRITICAL' : rule.level === 'MODERATE' ? 'WARNING' : 'INFO',
+        message: rule.messageTemplate,
+        createPatientAlert: rule.level === 'HIGH',
+      });
+    }
+  }
+  const score = Math.min(100, critical * 25 + warning * 10 + riskBonus);
   const level = score >= 50 ? 'HIGH' : score >= 20 ? 'MODERATE' : 'LOW';
   return {
     alerts,

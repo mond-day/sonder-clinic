@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -19,6 +20,8 @@ export type PutObjectInput = {
   contentType: string;
   body: Buffer | Readable;
   metadata?: Record<string, string>;
+  /** Prefixo lógico (ex.: certificates/) antes do restante da chave. */
+  keyPrefix?: string;
 };
 
 export type StoredObject = {
@@ -34,6 +37,7 @@ export type StorageAdapter = {
   enabled: boolean;
   disabledReason?: string;
   putObject(input: PutObjectInput): Promise<StoredObject>;
+  deleteObject(objectKey: string): Promise<void>;
   getSignedUrl?(objectKey: string, expiresSeconds?: number): Promise<string>;
 };
 
@@ -53,12 +57,15 @@ async function bodyToBuffer(body: Buffer | Readable): Promise<Buffer> {
 }
 
 function buildObjectKey(input: PutObjectInput): string {
-  return [
+  const prefix = (input.keyPrefix ?? '').replace(/^\/+|\/+$/g, '');
+  const parts = [
+    ...(prefix ? [prefix] : []),
     input.organizationId,
     input.clinicId ?? 'org',
     randomUUID(),
     input.filename.replaceAll(/[^a-zA-Z0-9._-]/g, '_'),
-  ].join('/');
+  ];
+  return parts.join('/');
 }
 
 class LocalStorageAdapter implements StorageAdapter {
@@ -75,9 +82,9 @@ class LocalStorageAdapter implements StorageAdapter {
   async putObject(input: PutObjectInput): Promise<StoredObject> {
     const objectKey = buildObjectKey(input);
     const fullPath = path.join(this.root, this.bucket, objectKey);
-    await fs.mkdir(path.dirname(fullPath), { recursive: true });
+    await fs.mkdir(path.dirname(fullPath), { recursive: true, mode: 0o700 });
     if (Buffer.isBuffer(input.body)) {
-      await fs.writeFile(fullPath, input.body);
+      await fs.writeFile(fullPath, input.body, { mode: 0o600 });
       return {
         bucket: this.bucket,
         objectKey,
@@ -86,9 +93,14 @@ class LocalStorageAdapter implements StorageAdapter {
         driver: this.driver,
       };
     }
-    await pipeline(input.body, createWriteStream(fullPath));
+    await pipeline(input.body, createWriteStream(fullPath, { mode: 0o600 }));
     const stat = await fs.stat(fullPath);
     return { bucket: this.bucket, objectKey, size: stat.size, driver: this.driver };
+  }
+
+  async deleteObject(objectKey: string): Promise<void> {
+    const fullPath = path.join(this.root, this.bucket, objectKey);
+    await fs.rm(fullPath, { force: true });
   }
 }
 
@@ -145,6 +157,16 @@ class MinioStorageAdapter implements StorageAdapter {
       size: body.length,
       driver: this.driver,
     };
+  }
+
+  async deleteObject(objectKey: string): Promise<void> {
+    if (!this.enabled || !this.client) {
+      throw new Error(this.disabledReason ?? 'Storage MinIO desabilitado.');
+    }
+    await this.client.send(new DeleteObjectCommand({
+      Bucket: this.bucket,
+      Key: objectKey,
+    }));
   }
 
   async getSignedUrl(objectKey: string, expiresSeconds = 300): Promise<string> {

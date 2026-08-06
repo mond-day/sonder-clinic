@@ -1,17 +1,18 @@
 # Status de implementação
 
-Atualizado em 06/08/2026 — versão **1.1.1**.
+Atualizado em 06/08/2026 — versão **1.1.2**.
 
-## Concluído nesta entrega (1.1.1)
+## Concluído nesta entrega (1.1.2)
 
-### Gaps fechados sobre 1.1.0
-- Editor visual drag-and-drop de anamnese em Configurações (`Anamnese (modelos)`): listar/criar/editar rascunhos, reordenar seções/perguntas, publicar, nova versão, duplicar e arquivar via API existente.
-- Odontograma 2D por faces (V/O/M/D) no prontuário, com seleção múltipla, painel do dente e gravação de nova versão.
-- Documentos “paper”: biblioteca + prévia + gerar/assinar/PDF em `/documentos` e prévia no prontuário.
-- Export PDF gráfico (pdfkit) para relatórios (`/reports/by/:id?format=pdf`) e documentos (`/documents/:id/pdf`).
-- Storage MinIO/S3 com `@aws-sdk/client-s3` quando `STORAGE_DRIVER=minio|s3` + credenciais; disco local permanece o padrão de desenvolvimento. Status exposto em `GET /integrations`.
+### Residuais 1.1.1 fechados
+- Editor de anamnese: UI dedicada por regra para `visibleWhen` (seção/pergunta), `alertRules` e `riskRules` tipados no schema; workspace clínico filtra perguntas/seções condicionais.
+- Odontograma: dentição permanente / decídua / mista, seleção multi-dente, chips de condição e pintura em lote (API já versionava por tipo).
+- Certificado A1: upload/remoção via adapter unificado `@sonder/storage` (disco local em `STORAGE_DRIVER=local`, MinIO/S3 em prod). Sem credenciais → erro explícito, sem falso sucesso. Legado `.data/certificates` ainda legível na remoção.
 
-## Herdado de 1.1.0
+### Qualidade
+- Gates: `pnpm typecheck`, `pnpm test`, `env -u NODE_ENV pnpm build`, `db:deploy`, `db:seed`, `pnpm test:e2e`.
+
+## Herdado de 1.1.1 / 1.1.0
 
 ### Referências HTML
 - Pacote V2 Anamnese/Evolução em `HTML_REFERENCIAS/02_ANAMNESE_EVOLUCAO_V2/`.
@@ -25,17 +26,13 @@ Atualizado em 06/08/2026 — versão **1.1.1**.
 - Catálogos seed Adulto/Infantil/Idoso/Gestante.
 - API draft/publish/version/sign/remote link + UI no prontuário e `/assinar/anamnese/[token]`.
 
-### Qualidade
-- Playwright E2E dos fluxos principais no CI.
-- Gates: `pnpm typecheck`, `pnpm test`, `env -u NODE_ENV pnpm build`, `db:deploy`, `db:seed`, `pnpm test:e2e`.
-
 ## Integrações desabilitadas sem credencial
 - Evolution, Nibo, Google Calendar, Chatwoot, AbacatePay, OpenAI: desativado quando `*_MOCK=true` ou env ausente (sem simular sucesso).
-- MinIO: `STORAGE_DRIVER=minio|s3` + `S3_ENDPOINT`/`S3_ACCESS_KEY`/`S3_SECRET_KEY`; sem credenciais o adapter fica `enabled=false`.
+- MinIO: `STORAGE_DRIVER=minio|s3` + `S3_ENDPOINT`/`S3_ACCESS_KEY`/`S3_SECRET_KEY`; sem credenciais o adapter fica `enabled=false` e upload A1 rejeita.
 - ClamAV: `AV_DRIVER=clamav` + `CLAMAV_HOST`; sem socket → não marca arquivo como limpo.
 
-## Residual conhecido
-- Editor de anamnese cobre o fluxo principal (CRUD visual + DnD + publicação); regras avançadas de risco/condição ainda são editáveis via schema persistido, sem UI dedicada por regra.
-- Odontograma foca dentição permanente; decídua/mista e ferramentas de pintura em lote seguem o protótipo como evolução.
-- Upload clínico genérico (PatientMedia) ainda não troca o certificado A1 para o adapter MinIO — certificado permanece em path dedicado.
+## Residual conhecido (fora desta linha / depende de secret)
+- Upload multipart genérico `PatientMedia` (rota HTTP) — modelo existe; transporte ainda não.
+- Assinatura A1 de documentos ainda não consome o PKCS#12 armazenado (método A1 aceito na API sem cadeia ICP).
 - ClamAV continua gated sem falso positivo.
+- Odontograma 3D permanece conceito (protótipo).

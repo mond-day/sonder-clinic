@@ -78,7 +78,9 @@ POST   /api/v1/settings/certificate
 DELETE /api/v1/settings/certificate
 ```
 
-Os modelos `FileObject`/`PatientMedia` existem, mas não há transporte multipart nem adapter de storage privado ativo. Até isso existir, a UI não simula upload e o certificado permanece configurável apenas por secret/path no servidor.
+Certificado A1 (`POST/DELETE /settings/certificate`) grava via `@sonder/storage`
+(local em dev, MinIO/S3 em prod). Sem credenciais MinIO o upload falha explicitamente.
+`PatientMedia` multipart genérico ainda não tem rota HTTP — anexos clínicos usam `fileObjectId` já existente.
 
 ## Adicionados nesta refatoração
 

@@ -4,6 +4,15 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, Panel, StatusBadge } from '@/components/ui';
+import {
+  CONDITION_OPERATIONS,
+  emptyAlertRule,
+  emptyConditionGroup,
+  emptyRiskRule,
+  type AlertRule,
+  type ConditionGroup,
+  type RiskRule,
+} from './conditions';
 
 type Question = {
   id: string;
@@ -15,6 +24,8 @@ type Question = {
   order: number;
   options?: Array<{ value: string; label: string }>;
   details?: { enabled: boolean; label: string; type: 'SHORT_TEXT' | 'LONG_TEXT' | 'REPEATER_MEDICATION'; requiredWhenVisible?: boolean };
+  visibleWhen?: ConditionGroup;
+  alertRules?: AlertRule[];
 };
 
 type Section = {
@@ -23,6 +34,7 @@ type Section = {
   title: string;
   description?: string;
   order: number;
+  visibleWhen?: ConditionGroup;
   questions: Question[];
 };
 
@@ -31,7 +43,7 @@ type Schema = {
   title: string;
   audience: 'ADULT' | 'CHILD' | 'ELDERLY' | 'PREGNANT' | 'CUSTOM';
   sections: Section[];
-  riskRules: unknown[];
+  riskRules: RiskRule[];
   completionRules: unknown[];
 };
 
@@ -49,6 +61,7 @@ type Template = RecordValue & {
 const QUESTION_TYPES = [
   'YES_NO', 'YES_NO_UNKNOWN', 'YES_NO_DETAILS', 'SHORT_TEXT', 'LONG_TEXT',
   'SINGLE_CHOICE', 'MULTIPLE_CHOICE', 'NUMBER', 'DATE', 'RISK_LEVEL', 'ACKNOWLEDGEMENT',
+  'SCALE_0_10', 'SINGLE_CHOICE_DETAILS', 'MULTIPLE_CHOICE_DETAILS',
 ] as const;
 
 const AUDIENCES = [
@@ -105,6 +118,111 @@ function statusTone(status: string) {
   return 'gray' as const;
 }
 
+function allQuestionCodes(sections: Section[]) {
+  return sections.flatMap((section) => section.questions.map((question) => question.code));
+}
+
+function ConditionEditor({
+  group,
+  questionCodes,
+  readOnly,
+  onChange,
+}: {
+  group: ConditionGroup;
+  questionCodes: string[];
+  readOnly: boolean;
+  onChange: (next: ConditionGroup) => void;
+}) {
+  return (
+    <div className="condition-editor">
+      <label>Operador do grupo
+        <select
+          value={group.operator}
+          disabled={readOnly}
+          onChange={(event) => onChange({ ...group, operator: event.target.value as 'AND' | 'OR' })}
+        >
+          <option value="AND">Todas (AND)</option>
+          <option value="OR">Qualquer (OR)</option>
+        </select>
+      </label>
+      {group.conditions.map((condition, index) => (
+        <div key={index} className="mutation-form compact condition-row">
+          <label>Pergunta
+            <select
+              value={condition.questionCode}
+              disabled={readOnly}
+              onChange={(event) => {
+                const conditions = group.conditions.map((item, i) => (
+                  i === index ? { ...item, questionCode: event.target.value } : item
+                ));
+                onChange({ ...group, conditions });
+              }}
+            >
+              <option value="">Código…</option>
+              {questionCodes.map((code) => <option key={code} value={code}>{code}</option>)}
+            </select>
+          </label>
+          <label>Operação
+            <select
+              value={condition.operation}
+              disabled={readOnly}
+              onChange={(event) => {
+                const conditions = group.conditions.map((item, i) => (
+                  i === index ? { ...item, operation: event.target.value as ConditionGroup['conditions'][number]['operation'] } : item
+                ));
+                onChange({ ...group, conditions });
+              }}
+            >
+              {CONDITION_OPERATIONS.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}
+            </select>
+          </label>
+          {!['IS_EMPTY', 'IS_NOT_EMPTY'].includes(condition.operation) ? (
+            <label>Valor
+              <input
+                value={String(condition.value ?? '')}
+                disabled={readOnly}
+                placeholder="yes / 8 / texto"
+                onChange={(event) => {
+                  const raw = event.target.value;
+                  const parsed = raw === 'true' ? true : raw === 'false' ? false : (/^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
+                  const conditions = group.conditions.map((item, i) => (
+                    i === index ? { ...item, value: parsed } : item
+                  ));
+                  onChange({ ...group, conditions });
+                }}
+              />
+            </label>
+          ) : null}
+          {!readOnly ? (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => onChange({
+                ...group,
+                conditions: group.conditions.filter((_, i) => i !== index),
+              })}
+            >
+              Remover
+            </button>
+          ) : null}
+        </div>
+      ))}
+      {!readOnly ? (
+        <button
+          type="button"
+          className="button soft small"
+          onClick={() => onChange({
+            ...group,
+            conditions: [...group.conditions, { questionCode: questionCodes[0] ?? '', operation: 'EQUALS', value: 'yes' }],
+          })}
+        >
+          ＋ Condição
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function AnamnesisTemplateEditor() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -116,6 +234,7 @@ export function AnamnesisTemplateEditor() {
   const [message, setMessage] = useState('');
   const [dragQuestionId, setDragQuestionId] = useState<string | null>(null);
   const [dragSectionId, setDragSectionId] = useState<string | null>(null);
+  const [rulesOpenId, setRulesOpenId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -126,7 +245,14 @@ export function AnamnesisTemplateEditor() {
       if (selectedId) {
         const current = rows.find((item) => item.id === selectedId);
         if (current) {
-          setDraft(current);
+          setDraft({
+            ...current,
+            schemaJson: {
+              ...current.schemaJson,
+              riskRules: Array.isArray(current.schemaJson.riskRules) ? current.schemaJson.riskRules as RiskRule[] : [],
+              completionRules: current.schemaJson.completionRules ?? [],
+            },
+          });
           setSectionId(current.schemaJson.sections[0]?.id ?? null);
         }
       }
@@ -145,10 +271,18 @@ export function AnamnesisTemplateEditor() {
   );
   const activeSection = sections.find((item) => item.id === sectionId) ?? sections[0];
   const readOnly = Boolean(draft && draft.status !== 'DRAFT');
+  const questionCodes = useMemo(() => allQuestionCodes(sections), [sections]);
 
   function selectTemplate(template: Template) {
     setSelectedId(template.id);
-    setDraft(template);
+    setDraft({
+      ...template,
+      schemaJson: {
+        ...template.schemaJson,
+        riskRules: Array.isArray(template.schemaJson.riskRules) ? template.schemaJson.riskRules as RiskRule[] : [],
+        completionRules: template.schemaJson.completionRules ?? [],
+      },
+    });
     setSectionId(template.schemaJson.sections[0]?.id ?? null);
     setMessage('');
     setError('');
@@ -161,8 +295,26 @@ export function AnamnesisTemplateEditor() {
       schemaJson: mutator({
         ...draft.schemaJson,
         sections: normalizeOrders(draft.schemaJson.sections),
+        riskRules: draft.schemaJson.riskRules ?? [],
       }),
     });
+  }
+
+  function patchQuestion(questionId: string, patch: Partial<Question>) {
+    if (!activeSection) return;
+    updateSchema((schema) => ({
+      ...schema,
+      sections: schema.sections.map((section) => (
+        section.id === activeSection.id
+          ? {
+              ...section,
+              questions: section.questions.map((item) => (
+                item.id === questionId ? { ...item, ...patch } : item
+              )),
+            }
+          : section
+      )),
+    }));
   }
 
   async function createTemplate(event: FormEvent<HTMLFormElement>) {
@@ -202,6 +354,8 @@ export function AnamnesisTemplateEditor() {
         title: draft.name,
         audience: draft.audience,
         sections: normalizeOrders(draft.schemaJson.sections),
+        riskRules: draft.schemaJson.riskRules ?? [],
+        completionRules: draft.schemaJson.completionRules ?? [],
       };
       const updated = await api.patch<Template>(`/anamnesis/templates/${draft.id}`, {
         name: draft.name,
@@ -270,7 +424,7 @@ export function AnamnesisTemplateEditor() {
     <div className="anamnesis-editor">
       <Panel
         title="Modelos de anamnese"
-        description="Editor visual com seções, perguntas, reordenação e publicação. Versões publicadas são imutáveis."
+        description="Editor visual com seções, perguntas, regras de visibilidade/alerta/risco, reordenação e publicação."
         actions={(
           <button type="button" className="button soft small" disabled={busy || loading} onClick={() => void load()}>
             Atualizar
@@ -321,7 +475,7 @@ export function AnamnesisTemplateEditor() {
                 <header className="clinical-form-head">
                   <div>
                     <h2>{draft.name} · versão {draft.version}</h2>
-                    <p>{readOnly ? 'Publicado/arquivado: somente leitura. Crie nova versão para editar.' : 'Arraste seções e perguntas para reordenar. Salve antes de publicar.'}</p>
+                    <p>{readOnly ? 'Publicado/arquivado: somente leitura. Crie nova versão para editar.' : 'Arraste seções e perguntas; configure visibilidade, alertas e risco por regra.'}</p>
                   </div>
                   <div className="toolbar">
                     <StatusBadge tone={statusTone(draft.status)}>{presentationLabel(draft.status)}</StatusBadge>
@@ -461,6 +615,58 @@ export function AnamnesisTemplateEditor() {
                           </div>
                         </div>
 
+                        <details className="rules-panel" open={Boolean(activeSection.visibleWhen)}>
+                          <summary>Visibilidade da seção</summary>
+                          {activeSection.visibleWhen ? (
+                            <>
+                              <ConditionEditor
+                                group={activeSection.visibleWhen}
+                                questionCodes={questionCodes}
+                                readOnly={readOnly}
+                                onChange={(visibleWhen) => updateSchema((schema) => ({
+                                  ...schema,
+                                  sections: schema.sections.map((section) => (
+                                    section.id === activeSection.id ? { ...section, visibleWhen } : section
+                                  )),
+                                }))}
+                              />
+                              {!readOnly ? (
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  onClick={() => updateSchema((schema) => ({
+                                    ...schema,
+                                    sections: schema.sections.map((section) => (
+                                      section.id === activeSection.id
+                                        ? { ...section, visibleWhen: undefined }
+                                        : section
+                                    )),
+                                  }))}
+                                >
+                                  Remover condição da seção
+                                </button>
+                              ) : null}
+                            </>
+                          ) : (
+                            !readOnly ? (
+                              <button
+                                type="button"
+                                className="button soft small"
+                                onClick={() => updateSchema((schema) => ({
+                                  ...schema,
+                                  sections: schema.sections.map((section) => (
+                                    section.id === activeSection.id
+                                      ? { ...section, visibleWhen: emptyConditionGroup() }
+                                      : section
+                                  )),
+                                }))}
+                              >
+                                ＋ Condição de visibilidade
+                              </button>
+                            ) : <p className="muted-note">Sem condição — seção sempre visível.</p>
+                          )}
+                        </details>
+
                         <div className="question-builder-list">
                           {activeSection.questions.map((question) => (
                             <div
@@ -476,60 +682,52 @@ export function AnamnesisTemplateEditor() {
                             >
                               <div className="question-head">
                                 <strong>{readOnly ? '⠿' : '⠿ arraste'} · {question.code}</strong>
-                                {!readOnly ? (
+                                <div className="toolbar">
                                   <button
                                     type="button"
                                     className="text-button"
-                                    onClick={() => updateSchema((schema) => ({
-                                      ...schema,
-                                      sections: schema.sections.map((section) => (
-                                        section.id === activeSection.id
-                                          ? { ...section, questions: section.questions.filter((item) => item.id !== question.id) }
-                                          : section
-                                      )).filter((section) => section.questions.length > 0),
-                                    }))}
+                                    onClick={() => setRulesOpenId(rulesOpenId === question.id ? null : question.id)}
                                   >
-                                    Remover
+                                    Regras {(question.visibleWhen || (question.alertRules?.length ?? 0) > 0) ? '●' : ''}
                                   </button>
-                                ) : null}
+                                  {!readOnly ? (
+                                    <button
+                                      type="button"
+                                      className="text-button"
+                                      onClick={() => updateSchema((schema) => ({
+                                        ...schema,
+                                        sections: schema.sections.map((section) => (
+                                          section.id === activeSection.id
+                                            ? { ...section, questions: section.questions.filter((item) => item.id !== question.id) }
+                                            : section
+                                        )).filter((section) => section.questions.length > 0),
+                                      }))}
+                                    >
+                                      Remover
+                                    </button>
+                                  ) : null}
+                                </div>
                               </div>
                               <div className="mutation-form compact">
                                 <label>Pergunta
                                   <input
                                     value={question.label}
                                     disabled={readOnly}
-                                    onChange={(event) => updateSchema((schema) => ({
-                                      ...schema,
-                                      sections: schema.sections.map((section) => (
-                                        section.id === activeSection.id
-                                          ? {
-                                              ...section,
-                                              questions: section.questions.map((item) => (
-                                                item.id === question.id ? { ...item, label: event.target.value } : item
-                                              )),
-                                            }
-                                          : section
-                                      )),
-                                    }))}
+                                    onChange={(event) => patchQuestion(question.id, { label: event.target.value })}
+                                  />
+                                </label>
+                                <label>Código
+                                  <input
+                                    value={question.code}
+                                    disabled={readOnly}
+                                    onChange={(event) => patchQuestion(question.id, { code: event.target.value })}
                                   />
                                 </label>
                                 <label>Tipo
                                   <select
                                     value={question.type}
                                     disabled={readOnly}
-                                    onChange={(event) => updateSchema((schema) => ({
-                                      ...schema,
-                                      sections: schema.sections.map((section) => (
-                                        section.id === activeSection.id
-                                          ? {
-                                              ...section,
-                                              questions: section.questions.map((item) => (
-                                                item.id === question.id ? { ...item, type: event.target.value } : item
-                                              )),
-                                            }
-                                          : section
-                                      )),
-                                    }))}
+                                    onChange={(event) => patchQuestion(question.id, { type: event.target.value })}
                                   >
                                     {QUESTION_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
                                   </select>
@@ -539,19 +737,7 @@ export function AnamnesisTemplateEditor() {
                                     type="checkbox"
                                     checked={question.required}
                                     disabled={readOnly}
-                                    onChange={(event) => updateSchema((schema) => ({
-                                      ...schema,
-                                      sections: schema.sections.map((section) => (
-                                        section.id === activeSection.id
-                                          ? {
-                                              ...section,
-                                              questions: section.questions.map((item) => (
-                                                item.id === question.id ? { ...item, required: event.target.checked } : item
-                                              )),
-                                            }
-                                          : section
-                                      )),
-                                    }))}
+                                    onChange={(event) => patchQuestion(question.id, { required: event.target.checked })}
                                   />
                                   Obrigatória
                                 </label>
@@ -559,22 +745,136 @@ export function AnamnesisTemplateEditor() {
                                   <input
                                     value={question.helpText ?? ''}
                                     disabled={readOnly}
-                                    onChange={(event) => updateSchema((schema) => ({
-                                      ...schema,
-                                      sections: schema.sections.map((section) => (
-                                        section.id === activeSection.id
-                                          ? {
-                                              ...section,
-                                              questions: section.questions.map((item) => (
-                                                item.id === question.id ? { ...item, helpText: event.target.value } : item
-                                              )),
-                                            }
-                                          : section
-                                      )),
-                                    }))}
+                                    onChange={(event) => patchQuestion(question.id, { helpText: event.target.value })}
                                   />
                                 </label>
                               </div>
+
+                              {rulesOpenId === question.id ? (
+                                <div className="rules-panel nested">
+                                  <h4>Visibilidade da pergunta</h4>
+                                  {question.visibleWhen ? (
+                                    <>
+                                      <ConditionEditor
+                                        group={question.visibleWhen}
+                                        questionCodes={questionCodes.filter((code) => code !== question.code)}
+                                        readOnly={readOnly}
+                                        onChange={(visibleWhen) => patchQuestion(question.id, { visibleWhen })}
+                                      />
+                                      {!readOnly ? (
+                                        <button type="button" className="text-button" onClick={() => patchQuestion(question.id, { visibleWhen: undefined })}>
+                                          Remover visibilidade
+                                        </button>
+                                      ) : null}
+                                    </>
+                                  ) : (
+                                    !readOnly ? (
+                                      <button type="button" className="button soft small" onClick={() => patchQuestion(question.id, { visibleWhen: emptyConditionGroup() })}>
+                                        ＋ Condição de visibilidade
+                                      </button>
+                                    ) : <p className="muted-note">Sempre visível.</p>
+                                  )}
+
+                                  <h4>Alertas</h4>
+                                  {(question.alertRules ?? []).map((rule, ruleIndex) => (
+                                    <div key={rule.id} className="alert-rule-card">
+                                      <div className="mutation-form compact">
+                                        <label>Tipo<input value={rule.type} disabled={readOnly} onChange={(event) => {
+                                          const alertRules = [...(question.alertRules ?? [])];
+                                          alertRules[ruleIndex] = { ...rule, type: event.target.value };
+                                          patchQuestion(question.id, { alertRules });
+                                        }}
+                                        />
+                                        </label>
+                                        <label>Severidade
+                                          <select
+                                            value={rule.severity}
+                                            disabled={readOnly}
+                                            onChange={(event) => {
+                                              const alertRules = [...(question.alertRules ?? [])];
+                                              alertRules[ruleIndex] = { ...rule, severity: event.target.value as AlertRule['severity'] };
+                                              patchQuestion(question.id, { alertRules });
+                                            }}
+                                          >
+                                            <option value="INFO">INFO</option>
+                                            <option value="WARNING">WARNING</option>
+                                            <option value="CRITICAL">CRITICAL</option>
+                                          </select>
+                                        </label>
+                                        <label className="span-2">Mensagem
+                                          <input
+                                            value={rule.messageTemplate}
+                                            disabled={readOnly}
+                                            onChange={(event) => {
+                                              const alertRules = [...(question.alertRules ?? [])];
+                                              alertRules[ruleIndex] = { ...rule, messageTemplate: event.target.value };
+                                              patchQuestion(question.id, { alertRules });
+                                            }}
+                                          />
+                                        </label>
+                                        <label className="checkbox-row">
+                                          <input
+                                            type="checkbox"
+                                            checked={rule.createPatientAlert}
+                                            disabled={readOnly}
+                                            onChange={(event) => {
+                                              const alertRules = [...(question.alertRules ?? [])];
+                                              alertRules[ruleIndex] = { ...rule, createPatientAlert: event.target.checked };
+                                              patchQuestion(question.id, { alertRules });
+                                            }}
+                                          />
+                                          Criar alerta no paciente
+                                        </label>
+                                        <label className="checkbox-row">
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(rule.blockFinalization)}
+                                            disabled={readOnly}
+                                            onChange={(event) => {
+                                              const alertRules = [...(question.alertRules ?? [])];
+                                              alertRules[ruleIndex] = { ...rule, blockFinalization: event.target.checked };
+                                              patchQuestion(question.id, { alertRules });
+                                            }}
+                                          />
+                                          Bloquear finalização
+                                        </label>
+                                      </div>
+                                      <ConditionEditor
+                                        group={rule.when}
+                                        questionCodes={questionCodes}
+                                        readOnly={readOnly}
+                                        onChange={(when) => {
+                                          const alertRules = [...(question.alertRules ?? [])];
+                                          alertRules[ruleIndex] = { ...rule, when };
+                                          patchQuestion(question.id, { alertRules });
+                                        }}
+                                      />
+                                      {!readOnly ? (
+                                        <button
+                                          type="button"
+                                          className="text-button"
+                                          onClick={() => patchQuestion(question.id, {
+                                            alertRules: (question.alertRules ?? []).filter((_, i) => i !== ruleIndex),
+                                          })}
+                                        >
+                                          Remover alerta
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                  {!readOnly ? (
+                                    <button
+                                      type="button"
+                                      className="button soft small"
+                                      onClick={() => patchQuestion(question.id, {
+                                        alertRules: [...(question.alertRules ?? []), emptyAlertRule()],
+                                      })}
+                                    >
+                                      ＋ Alerta
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
                           ))}
                         </div>
@@ -609,6 +909,102 @@ export function AnamnesisTemplateEditor() {
                             ＋ Pergunta
                           </button>
                         ) : null}
+
+                        <details className="rules-panel" style={{ marginTop: 16 }}>
+                          <summary>Regras de risco do modelo ({draft.schemaJson.riskRules?.length ?? 0})</summary>
+                          <p className="muted-note">Contribuem para o score global quando a condição é verdadeira.</p>
+                          {(draft.schemaJson.riskRules ?? []).map((rule, ruleIndex) => (
+                            <div key={rule.id} className="alert-rule-card">
+                              <div className="mutation-form compact">
+                                <label>Rótulo
+                                  <input
+                                    value={rule.label}
+                                    disabled={readOnly}
+                                    onChange={(event) => updateSchema((schema) => {
+                                      const riskRules = [...(schema.riskRules ?? [])];
+                                      riskRules[ruleIndex] = { ...rule, label: event.target.value };
+                                      return { ...schema, riskRules };
+                                    })}
+                                  />
+                                </label>
+                                <label>Pontos
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    value={rule.contribution}
+                                    disabled={readOnly}
+                                    onChange={(event) => updateSchema((schema) => {
+                                      const riskRules = [...(schema.riskRules ?? [])];
+                                      riskRules[ruleIndex] = { ...rule, contribution: Number(event.target.value) };
+                                      return { ...schema, riskRules };
+                                    })}
+                                  />
+                                </label>
+                                <label>Nível
+                                  <select
+                                    value={rule.level ?? 'MODERATE'}
+                                    disabled={readOnly}
+                                    onChange={(event) => updateSchema((schema) => {
+                                      const riskRules = [...(schema.riskRules ?? [])];
+                                      riskRules[ruleIndex] = { ...rule, level: event.target.value as RiskRule['level'] };
+                                      return { ...schema, riskRules };
+                                    })}
+                                  >
+                                    <option value="LOW">LOW</option>
+                                    <option value="MODERATE">MODERATE</option>
+                                    <option value="HIGH">HIGH</option>
+                                  </select>
+                                </label>
+                                <label className="span-2">Mensagem
+                                  <input
+                                    value={rule.messageTemplate ?? ''}
+                                    disabled={readOnly}
+                                    onChange={(event) => updateSchema((schema) => {
+                                      const riskRules = [...(schema.riskRules ?? [])];
+                                      riskRules[ruleIndex] = { ...rule, messageTemplate: event.target.value };
+                                      return { ...schema, riskRules };
+                                    })}
+                                  />
+                                </label>
+                              </div>
+                              <ConditionEditor
+                                group={rule.when}
+                                questionCodes={questionCodes}
+                                readOnly={readOnly}
+                                onChange={(when) => updateSchema((schema) => {
+                                  const riskRules = [...(schema.riskRules ?? [])];
+                                  riskRules[ruleIndex] = { ...rule, when };
+                                  return { ...schema, riskRules };
+                                })}
+                              />
+                              {!readOnly ? (
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  onClick={() => updateSchema((schema) => ({
+                                    ...schema,
+                                    riskRules: (schema.riskRules ?? []).filter((_, i) => i !== ruleIndex),
+                                  }))}
+                                >
+                                  Remover regra de risco
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                          {!readOnly ? (
+                            <button
+                              type="button"
+                              className="button soft small"
+                              onClick={() => updateSchema((schema) => ({
+                                ...schema,
+                                riskRules: [...(schema.riskRules ?? []), emptyRiskRule()],
+                              }))}
+                            >
+                              ＋ Regra de risco
+                            </button>
+                          ) : null}
+                        </details>
                       </>
                     )}
                   </article>
