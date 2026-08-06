@@ -84,6 +84,7 @@ const presentationLabels: Record<string, string> = {
   PENDING: 'Pendente', SENT: 'Enviado', DELIVERED: 'Entregue', READ: 'Lido', FAILED: 'Falhou',
   ACTIVE: 'Ativo', DISABLED: 'Desativado', ERROR: 'Erro', REVIEW_REQUIRED: 'Revisão obrigatória',
   INACTIVE: 'Inativo', ARCHIVED: 'Arquivado', DRAFT: 'Rascunho', SIGNED: 'Assinado',
+  PUBLISHED: 'Publicado', ARCHIVED_TEMPLATE: 'Arquivado',
   CORRECTED: 'Corrigido', PARTIALLY_SIGNED: 'Parcialmente assinado', PRESENTED: 'Apresentado',
   PARTIALLY_APPROVED: 'Parcialmente aprovado', APPROVED: 'Aprovado',
   INBOX: 'Entrada', TODAY: 'Hoje', UPCOMING: 'Próximas', DONE: 'Concluído',

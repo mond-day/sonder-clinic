@@ -7,8 +7,9 @@ import { api, ApiError } from '@/lib/api';
 import { list, nested, statusTone, text, timeOnly, type RecordValue } from '@/lib/format';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
-import { Disclosure, MetricCard, PageHeader, Panel, StatusBadge } from './ui';
+import { MetricCard, PageHeader, Panel, StatusBadge } from './ui';
 import { Modal } from './modal';
+import { MultiSelect } from './multi-select';
 import { SearchableSelect } from './searchable-select';
 
 type Mode = 'day' | 'week' | 'chairs';
@@ -69,8 +70,10 @@ export function AgendaView() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<RecordValue | null>(null);
+  const [editingAppointment, setEditingAppointment] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [statusSaving, setStatusSaving] = useState(false);
   const [professionalFilter, setProfessionalFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [unitFilter, setUnitFilter] = useState('');
@@ -186,32 +189,71 @@ export function AgendaView() {
     setReference((current) => addDays(current, mode === 'week' ? direction * 7 : direction));
   }
 
+  const chairs = useMemo(() => units.flatMap((unit) => unit.chairs), [units]);
+  const hideUnitChair = units.length <= 1 && chairs.length <= 1;
+
+  async function updateAppointmentStatus(status: string) {
+    if (!selectedAppointment) return;
+    setStatusSaving(true);
+    setFormError('');
+    try {
+      const reminders = list(selectedAppointment.reminders);
+      await api.put(`/appointments/${String(selectedAppointment.id)}`, {
+        clinicId,
+        unitId: String(selectedAppointment.unitId),
+        patientId: String(selectedAppointment.patientId),
+        professionalId: String(selectedAppointment.professionalId),
+        chairId: String(selectedAppointment.chairId ?? '') || undefined,
+        startAt: String(selectedAppointment.startAt),
+        endAt: String(selectedAppointment.endAt),
+        status,
+        notes: text(selectedAppointment.notes, '') || undefined,
+        tagIds: list(selectedAppointment.tags)
+          .map((item) => String(nested(item, 'tag').id || item.tagId || ''))
+          .filter(Boolean),
+        reminderEnabled: reminders.length > 0,
+        reminderLeadMinutes: reminders.map((item) => Number(item.leadMinutes)).filter((value) => Number.isFinite(value) && value > 0),
+      });
+      setSelectedAppointment({ ...selectedAppointment, status });
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível atualizar o status.');
+    } finally {
+      setStatusSaving(false);
+    }
+  }
+
   async function updateAppointment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedAppointment) return;
+    if (!editingAppointment) {
+      setEditingAppointment(true);
+      return;
+    }
     const data = new FormData(event.currentTarget);
     const startAt = new Date(String(data.get('startAt'))).toISOString();
     const duration = Number(data.get('duration'));
     const endAt = new Date(new Date(startAt).getTime() + duration * 60_000).toISOString();
+    const reminderLeads = data.getAll('reminderLeadMinutes').map(Number).filter((value) => Number.isFinite(value) && value > 0);
     setSaving(true);
     setFormError('');
     try {
       await api.put(`/appointments/${String(selectedAppointment.id)}`, {
         clinicId,
-        unitId: String(data.get('unitId')),
+        unitId: String(data.get('unitId') || selectedAppointment.unitId),
         patientId: String(selectedAppointment.patientId),
         professionalId: String(data.get('professionalId')),
         chairId: String(data.get('chairId') ?? '') || undefined,
         startAt,
         endAt,
         status: String(data.get('status')),
-        category: String(data.get('category') ?? '').trim() || undefined,
         notes: String(data.get('notes') ?? '').trim() || undefined,
         tagIds: data.getAll('tagIds').map(String),
         reminderEnabled: data.get('reminderEnabled') === 'on',
-        reminderLeadMinutes: Number(data.get('reminderLeadMinutes') || 1440),
+        reminderLeadMinutes: reminderLeads.length ? reminderLeads : 1440,
       });
       setSelectedAppointment(null);
+      setEditingAppointment(false);
       load();
     } catch (cause) {
       setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível atualizar o agendamento.');
@@ -282,43 +324,111 @@ export function AgendaView() {
       <Modal
         open={Boolean(selectedAppointment)}
         title="Detalhes do agendamento"
-        description="Duração, categoria clínica, etiquetas e lembrete são persistidos na API."
-        onClose={() => { setSelectedAppointment(null); setFormError(''); }}
+        description={editingAppointment ? 'Edite horário, profissional, etiquetas e lembretes.' : 'Visualização do agendamento. Status pode ser alterado a qualquer momento.'}
+        onClose={() => { setSelectedAppointment(null); setFormError(''); setEditingAppointment(false); }}
         size="large"
       >
         {selectedAppointment ? (
-          <form className="mutation-form" onSubmit={updateAppointment}>
-            <label className="span-2">
-              Paciente
-              <Link className="clickable-name" href={`/pacientes/${String(selectedAppointment.patientId)}`}>
-                {text(nested(selectedAppointment, 'patient').fullName)}
-              </Link>
-            </label>
-            <Disclosure title="Data, horário e local" description="A remarcação mantém o paciente e revalida conflitos">
-              <label>Início<input name="startAt" type="datetime-local" required defaultValue={new Date(String(selectedAppointment.startAt)).toISOString().slice(0, 16)} /></label>
-              <label>Duração (min)<input name="duration" type="number" min={15} step={5} required defaultValue={Math.round((new Date(String(selectedAppointment.endAt)).getTime() - new Date(String(selectedAppointment.startAt)).getTime()) / 60000)} /></label>
-              <SearchableSelect name="professionalId" label="Profissional" defaultValue={String(selectedAppointment.professionalId)} options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
-              <SearchableSelect name="unitId" label="Unidade" defaultValue={String(selectedAppointment.unitId)} options={units.map((item) => ({ value: item.id, label: item.name }))} />
-              <SearchableSelect name="chairId" label="Cadeira" defaultValue={text(selectedAppointment.chairId, '')} placeholder="Sem cadeira" options={units.flatMap((unit) => unit.chairs).map((item) => ({ value: item.id, label: item.name }))} />
-              <SearchableSelect name="status" label="Status" defaultValue={String(selectedAppointment.status)} options={Object.entries(statusLabels).map(([value, label]) => ({ value, label }))} />
-            </Disclosure>
-            <Disclosure title="Detalhes clínicos" defaultOpen={false}>
-              <label>Categoria clínica<input name="category" defaultValue={text(selectedAppointment.category, '')} placeholder="Ex.: Endodontia, Cirurgia" /></label>
-              <label className="span-2">Observações<textarea name="notes" defaultValue={text(selectedAppointment.notes, '')} /></label>
-            </Disclosure>
-            <fieldset className="span-2">
-              <legend>Etiquetas</legend>
-              {tags.length ? tags.map((tag) => (
-                <label className="check-field" key={String(tag.id)}>
-                  <input name="tagIds" type="checkbox" value={String(tag.id)} defaultChecked={list(selectedAppointment.tags).some((item) => nested(item, 'tag').id === tag.id)} />
-                  <span style={{ color: text(tag.color) }}>●</span> {text(tag.name)}
-                </label>
-              )) : <span className="muted-note">Crie etiquetas em Configurações.</span>}
-            </fieldset>
-            <label className="check-field span-2"><input name="reminderEnabled" type="checkbox" defaultChecked={list(selectedAppointment.reminders).length > 0} /> Lembrete automático via WhatsApp</label>
-            <label>Antecedência<select name="reminderLeadMinutes" defaultValue={text(list(selectedAppointment.reminders)[0]?.leadMinutes, '1440')}><option value="120">2 horas</option><option value="1440">24 horas</option><option value="2880">48 horas</option></select></label>
-            {list(selectedAppointment.reminders)[0]?.status === 'DISABLED' ? <p className="form-error span-2">Evolution não configurado: lembrete salvo, mas não ativo.</p> : null}
-            <button className="button primary" disabled={saving}>Salvar alterações</button>
+          <form className="mutation-form appointment-detail-form" onSubmit={updateAppointment}>
+            <div className="appointment-detail-hero span-2">
+              <div>
+                <small>Paciente</small>
+                <Link className="clickable-name" href={`/pacientes/${String(selectedAppointment.patientId)}`}>
+                  {text(nested(selectedAppointment, 'patient').fullName)}
+                </Link>
+              </div>
+              <label className="status-inline">
+                Status
+                <select
+                  name="status"
+                  value={String(selectedAppointment.status)}
+                  disabled={statusSaving}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setSelectedAppointment({ ...selectedAppointment, status: next });
+                    void updateAppointmentStatus(next);
+                  }}
+                >
+                  {Object.entries(statusLabels).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {editingAppointment ? (
+              <>
+                <label>Início<input name="startAt" type="datetime-local" required defaultValue={new Date(String(selectedAppointment.startAt)).toISOString().slice(0, 16)} /></label>
+                <label>Duração (min)<input name="duration" type="number" min={15} step={5} required defaultValue={Math.round((new Date(String(selectedAppointment.endAt)).getTime() - new Date(String(selectedAppointment.startAt)).getTime()) / 60000)} /></label>
+                <SearchableSelect name="professionalId" label="Profissional" defaultValue={String(selectedAppointment.professionalId)} options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
+                {!hideUnitChair ? (
+                  <>
+                    <SearchableSelect name="unitId" label="Unidade" defaultValue={String(selectedAppointment.unitId)} options={units.map((item) => ({ value: item.id, label: item.name }))} />
+                    <SearchableSelect name="chairId" label="Cadeira" defaultValue={text(selectedAppointment.chairId, '')} placeholder="Sem cadeira" options={chairs.map((item) => ({ value: item.id, label: item.name }))} />
+                  </>
+                ) : (
+                  <>
+                    <input type="hidden" name="unitId" value={String(selectedAppointment.unitId)} />
+                    <input type="hidden" name="chairId" value={text(selectedAppointment.chairId, '')} />
+                  </>
+                )}
+                <label className="span-2">Observações<textarea name="notes" defaultValue={text(selectedAppointment.notes, '')} rows={3} /></label>
+                <MultiSelect
+                  name="tagIds"
+                  label="Etiquetas"
+                  defaultValues={list(selectedAppointment.tags).map((item) => String(nested(item, 'tag').id || item.tagId)).filter(Boolean)}
+                  options={tags.map((tag) => ({ value: String(tag.id), label: text(tag.name), color: text(tag.color, undefined) }))}
+                  placeholder="Selecionar etiquetas"
+                />
+                <label className="check-field span-2"><input name="reminderEnabled" type="checkbox" defaultChecked={list(selectedAppointment.reminders).length > 0} /> Lembrete automático via WhatsApp</label>
+                <MultiSelect
+                  name="reminderLeadMinutes"
+                  label="Antecedência"
+                  defaultValues={list(selectedAppointment.reminders).map((item) => String(item.leadMinutes || 1440))}
+                  options={[
+                    { value: '120', label: '2 horas' },
+                    { value: '1440', label: '24 horas' },
+                    { value: '2880', label: '48 horas' },
+                  ]}
+                  placeholder="Selecionar antecedências"
+                />
+                {list(selectedAppointment.reminders).some((item) => item.status === 'DISABLED') ? (
+                  <p className="form-error span-2">Evolution não configurado: lembrete salvo, mas não ativo.</p>
+                ) : null}
+              </>
+            ) : (
+              <div className="appointment-readonly span-2">
+                <div className="info-grid">
+                  <div className="info-item"><small>Início</small><strong>{timeOnly(selectedAppointment.startAt)}</strong></div>
+                  <div className="info-item"><small>Duração</small><strong>{Math.round((new Date(String(selectedAppointment.endAt)).getTime() - new Date(String(selectedAppointment.startAt)).getTime()) / 60000)} min</strong></div>
+                  <div className="info-item"><small>Profissional</small><strong>{text(nested(selectedAppointment, 'professional').name)}</strong></div>
+                  {!hideUnitChair ? (
+                    <>
+                      <div className="info-item"><small>Unidade</small><strong>{text(units.find((item) => item.id === selectedAppointment.unitId)?.name)}</strong></div>
+                      <div className="info-item"><small>Cadeira</small><strong>{text(nested(selectedAppointment, 'chair').name)}</strong></div>
+                    </>
+                  ) : null}
+                  <div className="info-item span-2"><small>Observações</small><strong>{text(selectedAppointment.notes, 'Sem observações')}</strong></div>
+                </div>
+                {list(selectedAppointment.tags).length ? (
+                  <div className="chip-row" style={{ marginTop: 10 }}>
+                    {list(selectedAppointment.tags).map((item) => {
+                      const tag = nested(item, 'tag');
+                      return <span className="chip" key={String(tag.id || item.id)} style={{ color: text(tag.color) }}>{text(tag.name)}</span>;
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            <div className="modal-footer span-2">
+              {editingAppointment ? (
+                <button type="button" className="button soft" onClick={() => setEditingAppointment(false)}>Cancelar edição</button>
+              ) : null}
+              <button className="button primary" disabled={saving}>
+                {editingAppointment ? (saving ? 'Salvando…' : 'Salvar alterações') : 'Editar agendamento'}
+              </button>
+            </div>
             {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
           </form>
         ) : null}
@@ -439,7 +549,7 @@ export function AgendaView() {
                               className={`event ${tone} ${isCancelled ? 'cancelled' : ''}`.trim()}
                               title={label}
                               aria-label={label}
-                              onClick={() => setSelectedAppointment(item)}
+                              onClick={() => { setSelectedAppointment(item); setEditingAppointment(false); setFormError(''); }}
                             >
                               <small>{timeOnly(item.startAt)} · {text(professional.name).split(' ')[0]}</small>
                               <strong>{text(patient.fullName, 'Paciente')}</strong>
@@ -503,7 +613,7 @@ export function AgendaView() {
                           <button
                             className="button small"
                             type="button"
-                            onClick={() => setSelectedAppointment(item)}
+                            onClick={() => { setSelectedAppointment(item); setEditingAppointment(false); setFormError(''); }}
                           >Detalhes</button>
                         ) : null}
                       </td>

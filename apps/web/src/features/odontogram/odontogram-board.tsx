@@ -1,11 +1,14 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { dateTime, list, nested, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, StatusBadge } from '@/components/ui';
+import { Modal } from '@/components/modal';
 
 type DentitionType = 'PERMANENT' | 'DECIDUOUS' | 'MIXED';
+type CreateKind = 'odontogram' | 'indication' | 'existing' | null;
 
 const PERMANENT_UPPER = [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28];
 const PERMANENT_LOWER = [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38];
@@ -72,7 +75,7 @@ export function OdontogramBoard({
   const findings = list(latest?.findings);
   const arches = ARCH_BY_TYPE[dentitionType];
 
-  const [selectedTeeth, setSelectedTeeth] = useState<number[]>([16]);
+  const [selectedTeeth, setSelectedTeeth] = useState<number[]>([]);
   const [selectedFaces, setSelectedFaces] = useState<FaceKey[]>([]);
   const [multiTooth, setMultiTooth] = useState(false);
   const [professionalId, setProfessionalId] = useState(professionals[0]?.id ?? '');
@@ -82,6 +85,8 @@ export function OdontogramBoard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [createKind, setCreateKind] = useState<CreateKind>(null);
+  const [composerOpen, setComposerOpen] = useState(false);
 
   const activeTooth = selectedTeeth[selectedTeeth.length - 1] ?? null;
 
@@ -101,8 +106,7 @@ export function OdontogramBoard({
 
   function changeDentition(next: DentitionType) {
     setDentitionType(next);
-    const defaultTooth = ARCH_BY_TYPE[next].upper[Math.floor(ARCH_BY_TYPE[next].upper.length / 2)] ?? null;
-    setSelectedTeeth(defaultTooth != null ? [defaultTooth] : []);
+    setSelectedTeeth([]);
     setSelectedFaces([]);
     setMessage('');
     setError('');
@@ -113,13 +117,8 @@ export function OdontogramBoard({
     setSelectedTeeth((current) => {
       if (additive) {
         const exists = current.includes(tooth);
-        if (exists && current.length === 1) {
-          // keep tooth, toggle face below
-          return current;
-        }
-        if (exists) {
-          return current.filter((item) => item !== tooth);
-        }
+        if (exists && current.length === 1) return current;
+        if (exists) return current.filter((item) => item !== tooth);
         return [...current, tooth];
       }
       if (current.length === 1 && current[0] === tooth) return current;
@@ -132,6 +131,7 @@ export function OdontogramBoard({
       }
       return [face];
     });
+    setComposerOpen(true);
   }
 
   function toggleTooth(tooth: number) {
@@ -143,6 +143,7 @@ export function OdontogramBoard({
       }
       return [tooth];
     });
+    setComposerOpen(true);
   }
 
   function toggleFace(face: FaceKey) {
@@ -152,8 +153,15 @@ export function OdontogramBoard({
     ));
   }
 
-  function applyConditionChip(nextConditionId: string) {
-    setConditionId(nextConditionId);
+  function openCreate(kind: CreateKind) {
+    setCreateKind(kind);
+    if (kind === 'indication') setStatus('PLANNED');
+    if (kind === 'existing') setStatus('EXISTING');
+    if (kind === 'odontogram' && !selectedTeeth.length) {
+      const defaultTooth = arches.upper[Math.floor(arches.upper.length / 2)];
+      if (defaultTooth) setSelectedTeeth([defaultTooth]);
+    }
+    setComposerOpen(true);
   }
 
   async function saveVersion(batchPaint = false) {
@@ -163,7 +171,7 @@ export function OdontogramBoard({
     }
     const faces = selectedFaces.length ? selectedFaces : (batchPaint ? ['O' as FaceKey] : []);
     if (!faces.length) {
-      setError('Selecione ao menos uma face (ou use pintura em lote com face padrão O).');
+      setError('Selecione ao menos uma face (ou use pintura em lote com face padrão Oclusal).');
       return;
     }
     setBusy(true);
@@ -185,11 +193,12 @@ export function OdontogramBoard({
       });
       setMessage(
         selectedTeeth.length > 1
-          ? `Versão salva · ${selectedTeeth.length} dentes · ${faces.length} face(s) · ${presentationLabel(dentitionType)}.`
-          : `Versão salva para o elemento ${selectedTeeth[0]} (${presentationLabel(dentitionType)}).`,
+          ? `Versão salva · ${selectedTeeth.length} dentes · ${faces.length} face(s).`
+          : `Versão salva para o elemento ${selectedTeeth[0]}.`,
       );
       setSelectedFaces([]);
       setNotes('');
+      setCreateKind(null);
       onSaved();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Falha ao salvar odontograma.');
@@ -246,15 +255,29 @@ export function OdontogramBoard({
 
   return (
     <div className="odontogram-board">
-      <div className="odontogram-toolbar">
+      <Modal open={createKind != null && !composerOpen} title="Adicionar ao odontograma" description="Escolha o tipo de registro." onClose={() => setCreateKind(null)}>
+        <div className="template-picker">
+          <button type="button" className="template-picker-item" onClick={() => openCreate('odontogram')}>
+            <strong>Novo odontograma / achado</strong>
+            <span>Registra condição em dente e faces selecionados.</span>
+          </button>
+          <button type="button" className="template-picker-item" onClick={() => openCreate('indication')}>
+            <strong>Indicação (planejado)</strong>
+            <span>Marca procedimento planejado no elemento.</span>
+          </button>
+          <button type="button" className="template-picker-item" onClick={() => openCreate('existing')}>
+            <strong>Restauração / condição existente</strong>
+            <span>Registra o que já está presente clinicamente.</span>
+          </button>
+        </div>
+      </Modal>
+
+      <div className="odontogram-toolbar compact">
         <div>
           <p className="muted-note">
             {latest
               ? `Versão ${text(latest.version, '1')} · ${presentationLabel(latest.dentitionType)} · ${dateTime(latest.createdAt)}`
-              : `Nenhuma versão ${presentationLabel(dentitionType)} — registre o primeiro achado.`}
-          </p>
-          <p className="muted-note" data-selected-teeth>
-            Dentes selecionados: {selectedTeeth.length ? selectedTeeth.join(', ') : 'Nenhum'}
+              : `Nenhuma versão ${presentationLabel(dentitionType)}.`}
           </p>
         </div>
         <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
@@ -272,119 +295,107 @@ export function OdontogramBoard({
           </div>
           <label className="checkbox-row" style={{ margin: 0 }}>
             <input type="checkbox" checked={multiTooth} onChange={(event) => setMultiTooth(event.target.checked)} />
-            Multi-dente
+            Lote
           </label>
-          <div className="legend-row">
-            <span><i style={{ background: '#f4c4c2' }} />Existente / ativo</span>
-            <span><i style={{ background: '#b9d7f2' }} />Planejado</span>
-            <span><i style={{ background: '#b9e3d6' }} />Concluído</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="odontogram-tools">
-        <small className="eyebrow">Pintura rápida (lote)</small>
-        <div className="filters condition-chips">
-          {conditions.slice(0, 12).map((item) => (
-            <button
-              key={String(item.id)}
-              type="button"
-              className={`chip ${conditionId === String(item.id) ? 'active' : ''}`}
-              onClick={() => applyConditionChip(String(item.id))}
-            >
-              {text(item.name)}
-            </button>
-          ))}
+          <button type="button" className="button primary small" onClick={() => setCreateKind('odontogram')}>
+            <Plus size={14} /> Adicionar
+          </button>
         </div>
       </div>
 
       {versionsForType.length === 0 && !selectedTeeth.length ? (
-        <EmptyState title="Sem odontograma" description="Selecione dentes e salve a primeira versão." />
+        <EmptyState title="Sem odontograma" description="Use Adicionar para registrar o primeiro achado." />
       ) : null}
 
       <div className="odontogram">{renderArch(arches.upper, 'Arcada superior')}{renderArch(arches.lower, 'Arcada inferior')}</div>
 
-      <div className="odontogram-detail panel-body">
-        <header className="panel-header" style={{ padding: 0, border: 0, marginBottom: 12 }}>
-          <div>
-            <h2>
-              {selectedTeeth.length > 1
-                ? `Detalhes · ${selectedTeeth.length} elementos`
-                : `Detalhes do elemento ${activeTooth ?? '—'}`}
-            </h2>
-            <p>Seleção por dente e faces · dentição {presentationLabel(dentitionType)} · pintura em lote.</p>
-          </div>
-        </header>
-
-        <div className="face-chips">
-          {FACES.map((face) => (
-            <button
-              key={face.key}
-              type="button"
-              className={`chip ${selectedFaces.includes(face.key) ? 'active' : ''}`}
-              onClick={() => toggleFace(face.key)}
-            >
-              {face.key} · {face.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mutation-form compact" style={{ marginTop: 12 }}>
-          <label>Profissional
-            <select value={professionalId} onChange={(event) => setProfessionalId(event.target.value)} required>
-              <option value="">Selecione</option>
-              {professionals.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </label>
-          <label>Condição
-            <select value={conditionId} onChange={(event) => setConditionId(event.target.value)} required>
-              <option value="">Selecione</option>
-              {conditions.map((item) => <option key={String(item.id)} value={String(item.id)}>{text(item.name)}</option>)}
-            </select>
-          </label>
-          <label>Status
-            <select value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option value="EXISTING">Existente</option>
-              <option value="PLANNED">Planejado</option>
-              <option value="IN_PROGRESS">Em andamento</option>
-              <option value="COMPLETED">Concluído</option>
-            </select>
-          </label>
-          <label className="span-2">Observações
-            <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Face oclusal, profundidade, etc." />
-          </label>
-          <button type="button" className="button primary" disabled={busy} onClick={() => void saveVersion(false)}>
-            Salvar versão
-          </button>
-          <button
-            type="button"
-            className="button soft"
-            disabled={busy || !selectedTeeth.length || !conditionId}
-            onClick={() => void saveVersion(true)}
-            title="Aplica a condição a todos os dentes selecionados (faces escolhidas ou Oclusal)"
-          >
-            Pintar seleção
-          </button>
-        </div>
-
-        {error ? <p className="form-error" role="alert">{error}</p> : null}
-        {message ? <p className="muted-note">{message}</p> : null}
-
-        <div className="timeline" style={{ marginTop: 16 }}>
-          {toothFindings.length === 0 ? (
-            <p className="muted-note">Sem histórico neste elemento na versão atual.</p>
-          ) : toothFindings.map((finding) => (
-            <div className="timeline-item" key={String(finding.id ?? `${finding.toothFdi}-${finding.face}`)}>
-              <small>{presentationLabel(finding.status)} · face {text(finding.face, '—')}</small>
-              <strong>{text(nested(finding, 'condition').name, text(finding.conditionId))}</strong>
-              <p>{text(finding.notes, 'Sem observações.')}</p>
-              <StatusBadge tone={String(finding.status) === 'PLANNED' ? 'blue' : String(finding.status) === 'COMPLETED' ? 'green' : 'amber'}>
-                {presentationLabel(finding.status)}
-              </StatusBadge>
+      {composerOpen && selectedTeeth.length > 0 ? (
+        <div className="odontogram-detail-card">
+          <header>
+            <div>
+              <h3>
+                {selectedTeeth.length > 1
+                  ? `${selectedTeeth.length} elementos`
+                  : `Elemento ${activeTooth ?? '—'}`}
+              </h3>
+              <p>{presentationLabel(dentitionType)} · faces e condição</p>
             </div>
-          ))}
+            <button type="button" className="text-button" onClick={() => { setComposerOpen(false); setSelectedTeeth([]); }}>Fechar</button>
+          </header>
+
+          <div className="face-chips">
+            {FACES.map((face) => (
+              <button
+                key={face.key}
+                type="button"
+                className={`chip ${selectedFaces.includes(face.key) ? 'active' : ''}`}
+                onClick={() => toggleFace(face.key)}
+              >
+                {face.key} · {face.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="odontogram-form">
+            <label>Profissional
+              <select value={professionalId} onChange={(event) => setProfessionalId(event.target.value)} required>
+                <option value="">Selecione</option>
+                {professionals.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
+            <label>Condição
+              <select value={conditionId} onChange={(event) => setConditionId(event.target.value)} required>
+                <option value="">Selecione</option>
+                {conditions.map((item) => <option key={String(item.id)} value={String(item.id)}>{text(item.name)}</option>)}
+              </select>
+            </label>
+            <label>Status
+              <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                <option value="EXISTING">Existente</option>
+                <option value="PLANNED">Planejado</option>
+                <option value="IN_PROGRESS">Em andamento</option>
+                <option value="COMPLETED">Concluído</option>
+              </select>
+            </label>
+            <label className="span-2">Observações
+              <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Face oclusal, profundidade, etc." />
+            </label>
+            <div className="heading-actions span-2">
+              <button type="button" className="button primary" disabled={busy} onClick={() => void saveVersion(false)}>
+                Salvar
+              </button>
+              <button
+                type="button"
+                className="button soft"
+                disabled={busy || !selectedTeeth.length || !conditionId}
+                onClick={() => void saveVersion(true)}
+              >
+                Pintar seleção
+              </button>
+            </div>
+          </div>
+
+          {error ? <p className="form-error" role="alert">{error}</p> : null}
+          {message ? <p className="muted-note">{message}</p> : null}
+
+          <div className="clinical-timeline" style={{ marginTop: 12 }}>
+            {toothFindings.length === 0 ? (
+              <p className="muted-note">Sem histórico neste elemento na versão atual.</p>
+            ) : toothFindings.map((finding) => (
+              <div className="clinical-timeline-item" key={String(finding.id ?? `${finding.toothFdi}-${finding.face}`)}>
+                <div className="timeline-dot" />
+                <div className="timeline-copy">
+                  <strong>{text(nested(finding, 'condition').name, text(finding.conditionId))}</strong>
+                  <span>{presentationLabel(finding.status)} · face {text(finding.face, '—')} · {text(finding.notes, 'Sem observações')}</span>
+                </div>
+                <StatusBadge tone={String(finding.status) === 'PLANNED' ? 'blue' : String(finding.status) === 'COMPLETED' ? 'green' : 'amber'}>
+                  {presentationLabel(finding.status)}
+                </StatusBadge>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

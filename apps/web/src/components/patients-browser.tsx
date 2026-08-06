@@ -3,14 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { Plus, RefreshCw } from 'lucide-react';
+import { Eye, MoreHorizontal, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import {
   dateOnly,
   initials,
   list,
-  maskCpf,
-  nested,
   text,
   timeOnly,
   type RecordValue,
@@ -39,7 +37,6 @@ type Enriched = {
   status: { label: string; tone: 'green' | 'amber' | 'red' | 'blue' | 'gray' | 'purple' };
 };
 
-/** Rótulo relativo para a próxima ação da linha da tabela. */
 function nextActionLabel(appointment: RecordValue | null, pendingReturn: RecordValue | null) {
   if (appointment) {
     const start = new Date(String(appointment.startAt));
@@ -76,6 +73,7 @@ export function PatientsBrowser() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(Boolean(editId));
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!clinicId) return;
@@ -243,16 +241,19 @@ export function PatientsBrowser() {
               <tbody>
                 {visible.map((row) => {
                   const patient = row.patient;
-                  const code = text(nested(list(patient.clinics)[0] ?? {}, 'internalCode'), '')
-                    || `#${String(patient.id).slice(0, 6).toUpperCase()}`;
+                  const patientId = String(patient.id);
                   return (
-                    <tr key={String(patient.id)}>
+                    <tr key={patientId}>
                       <td>
                         <div className="person-cell">
                           <div className="avatar">{initials(patient.fullName)}</div>
                           <div>
-                            <Link className="clickable-name" href={`/pacientes/${String(patient.id)}`}>{text(patient.fullName)}</Link>
-                            <span>CPF {maskCpf(patient.cpf)} · {code}</span>
+                            <Link className="clickable-name" href={`/pacientes/${patientId}`}>{text(patient.fullName)}</Link>
+                            <span>
+                              {row.lastVisit
+                                ? `Última consulta ${dateOnly(row.lastVisit)}`
+                                : 'Primeiro contato'}
+                            </span>
                           </div>
                         </div>
                       </td>
@@ -268,7 +269,43 @@ export function PatientsBrowser() {
                           </span>
                         )}
                       </td>
-                      <td className="row-actions"><Link className="button small" href={`/pacientes/${String(patient.id)}`}>Mais ações</Link></td>
+                      <td className="row-actions">
+                        <Link
+                          className="icon-button"
+                          href={`/pacientes?edit=${patientId}`}
+                          aria-label={`Editar ${text(patient.fullName)}`}
+                          title="Editar"
+                        >
+                          <Pencil size={15} />
+                        </Link>
+                        <Link
+                          className="icon-button"
+                          href={`/pacientes/${patientId}`}
+                          aria-label={`Visualizar ${text(patient.fullName)}`}
+                          title="Visualizar"
+                        >
+                          <Eye size={15} />
+                        </Link>
+                        <div className="row-menu">
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label="Mais ações"
+                            aria-expanded={menuOpenId === patientId}
+                            title="Mais ações"
+                            onClick={() => setMenuOpenId((current) => (current === patientId ? null : patientId))}
+                          >
+                            <MoreHorizontal size={15} />
+                          </button>
+                          {menuOpenId === patientId ? (
+                            <div className="row-menu-popover" role="menu">
+                              <Link role="menuitem" href={`/pacientes/${patientId}?tab=financeiro`}>Financeiro</Link>
+                              <Link role="menuitem" href={`/pacientes/${patientId}?tab=documentos`}>Documentos</Link>
+                              <Link role="menuitem" href={`/agenda`}>Agendar</Link>
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}

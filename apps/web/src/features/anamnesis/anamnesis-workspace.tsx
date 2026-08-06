@@ -1,9 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import { list, text, type RecordValue } from '@/lib/format';
-import { EmptyState, ErrorState, MetricCard, PageHeader, Panel, Skeleton, StatusBadge } from '@/components/ui';
+import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { EmptyState, ErrorState, MetricCard, Panel, Skeleton, StatusBadge } from '@/components/ui';
+import { Modal } from '@/components/modal';
 import { isGroupVisible, type ConditionGroup } from './conditions';
 import { QuestionRenderer } from './question-renderer';
 import { SignaturePad } from './signature-pad';
@@ -52,6 +54,8 @@ const audienceLabel: Record<string, string> = {
   PREGNANT: 'Gestante',
 };
 
+const statusLabel = (status: unknown) => presentationLabel(status);
+
 export function AnamnesisWorkspace({
   patientId,
   clinicId,
@@ -72,6 +76,7 @@ export function AnamnesisWorkspace({
   const [busy, setBusy] = useState(false);
   const [risk, setRisk] = useState<{ score?: number; level?: string } | null>(null);
   const [alerts, setAlerts] = useState<Array<{ severity?: string; message?: string }>>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -130,6 +135,7 @@ export function AnamnesisWorkspace({
       setRemoteLink(null);
       setRisk(null);
       setAlerts([]);
+      setPickerOpen(false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Não foi possível iniciar a anamnese.');
     } finally {
@@ -197,46 +203,55 @@ export function AnamnesisWorkspace({
   if (!activeTemplate) {
     return (
       <div className="anamnesis-workspace">
-        <PageHeader
-          eyebrow="Clínica"
-          title="Anamnese clínica"
-          description="Modelos configuráveis com alertas, risco e assinatura presencial ou remota."
-        />
-        <div className="metric-grid">
-          <MetricCard label="Modelos publicados" value={templates.length} />
-          <MetricCard label="Histórico do paciente" value={history.length} />
+        <Modal
+          open={pickerOpen}
+          title="Nova anamnese"
+          description="Escolha o modelo clínico para iniciar o preenchimento."
+          onClose={() => setPickerOpen(false)}
+        >
+          <div className="template-picker">
+            {templates.map((template) => (
+              <button key={template.id} type="button" className="template-picker-item" disabled={busy} onClick={() => void start(template)}>
+                <strong>{audienceLabel[template.audience] ?? template.audience}</strong>
+                <span>{template.name}</span>
+                <StatusBadge tone="green">{statusLabel(template.status)}</StatusBadge>
+              </button>
+            ))}
+            {!templates.length ? <EmptyState title="Nenhum modelo publicado" description="Publique modelos em Configurações → Anamnese." /> : null}
+          </div>
+        </Modal>
+        <div className="anamnesis-home-head">
+          <div>
+            <h2>Anamnese clínica</h2>
+            <p>Histórico do paciente com alertas, risco e assinatura.</p>
+          </div>
+          <button type="button" className="button primary" onClick={() => setPickerOpen(true)}>
+            <Plus size={15} /> Adicionar
+          </button>
+        </div>
+        <div className="metric-grid compact">
+          <MetricCard label="Histórico" value={history.length} />
           <MetricCard label="Assinadas" value={history.filter((item) => item.status === 'SIGNED').length} tone="green" />
           <MetricCard label="Rascunhos" value={history.filter((item) => item.status === 'DRAFT').length} tone="amber" />
         </div>
-        <Panel title="Selecionar modelo" description="Quatro catálogos padrão e versões personalizadas da organização.">
-          <div className="template-cards">
-            {templates.map((template) => (
-              <button key={template.id} type="button" className="template-card" disabled={busy} onClick={() => void start(template)}>
-                <strong>{audienceLabel[template.audience] ?? template.audience}</strong>
-                <span>{template.name} · v{template.version}</span>
-                <StatusBadge tone="green">{template.status}</StatusBadge>
-              </button>
-            ))}
-          </div>
-          {!templates.length ? <EmptyState title="Nenhum modelo publicado" description="Publique modelos em Configurações → Anamnese." /> : null}
-        </Panel>
         <Panel title="Histórico">
           {history.length ? (
-            <div className="timeline">
+            <div className="clinical-timeline">
               {history.map((item) => (
-                <article key={item.id} className="timeline-item">
-                  <div>
+                <article key={item.id} className="clinical-timeline-item">
+                  <div className="timeline-dot" />
+                  <div className="timeline-copy">
                     <strong>{text(item.template?.name) || 'Anamnese'}</strong>
-                    <p>{audienceLabel[text(item.template?.audience)] ?? text(item.template?.audience)} · v{text(item.template?.version)}</p>
+                    <span>{audienceLabel[text(item.template?.audience)] ?? text(item.template?.audience)}</span>
                   </div>
                   <StatusBadge tone={item.status === 'SIGNED' ? 'green' : item.status === 'DRAFT' ? 'amber' : 'blue'}>
-                    {item.status}
+                    {statusLabel(item.status)}
                   </StatusBadge>
                 </article>
               ))}
             </div>
           ) : (
-            <EmptyState title="Sem anamneses" description="Inicie um novo preenchimento pelo modelo adequado." />
+            <EmptyState title="Sem anamneses" description="Use Adicionar para iniciar um novo preenchimento." />
           )}
         </Panel>
       </div>
@@ -245,17 +260,16 @@ export function AnamnesisWorkspace({
 
   return (
     <div className="anamnesis-workspace filling">
-      <PageHeader
-        eyebrow="Preenchimento"
-        title={`${activeTemplate.name} · versão ${activeTemplate.version}`}
-        description={`Progresso ${progress}%`}
-        actions={(
-          <>
-            <button type="button" className="button soft" disabled={busy} onClick={() => void saveDraft()}>Salvar rascunho</button>
-            <button type="button" className="button" onClick={() => { setActiveTemplate(null); setResponseId(null); }}>Voltar</button>
-          </>
-        )}
-      />
+      <div className="anamnesis-fill-head">
+        <div>
+          <h2>{activeTemplate.name}</h2>
+          <p>Progresso {progress}% · {audienceLabel[activeTemplate.audience] ?? activeTemplate.audience}</p>
+        </div>
+        <div className="heading-actions">
+          <button type="button" className="button soft" disabled={busy} onClick={() => void saveDraft()}>Salvar rascunho</button>
+          <button type="button" className="button" onClick={() => { setActiveTemplate(null); setResponseId(null); }}>Voltar</button>
+        </div>
+      </div>
       {error ? <ErrorState description={error} /> : null}
       <div className="anamnesis-grid">
         <aside className="section-rail">
@@ -270,7 +284,11 @@ export function AnamnesisWorkspace({
             </button>
           ))}
         </aside>
-        <Panel title={section?.title ?? 'Seção'}>
+        <div className="anamnesis-fill-card">
+          <header>
+            <h3>{section?.title ?? 'Seção'}</h3>
+            <div className="progress"><span style={{ width: `${progress}%` }} /></div>
+          </header>
           {visibleQuestions.map((question) => (
             <QuestionRenderer
               key={question.id}
@@ -310,15 +328,15 @@ export function AnamnesisWorkspace({
               {remoteLink ? <p className="muted-note">Link público: {remoteLink}</p> : null}
             </div>
           ) : null}
-        </Panel>
+        </div>
         <aside className="risk-panel">
           <Panel title="Risco e alertas">
-            <MetricCard label="Score" value={risk?.score ?? '—'} meta={risk?.level ?? 'Não calculado'} />
-            <div className="timeline">
+            <MetricCard label="Pontuação" value={risk?.score ?? '—'} meta={risk?.level ? presentationLabel(risk.level) : 'Não calculado'} />
+            <div className="clinical-timeline">
               {alerts.map((alert, index) => (
-                <article key={`${alert.message}-${index}`} className="timeline-item">
+                <article key={`${alert.message}-${index}`} className="clinical-timeline-item">
                   <StatusBadge tone={alert.severity === 'CRITICAL' ? 'red' : alert.severity === 'WARNING' ? 'amber' : 'blue'}>
-                    {alert.severity ?? 'INFO'}
+                    {presentationLabel(alert.severity ?? 'INFO')}
                   </StatusBadge>
                   <p>{alert.message}</p>
                 </article>

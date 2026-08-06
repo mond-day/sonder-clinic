@@ -5,10 +5,11 @@ const password = process.env.E2E_PASSWORD ?? 'Sonder@123';
 
 async function login(page: Page) {
   await page.goto('/login');
+  await page.locator('input[name="email"]').waitFor({ state: 'visible' });
   await page.locator('input[name="email"]').fill(email);
   await page.locator('input[name="password"]').fill(password);
-  await page.getByRole('button', { name: /entrar/i }).click();
-  await expect(page).not.toHaveURL(/login/, { timeout: 20_000 });
+  await page.getByRole('button', { name: /^entrar$/i }).click();
+  await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 20_000 });
 }
 
 test('1. recepção pesquisa paciente e abre menu', async ({ page }) => {

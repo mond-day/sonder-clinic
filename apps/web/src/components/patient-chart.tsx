@@ -1,8 +1,9 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { MessageCircle, Pencil } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import {
   ageLabel,
@@ -56,11 +57,19 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const [odontograms, setOdontograms] = useState<RecordValue[]>([]);
   const [documents, setDocuments] = useState<RecordValue[]>([]);
   const [receivables, setReceivables] = useState<RecordValue[]>([]);
-  const [anamnesisTemplates, setAnamnesisTemplates] = useState<RecordValue[]>([]);
   const [documentTemplates, setDocumentTemplates] = useState<RecordValue[]>([]);
   const [odontogramConditions, setOdontogramConditions] = useState<RecordValue[]>([]);
   const [prescriptions, setPrescriptions] = useState<RecordValue[]>([]);
-  const [activeModal, setActiveModal] = useState<'anamnesis' | 'odontogram' | 'evolution' | 'document' | 'prescription' | null>(null);
+  const [media, setMedia] = useState<RecordValue[]>([]);
+  const [activeModal, setActiveModal] = useState<'evolution' | 'document' | 'prescription' | 'receive' | 'plan' | 'media' | null>(null);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [approveIds, setApproveIds] = useState<string[]>([]);
+  const [planDiscount, setPlanDiscount] = useState('');
+  const [receiveId, setReceiveId] = useState('');
+  const [receiveMethod, setReceiveMethod] = useState('PIX');
+  const [receiveAmount, setReceiveAmount] = useState('');
+  const [receiveDiscount, setReceiveDiscount] = useState('0');
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -85,27 +94,29 @@ export function PatientChart({ patientId }: { patientId: string }) {
       canFinance
         ? api.get<RecordValue[]>(`/receivables?clinicId=${clinicId}`).catch(() => [])
         : Promise.resolve([] as RecordValue[]),
-      api.get<RecordValue[]>('/anamnesis/templates').catch(() => []),
       api.get<RecordValue[]>('/document-templates').catch(() => []),
       api.get<RecordValue[]>('/odontogram-conditions').catch(() => []),
       api.get<RecordValue[]>(`/prescriptions?patientId=${patientId}`).catch(() => []),
+      api.get<RecordValue[]>(`/patients/${patientId}/media`).catch(() => []),
     ])
-      .then(([nextPatient, nextRecord, nextPlans, nextOdontograms, nextDocuments, nextReceivables, templates, nextDocumentTemplates, nextConditions, nextPrescriptions]) => {
+      .then(([nextPatient, nextRecord, nextPlans, nextOdontograms, nextDocuments, nextReceivables, nextDocumentTemplates, nextConditions, nextPrescriptions, nextMedia]) => {
         setPatient(nextPatient);
         setRecord(nextRecord);
         setPlans(list(nextPlans));
         setOdontograms(list(nextOdontograms));
-        setDocuments(list(nextDocuments).filter((item) => item.patientId === patientId));
+        const docs = list(nextDocuments).filter((item) => item.patientId === patientId);
+        setDocuments(docs);
+        if (!selectedDocId && docs[0]) setSelectedDocId(String(docs[0].id));
         setReceivables(list(nextReceivables).filter((item) => item.patientId === patientId));
-        setAnamnesisTemplates(list(templates));
         setDocumentTemplates(list(nextDocumentTemplates));
         setOdontogramConditions(list(nextConditions));
         setPrescriptions(list(nextPrescriptions));
+        setMedia(list(nextMedia));
         window.localStorage.setItem('sonder.selectedPatientId', patientId);
       })
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Não foi possível abrir o prontuário.'))
       .finally(() => setLoading(false));
-  }, [canFinance, clinicId, patientId]);
+  }, [canFinance, clinicId, patientId, selectedDocId]);
 
   useEffect(load, [load]);
 
@@ -113,9 +124,17 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const alerts = list(record?.alerts ?? patient?.alerts);
   const latestFindings = list(odontograms[0]?.findings);
   const markedTeeth = new Set(latestFindings.map((item) => String(item.toothFdi)));
+  const selectedPlan = plans.find((item) => String(item.id) === selectedPlanId) ?? null;
+  const selectedDoc = documents.find((item) => String(item.id) === selectedDocId) ?? documents[0] ?? null;
+  const openReceivables = useMemo(
+    () => receivables.filter((item) => !['PAID', 'CANCELLED'].includes(String(item.status))),
+    [receivables],
+  );
 
   const age = ageLabel(patient?.birthDate);
   const code = patient?.id ? `#${String(patient.id).slice(0, 8).toUpperCase()}` : '—';
+  const professional = professionals.find((item) => item.id === String(selectedDoc ? nested(selectedDoc, 'template').professionalId : '')) 
+    ?? professionals[0];
 
   async function submitModal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -124,24 +143,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
     setSaving(true);
     setFormError('');
     try {
-      if (activeModal === 'anamnesis') {
-        await api.post(`/patients/${patientId}/anamnesis`, {
-          clinicId, templateId: String(data.get('templateId')),
-          answers: { observacoes: String(data.get('answers') ?? '') },
-        });
-      } else if (activeModal === 'odontogram') {
-        await api.post(`/patients/${patientId}/odontograms`, {
-          clinicId,
-          professionalId: String(data.get('professionalId')),
-          dentitionType: 'PERMANENT',
-          findings: [{
-            conditionId: String(data.get('conditionId')),
-            toothFdi: String(data.get('toothFdi')),
-            status: String(data.get('status')),
-            notes: String(data.get('notes') ?? '') || undefined,
-          }],
-        });
-      } else if (activeModal === 'evolution') {
+      if (activeModal === 'evolution') {
         await api.post(`/patients/${patientId}/clinical-entries`, {
           clinicId, professionalId: String(data.get('professionalId')), type: 'EVOLUTION',
           renderedText: String(data.get('renderedText')), structuredData: {},
@@ -149,21 +151,78 @@ export function PatientChart({ patientId }: { patientId: string }) {
           clinicalDate: new Date().toISOString(),
         });
       } else if (activeModal === 'document') {
+        const template = documentTemplates.find((item) => String(item.id) === String(data.get('templateId')));
+        const cro = String(data.get('cro') ?? professionals.find((p) => p.id === String(data.get('professionalId')))?.croNumber ?? '');
         await api.post('/documents/generate', {
           clinicId, patientId, templateId: String(data.get('templateId')),
           treatmentId: String(data.get('treatmentId') ?? '') || undefined,
-          frozenContent: { observacoes: String(data.get('content') ?? ''), generatedAt: new Date().toISOString() },
+          frozenContent: {
+            titulo: text(template?.name, 'Documento clínico'),
+            tipo: text(template?.type),
+            paciente: text(patient?.fullName),
+            pacienteCpf: maskCpf(patient?.cpf),
+            profissional: text(professionals.find((p) => p.id === String(data.get('professionalId')))?.name),
+            cro,
+            data: new Date().toISOString(),
+            corpo: String(data.get('content') ?? ''),
+            observacoes: String(data.get('content') ?? ''),
+          },
         });
-      } else {
+      } else if (activeModal === 'prescription') {
         await api.post('/prescriptions', {
           clinicId, patientId, professionalId: String(data.get('professionalId')),
           purpose: String(data.get('purpose')), items: [{ instructions: String(data.get('items')) }],
         });
+      } else if (activeModal === 'receive') {
+        const amount = Number(receiveAmount);
+        if (!receiveId || !Number.isFinite(amount) || amount <= 0) {
+          throw new Error('Selecione um título e informe um valor válido.');
+        }
+        await api.post(`/receivables/${receiveId}/payments`, {
+          amount: amount.toFixed(2),
+          method: receiveMethod,
+        }, { 'Idempotency-Key': crypto.randomUUID() });
+      } else if (activeModal === 'plan' && selectedPlan) {
+        if (approveIds.length) {
+          await api.post(`/treatment-plans/${selectedPlan.id}/approve`, { itemIds: approveIds });
+        }
+        await api.patch(`/treatment-plans/${selectedPlan.id}`, {
+          discount: planDiscount || String(selectedPlan.discount ?? '0'),
+          notes: String(data.get('notes') ?? selectedPlan.notes ?? ''),
+        });
+      } else if (activeModal === 'media') {
+        const form = new FormData();
+        form.set('clinicId', clinicId);
+        form.set('type', String(data.get('type') || 'DOCUMENT'));
+        const file = data.get('file');
+        if (file instanceof File) form.set('file', file);
+        await api.postForm(`/patients/${patientId}/media`, form);
       }
       setActiveModal(null);
+      setApproveIds([]);
       load();
     } catch (cause) {
-      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar.');
+      setFormError(cause instanceof ApiError || cause instanceof Error ? cause.message : 'Não foi possível salvar.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function signSelectedDocument(method: 'DRAWN' | 'A1') {
+    if (!selectedDoc) return;
+    setSaving(true);
+    setFormError('');
+    try {
+      await api.post(`/documents/${String(selectedDoc.id)}/sign`, {
+        signerName: text(professional?.name, 'Profissional'),
+        role: 'PROFESSIONAL',
+        method,
+        clinicId,
+        evidence: { source: 'patient-chart-documents' },
+      });
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Falha ao assinar documento.');
     } finally {
       setSaving(false);
     }
@@ -181,20 +240,133 @@ export function PatientChart({ patientId }: { patientId: string }) {
   if (!patient) return <EmptyState title="Paciente não encontrado" action={<Link className="button primary" href="/pacientes">Voltar</Link>} />;
 
   const visibleTabs = TABS.filter((tab) => !(tab.id === 'financeiro' && (!canFinance || presentationMode)));
+  const frozen = nested(selectedDoc ?? {}, 'frozenContent');
 
   return (
     <>
-      <Modal open={Boolean(activeModal)} title={activeModal === 'anamnesis' ? 'Preencher anamnese' : activeModal === 'odontogram' ? 'Registrar no odontograma' : activeModal === 'evolution' ? 'Nova evolução' : activeModal === 'document' ? 'Gerar documento' : 'Nova receita'} description="O registro será persistido no prontuário real." onClose={() => { setActiveModal(null); setFormError(''); }}>
+      <Modal
+        open={Boolean(activeModal)}
+        title={
+          activeModal === 'evolution' ? 'Nova evolução'
+            : activeModal === 'document' ? 'Gerar documento'
+              : activeModal === 'prescription' ? 'Nova receita'
+                : activeModal === 'receive' ? 'Receber pagamento'
+                  : activeModal === 'plan' ? 'Gerenciar plano'
+                    : 'Enviar mídia'
+        }
+        description="O registro será persistido no prontuário."
+        onClose={() => { setActiveModal(null); setFormError(''); }}
+        size={activeModal === 'plan' || activeModal === 'document' ? 'large' : 'medium'}
+      >
         <form className="mutation-form" onSubmit={submitModal}>
-          {activeModal === 'anamnesis' ? <><SearchableSelect name="templateId" label="Modelo" required options={anamnesisTemplates.map((item) => ({ value: String(item.id), label: text(item.name) }))} /><label className="span-2">Respostas e observações<textarea name="answers" required /></label></> : null}
-          {activeModal === 'odontogram' ? <><SearchableSelect name="professionalId" label="Profissional" required options={professionals.map((item) => ({ value: item.id, label: item.name }))} /><SearchableSelect name="conditionId" label="Condição" required options={odontogramConditions.map((item) => ({ value: String(item.id), label: text(item.name) }))} /><label>Dente FDI<input name="toothFdi" pattern="[1-8][1-8]" maxLength={2} required /></label><SearchableSelect name="status" label="Status" defaultValue="EXISTING" options={['EXISTING', 'PLANNED', 'IN_PROGRESS', 'COMPLETED'].map((value) => ({ value, label: presentationLabel(value) }))} /><label className="span-2">Observações<textarea name="notes" /></label></> : null}
-          {activeModal === 'evolution' ? <><SearchableSelect name="professionalId" label="Profissional" required options={professionals.map((item) => ({ value: item.id, label: item.name }))} /><SearchableSelect name="treatmentId" label="Tratamento vinculado" placeholder="Sem tratamento específico" options={plans.map((item) => ({ value: String(item.id), label: text(item.title), description: presentationLabel(item.status) }))} /><label className="span-2">Evolução<textarea name="renderedText" required minLength={2} /></label></> : null}
-          {activeModal === 'document' ? <><SearchableSelect name="templateId" label="Documento padrão" required options={documentTemplates.map((item) => ({ value: String(item.id), label: text(item.name), description: presentationLabel(item.type) }))} /><SearchableSelect name="treatmentId" label="Tratamento vinculado" placeholder="Sem tratamento específico" options={plans.map((item) => ({ value: String(item.id), label: text(item.title) }))} /><label className="span-2">Conteúdo complementar<textarea name="content" /></label></> : null}
-          {activeModal === 'prescription' ? <><SearchableSelect name="professionalId" label="Profissional" required options={professionals.map((item) => ({ value: item.id, label: item.name }))} /><label>Finalidade<input name="purpose" required minLength={3} /></label><label className="span-2">Medicamento, posologia e orientações<textarea name="items" required /></label><p className="muted-note span-2">A receita ficará em rascunho. Assinatura digital só será disponibilizada com provedor e certificado válidos.</p></> : null}
-          <button className="button primary" disabled={saving}>Salvar no prontuário</button>
+          {activeModal === 'evolution' ? (
+            <>
+              <SearchableSelect name="professionalId" label="Profissional" required options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
+              <SearchableSelect name="treatmentId" label="Tratamento vinculado" placeholder="Sem tratamento específico" options={plans.map((item) => ({ value: String(item.id), label: text(item.title), description: presentationLabel(item.status) }))} />
+              <label className="span-2">Evolução<textarea name="renderedText" required minLength={2} /></label>
+            </>
+          ) : null}
+          {activeModal === 'document' ? (
+            <>
+              <SearchableSelect name="templateId" label="Modelo" required options={documentTemplates.map((item) => ({ value: String(item.id), label: text(item.name), description: presentationLabel(item.type) }))} />
+              <SearchableSelect name="professionalId" label="Profissional / CRO" required options={professionals.map((item) => ({ value: item.id, label: item.name, description: item.croNumber ? `CRO ${item.croNumber}` : undefined }))} />
+              <label>CRO<input name="cro" placeholder="Número do CRO" defaultValue={professionals[0]?.croNumber ?? ''} /></label>
+              <SearchableSelect name="treatmentId" label="Tratamento vinculado" placeholder="Sem tratamento" options={plans.map((item) => ({ value: String(item.id), label: text(item.title) }))} />
+              <label className="span-2">Corpo clínico<textarea name="content" required rows={5} placeholder="Texto clínico conforme normas CRM/CRO" /></label>
+            </>
+          ) : null}
+          {activeModal === 'prescription' ? (
+            <>
+              <SearchableSelect name="professionalId" label="Profissional" required options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
+              <label>Finalidade<input name="purpose" required minLength={3} /></label>
+              <label className="span-2">Medicamento, posologia e orientações<textarea name="items" required /></label>
+            </>
+          ) : null}
+          {activeModal === 'receive' ? (
+            <>
+              <label className="span-2">Título em aberto
+                <select required value={receiveId} onChange={(event) => {
+                  const id = event.target.value;
+                  setReceiveId(id);
+                  const row = openReceivables.find((item) => String(item.id) === id);
+                  setReceiveAmount(row ? String(row.netAmount ?? '') : '');
+                }}>
+                  <option value="">Selecione</option>
+                  {openReceivables.map((item) => (
+                    <option key={String(item.id)} value={String(item.id)}>
+                      {text(item.description)} · {currency(item.netAmount)} · {dateOnly(item.dueDate)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>Forma de pagamento
+                <select value={receiveMethod} onChange={(event) => setReceiveMethod(event.target.value)}>
+                  <option value="PIX">PIX</option>
+                  <option value="CREDIT_CARD">Cartão de crédito</option>
+                  <option value="DEBIT_CARD">Cartão de débito</option>
+                  <option value="CASH">Dinheiro</option>
+                  <option value="TRANSFER">Transferência</option>
+                </select>
+              </label>
+              <label>Valor<input type="number" min="0.01" step="0.01" required value={receiveAmount} onChange={(event) => setReceiveAmount(event.target.value)} /></label>
+              <label>Desconto<input type="number" min="0" step="0.01" value={receiveDiscount} onChange={(event) => setReceiveDiscount(event.target.value)} /></label>
+            </>
+          ) : null}
+          {activeModal === 'plan' && selectedPlan ? (
+            <>
+              <label className="span-2">Desconto do orçamento
+                <input value={planDiscount} onChange={(event) => setPlanDiscount(event.target.value)} placeholder={String(selectedPlan.discount ?? '0')} />
+              </label>
+              <label className="span-2">Observações<textarea name="notes" defaultValue={text(selectedPlan.notes, '')} /></label>
+              <div className="span-2">
+                <strong>Itens — aprovação parcial</strong>
+                <div className="plan-items-list">
+                  {list(selectedPlan.items).map((item) => {
+                    const id = String(item.id);
+                    const checked = approveIds.includes(id) || ['APPROVED', 'COMPLETED'].includes(String(item.status));
+                    return (
+                      <label key={id} className="check-field">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={['APPROVED', 'COMPLETED'].includes(String(item.status))}
+                          onChange={(event) => {
+                            setApproveIds((current) => (
+                              event.target.checked ? [...current, id] : current.filter((value) => value !== id)
+                            ));
+                          }}
+                        />
+                        <span>
+                          {text(nested(item, 'procedure').name, text(item.procedureId))} · {currency(Number(item.unitPrice) * Number(item.quantity))}
+                          <small> {presentationLabel(item.status)}</small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          ) : null}
+          {activeModal === 'media' ? (
+            <>
+              <label>Tipo
+                <select name="type" defaultValue="RADIOGRAPHY">
+                  <option value="RADIOGRAPHY">Radiografia</option>
+                  <option value="PHOTO">Foto</option>
+                  <option value="DOCUMENT">Documento</option>
+                  <option value="OTHER">Outro</option>
+                </select>
+              </label>
+              <label className="span-2">Arquivo<input name="file" type="file" required /></label>
+            </>
+          ) : null}
+          <button className="button primary" disabled={saving}>
+            {activeModal === 'receive' ? 'Confirmar recebimento' : activeModal === 'plan' ? 'Salvar plano' : 'Salvar'}
+          </button>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
         </form>
       </Modal>
+
       <section className="page-heading">
         <div>
           <Link className="button small" href="/pacientes">← Voltar à pesquisa</Link>
@@ -216,31 +388,48 @@ export function PatientChart({ patientId }: { patientId: string }) {
         <div className="patient-identity">
           <div className="patient-avatar">{initials(patient.fullName)}</div>
           <div className="patient-name">
-            <h2>{text(patient.fullName)}</h2>
+            <h2>
+              {text(patient.fullName)}
+              {alerts.length > 0 ? (
+                <span className="patient-alert-flags" aria-label={`${alerts.length} alerta(s) clínico(s)`}>
+                  {alerts.slice(0, 3).map((alert, index) => (
+                    <span
+                      key={String(alert.id ?? index)}
+                      className={`alert-flag ${String(alert.severity ?? '').toLowerCase().includes('high') || String(alert.severity).toLowerCase() === 'critical' ? 'red' : 'amber'}`}
+                      title={text(alert.title ?? alert.type ?? 'Alerta')}
+                    >
+                      !
+                    </span>
+                  ))}
+                </span>
+              ) : null}
+            </h2>
             <p>
-              {[age, code, `Status ${presentationLabel(patient.status)}`].filter(Boolean).join(' · ')}
+              {[age, code, presentationLabel(patient.status)].filter(Boolean).join(' · ')}
             </p>
           </div>
           <div className="patient-head-actions">
             {!presentationMode && patient.primaryPhone ? (
-              <a className="button small sensitive" href={`https://wa.me/55${String(patient.primaryPhone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer">
-                WhatsApp
+              <a
+                className="icon-button"
+                href={`https://wa.me/55${String(patient.primaryPhone).replace(/\D/g, '')}`}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Abrir WhatsApp"
+                title="WhatsApp"
+              >
+                <MessageCircle size={16} />
               </a>
             ) : null}
-            <Link className="button small" href={`/pacientes?edit=${patientId}`}>Editar cadastro</Link>
+            <Link
+              className="icon-button"
+              href={`/pacientes?edit=${patientId}`}
+              aria-label="Editar cadastro"
+              title="Editar cadastro"
+            >
+              <Pencil size={16} />
+            </Link>
           </div>
-        </div>
-        <div className="privacy-banner">
-          <span>◉</span>
-          <span>
-            Prontuário isolado: nenhum outro paciente aparece nesta tela.
-            {presentationMode
-              ? ' Modo atendimento ocultando dados administrativos e financeiros.'
-              : ' Use o modo atendimento para ocultar informações administrativas e financeiras.'}
-          </span>
-          <button className="button small" type="button" onClick={togglePresentation}>
-            {presentationMode ? 'Desativar' : 'Ativar modo atendimento'}
-          </button>
         </div>
         <div className="patient-tabs" role="tablist" aria-label="Abas do prontuário">
           {visibleTabs.map((tab) => (
@@ -286,17 +475,13 @@ export function PatientChart({ patientId }: { patientId: string }) {
                     </div>
                   ))}
                 </div>
-                <div className="legend-row">
-                  <span><i style={{ background: '#f4c4c2' }} />Com achado</span>
-                  <span><i style={{ background: '#b9c9cc' }} />Sem registro</span>
-                </div>
               </div>
             </Panel>
             <Panel title="Últimas evoluções" description="Histórico clínico recente" actions={<button className="button small" type="button" onClick={() => setTab('evolucao')}>Ver histórico</button>}>
-              {entries.length === 0 ? <EmptyState title="Sem evoluções" description="Registre a primeira evolução na aba Evolução ou em Tratamentos." /> : (
-                <div className="timeline">
+              {entries.length === 0 ? <EmptyState title="Sem evoluções" /> : (
+                <div className="clinical-timeline">
                   {entries.slice(0, 5).map((entry) => (
-                    <div className="timeline-item" key={String(entry.id)}>
+                    <div className="clinical-timeline-item" key={String(entry.id)}>
                       <div className="timeline-dot" />
                       <div className="timeline-copy">
                         <strong>{presentationLabel(entry.type)}</strong>
@@ -310,9 +495,9 @@ export function PatientChart({ patientId }: { patientId: string }) {
             </Panel>
           </div>
           <div className="dashboard-stack">
-            <Panel title="Alertas de saúde" description="Exibidos antes de procedimentos">
+            <Panel title="Alertas de saúde" description="Sinalizados no cabeçalho e detalhados aqui">
               {alerts.length === 0 ? <EmptyState title="Nenhum alerta clínico" /> : (
-                <div className="health-alerts">
+                <div className="health-alerts subtle">
                   {alerts.map((alert, index) => (
                     <div className={`health-alert ${String(alert.severity ?? 'amber').toLowerCase().includes('high') || String(alert.severity).toLowerCase() === 'critical' ? 'red' : 'amber'}`} key={String(alert.id ?? index)}>
                       <span>!</span>
@@ -324,13 +509,6 @@ export function PatientChart({ patientId }: { patientId: string }) {
                   ))}
                 </div>
               )}
-            </Panel>
-            <Panel title="Próximas ações" description="Clínicas e administrativas">
-              <div className="billing-list">
-                <div className="billing-row"><div><strong>Revisar prontuário</strong><span>Abas clínicas disponíveis</span></div><StatusBadge tone="blue">Aberto</StatusBadge></div>
-                <div className="billing-row"><div><strong>Planos de tratamento</strong><span>{plans.length} registro(s)</span></div><StatusBadge tone="green">Ver aba</StatusBadge></div>
-                <div className="billing-row"><div><strong>Documentos</strong><span>{documents.length} gerado(s)</span></div><StatusBadge tone="gray">Ver aba</StatusBadge></div>
-              </div>
             </Panel>
             {canFinance && (
               <Panel title="Resumo financeiro" description="Ocultado no modo atendimento" sensitive actions={<button className="button small" type="button" onClick={() => setTab('financeiro')}>Abrir</button>}>
@@ -349,26 +527,11 @@ export function PatientChart({ patientId }: { patientId: string }) {
           <div className="span-2">
             <AnamnesisWorkspace patientId={patientId} clinicId={clinicId} />
           </div>
-          <Panel title="Alertas do prontuário" description="Derivados da anamnese e demais registros">
-            {alerts.length === 0 ? <EmptyState title="Sem alertas" /> : (
-              <div className="health-alerts">
-                {alerts.map((alert, index) => (
-                  <div className="health-alert amber" key={String(alert.id ?? index)}>
-                    <span>!</span>
-                    <div>
-                      <strong>{text(alert.title ?? alert.type ?? 'Alerta')}</strong>
-                      <span>{text(alert.description ?? alert.message)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
         </div>
       )}
 
       {activeTab === 'odontograma' && (
-        <Panel title="Odontograma 2D" description="Seleção por dente e por face, com painel compacto e histórico.">
+        <Panel title="Odontograma 2D" description="Adicione achados sob demanda; painel compacto por dente.">
           <div className="odontogram-wrap">
             <OdontogramBoard
               patientId={patientId}
@@ -383,8 +546,12 @@ export function PatientChart({ patientId }: { patientId: string }) {
       )}
 
       {activeTab === 'tratamentos' && (
-        <Panel title="Planos e tratamentos" description="Planos vinculados a este paciente" actions={<Link className="button primary small" href="/tratamentos">Gerenciar</Link>}>
-          {plans.length === 0 ? <EmptyState title="Nenhum plano" description="Crie planos no módulo de tratamentos." /> : (
+        <Panel
+          title="Planos e tratamentos"
+          description="Itens, aprovação parcial e orçamento no prontuário"
+          actions={<button className="button primary small" type="button" onClick={() => { setSelectedPlanId(plans[0] ? String(plans[0].id) : null); setActiveModal('plan'); setPlanDiscount(String(plans[0]?.discount ?? '0')); }}>Gerenciar</button>}
+        >
+          {plans.length === 0 ? <EmptyState title="Nenhum plano" description="Crie um plano pelo módulo de tratamentos ou pela agenda." /> : (
             <div className="treatment-cards">
               {plans.map((plan) => {
                 const items = list(plan.items);
@@ -397,10 +564,29 @@ export function PatientChart({ patientId }: { patientId: string }) {
                       <p>{items.length} item(ns) · {dateOnly(plan.createdAt)}</p>
                       <StatusBadge tone={statusTone(plan.status)}>{presentationLabel(plan.status)}</StatusBadge>
                       <div className="progress"><span style={{ width: `${pct}%` }} /></div>
+                      <ul className="plan-item-preview">
+                        {items.slice(0, 4).map((item) => (
+                          <li key={String(item.id)}>
+                            {text(nested(item, 'procedure').name, 'Procedimento')} · {presentationLabel(item.status)} · {currency(Number(item.unitPrice) * Number(item.quantity))}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                     <div className="treatment-side">
                       <strong>{done} de {items.length}</strong>
                       <small>{currency(plan.total)}</small>
+                      <button
+                        type="button"
+                        className="button small"
+                        onClick={() => {
+                          setSelectedPlanId(String(plan.id));
+                          setPlanDiscount(String(plan.discount ?? '0'));
+                          setApproveIds(items.filter((item) => item.status === 'APPROVED').map((item) => String(item.id)));
+                          setActiveModal('plan');
+                        }}
+                      >
+                        Editar / aprovar
+                      </button>
                     </div>
                   </div>
                 );
@@ -413,9 +599,9 @@ export function PatientChart({ patientId }: { patientId: string }) {
       {activeTab === 'evolucao' && (
         <Panel title="Evolução clínica" description="Registros cronológicos" actions={<button className="button primary small" type="button" onClick={() => setActiveModal('evolution')}>＋ Nova evolução</button>}>
           {entries.length === 0 ? <EmptyState title="Sem evoluções" /> : (
-            <div className="timeline">
+            <div className="clinical-timeline">
               {entries.map((entry) => (
-                <div className="timeline-item" key={String(entry.id)}>
+                <div className="clinical-timeline-item" key={String(entry.id)}>
                   <div className="timeline-dot" />
                   <div className="timeline-copy">
                     <strong>{presentationLabel(entry.type)}</strong>
@@ -430,7 +616,12 @@ export function PatientChart({ patientId }: { patientId: string }) {
       )}
 
       {activeTab === 'financeiro' && canFinance && (
-        <Panel title="Financeiro do paciente" description="Cobranças vinculadas" sensitive actions={<Link className="button primary small" href="/financeiro">＋ Receber</Link>}>
+        <Panel
+          title="Financeiro do paciente"
+          description="Cobranças vinculadas"
+          sensitive
+          actions={<button className="button primary small" type="button" onClick={() => { setReceiveId(openReceivables[0] ? String(openReceivables[0].id) : ''); setReceiveAmount(openReceivables[0] ? String(openReceivables[0].netAmount) : ''); setActiveModal('receive'); }} disabled={!openReceivables.length}>＋ Receber</button>}
+        >
           <div className="summary-strip">
             <div><small>Títulos</small><strong>{receivables.length}</strong></div>
             <div><small>Líquido</small><strong>{currency(receivables.reduce((sum, item) => sum + Number(item.netAmount ?? 0), 0))}</strong></div>
@@ -461,44 +652,104 @@ export function PatientChart({ patientId }: { patientId: string }) {
 
       {activeTab === 'documentos' && (
         <>
-        <Panel
-          title="Documentos"
-          description="Prévia paper, geração e assinatura. Biblioteca completa em /documentos."
-          actions={(
-            <>
-              <Link className="button soft small" href="/documentos">Abrir biblioteca</Link>
-              <button className="button primary small" type="button" onClick={() => setActiveModal('document')}>Gerar documento</button>
-              <button className="button small" type="button" onClick={() => setActiveModal('prescription')}>Nova receita</button>
-            </>
-          )}
-        >
-          {documents.length === 0 ? <EmptyState title="Nenhum documento" /> : (
-            <div className="document-paper-grid compact">
-              <aside className="doc-list">
-                {documents.map((doc) => (
-                  <div className="doc-template" key={String(doc.id)}>
-                    <strong>{text(nested(doc, 'template').name, text(doc.validationCode))}</strong>
-                    <br />
-                    <small>{presentationLabel(doc.status)} · v{text(doc.templateVersion)}</small>
+          <Panel
+            title="Documentos clínicos"
+            description="Atestados e receituários alinhados a identificação profissional, paciente, data, corpo e assinatura."
+            actions={(
+              <>
+                <button className="button soft small" type="button" onClick={() => setActiveModal('media')}>Enviar mídia</button>
+                <button className="button small" type="button" onClick={() => setActiveModal('prescription')}>Nova receita</button>
+                <button className="button primary small" type="button" onClick={() => setActiveModal('document')}>Gerar documento</button>
+              </>
+            )}
+          >
+            {documents.length === 0 ? <EmptyState title="Nenhum documento" /> : (
+              <div className="document-paper-grid compact">
+                <aside className="doc-list">
+                  {documents.map((doc) => (
+                    <button
+                      type="button"
+                      className={`doc-template ${String(doc.id) === String(selectedDoc?.id) ? 'active' : ''}`}
+                      key={String(doc.id)}
+                      onClick={() => setSelectedDocId(String(doc.id))}
+                    >
+                      <strong>{text(nested(doc, 'template').name, text(doc.validationCode))}</strong>
+                      <br />
+                      <small>{presentationLabel(doc.status)} · {dateOnly(doc.generatedAt)}</small>
+                    </button>
+                  ))}
+                </aside>
+                {selectedDoc ? (
+                  <article className="paper clinical-paper">
+                    <header className="paper-letterhead">
+                      <div>
+                        <strong>SONDER CLINIC</strong>
+                        <span>Documento odontológico</span>
+                      </div>
+                      <div className="paper-meta">
+                        <span>{presentationLabel(nested(selectedDoc, 'template').type)}</span>
+                        <span>Cód. {text(selectedDoc.validationCode)}</span>
+                      </div>
+                    </header>
+                    <h2>{text(frozen.titulo, text(nested(selectedDoc, 'template').name)).toUpperCase()}</h2>
+                    <section className="paper-identity">
+                      <p><strong>Paciente:</strong> {text(frozen.paciente, text(patient.fullName))}</p>
+                      <p><strong>CPF:</strong> {text(frozen.pacienteCpf, maskCpf(patient.cpf))}</p>
+                      <p><strong>Profissional:</strong> {text(frozen.profissional, text(professional?.name))}</p>
+                      <p><strong>CRO:</strong> {text(frozen.cro, professional?.croNumber ? `CRO ${professional.croNumber}` : '—')}</p>
+                      <p><strong>Data:</strong> {dateOnly(frozen.data ?? selectedDoc.generatedAt)}</p>
+                    </section>
+                    <section className="paper-body">
+                      <p>{text(frozen.corpo, text(frozen.observacoes, text(frozen.prescricao, 'Conteúdo clínico congelado na geração.')))}</p>
+                    </section>
+                    <div className="paper-signatures">
+                      <div>
+                        <span>Assinatura do profissional</span>
+                        <small>{text(frozen.profissional, text(professional?.name))}</small>
+                      </div>
+                      <div>
+                        <span>Assinatura do paciente</span>
+                        <small>{text(patient.fullName)}</small>
+                      </div>
+                    </div>
+                    {selectedDoc.status !== 'SIGNED' ? (
+                      <div className="heading-actions" style={{ marginTop: 16 }}>
+                        <button type="button" className="button soft" disabled={saving} onClick={() => void signSelectedDocument('DRAWN')}>Assinar (desenhada)</button>
+                        <button type="button" className="button primary" disabled={saving} onClick={() => void signSelectedDocument('A1')}>Assinar com A1</button>
+                      </div>
+                    ) : (
+                      <p className="muted-note">Documento assinado e imutável.</p>
+                    )}
+                    {formError ? <p className="form-error" role="alert">{formError}</p> : null}
+                  </article>
+                ) : null}
+              </div>
+            )}
+          </Panel>
+          <Panel title="Receitas" description="Rascunhos persistidos; assinatura A1 exige certificado válido">
+            {prescriptions.length ? (
+              <div className="document-grid">
+                {prescriptions.map((item) => (
+                  <div className="doc-card" key={String(item.id)}>
+                    <div className="doc-icon">RX</div>
+                    <h3>{text(item.purpose)}</h3>
+                    <p>{presentationLabel(item.status)}</p>
                   </div>
                 ))}
-              </aside>
-              <article className="paper">
-                <p><strong>SONDER CLINIC</strong><br />Documento do prontuário</p>
-                <h2>{text(nested(documents[0]!, 'template').name, 'DOCUMENTO').toUpperCase()}</h2>
-                <p>Paciente: <strong>{text(patient.fullName)}</strong></p>
-                <p>{text(nested(documents[0]!, 'frozenContent').observacoes, 'Conteúdo congelado na geração.')}</p>
-                <div className="paper-signatures">
-                  <div>Assinatura do profissional</div>
-                  <div>Assinatura do paciente</div>
-                </div>
-              </article>
-            </div>
-          )}
-        </Panel>
-        <Panel title="Receitas" description="Rascunhos persistidos; assinatura depende de certificado e provedor">
-          {prescriptions.length ? <div className="document-grid">{prescriptions.map((item) => <div className="doc-card" key={String(item.id)}><div className="doc-icon">RX</div><h3>{text(item.purpose)}</h3><p>{presentationLabel(item.status)}</p></div>)}</div> : <EmptyState title="Nenhuma receita" /> }
-        </Panel>
+              </div>
+            ) : <EmptyState title="Nenhuma receita" />}
+          </Panel>
+          {media.length ? (
+            <Panel title="Mídias do paciente" description="Uploads multipart (PatientMedia)">
+              <ul className="plan-item-preview">
+                {media.map((item) => (
+                  <li key={String(item.id)}>
+                    {text(nested(item, 'file').originalName)} · {text(item.type)} · AV {text(nested(item, 'file').antivirusStatus)}
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          ) : null}
         </>
       )}
     </>
