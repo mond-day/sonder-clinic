@@ -1,7 +1,8 @@
-import { Body, ConflictException, Controller, Get, Headers, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, ConflictException, Controller, Get, Headers, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsArray, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import type { Response } from 'express';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { OperationsService } from './operations.service';
@@ -112,7 +113,28 @@ export class OperationsController {
   @Get('document-templates') @RequirePermissions('document.view')
   templates(@Req() req: AuthenticatedRequest) { return this.operations.documentTemplates(req.auth.organizationId); }
   @Get('documents') @RequirePermissions('document.view')
-  documents(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) { return this.operations.documents(req.auth.organizationId, clinicId); }
+  documents(
+    @Req() req: AuthenticatedRequest,
+    @Query('clinicId') clinicId?: string,
+    @Query('patientId') patientId?: string,
+  ) {
+    return this.operations.documents(req.auth.organizationId, clinicId, patientId);
+  }
+  @Get('documents/:id') @RequirePermissions('document.view')
+  document(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.operations.getDocument(req.auth.organizationId, id);
+  }
+  @Get('documents/:id/pdf') @RequirePermissions('document.view', 'document.create')
+  async documentPdf(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const pdf = await this.operations.documentPdf(req.auth.organizationId, id);
+    res.setHeader('Content-Type', pdf.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${pdf.filename}"`);
+    res.send(pdf.content);
+  }
   @Post('document-templates') @RequirePermissions('document.template.manage')
   createTemplate(@Req() req: AuthenticatedRequest, @Body() body: DocumentTemplateDto) { return this.operations.createDocumentTemplate(req.auth.organizationId, body); }
   @Post('documents/generate') @RequirePermissions('document.create')

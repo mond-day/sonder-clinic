@@ -18,6 +18,14 @@ class TemplateDto {
   @IsOptional() @IsInt() @Min(1) validityMonths?: number;
 }
 
+class UpdateTemplateDto {
+  @IsOptional() @IsString() @MinLength(2) name?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsIn(['ADULT', 'CHILD', 'ELDERLY', 'PREGNANT', 'CUSTOM']) audience?: 'ADULT' | 'CHILD' | 'ELDERLY' | 'PREGNANT' | 'CUSTOM';
+  @IsOptional() @IsObject() schemaJson?: Record<string, unknown>;
+  @IsOptional() @IsInt() @Min(1) validityMonths?: number;
+}
+
 class DraftDto {
   @IsUUID() clinicId!: string;
   @IsUUID() templateId!: string;
@@ -84,7 +92,7 @@ export class AnamnesisController {
 
   @Patch('anamnesis/templates/:id')
   @RequirePermissions('anamnesis.manage', 'anamnesis.template.update')
-  updateTemplate(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: TemplateDto) {
+  updateTemplate(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateTemplateDto) {
     return this.anamnesis.updateTemplate(req.auth.organizationId, id, body);
   }
 

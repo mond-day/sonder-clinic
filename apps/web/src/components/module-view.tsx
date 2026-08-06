@@ -16,6 +16,7 @@ import {
   type RecordValue,
 } from '@/lib/format';
 import { AgendaView } from './agenda-view';
+import { DocumentsView } from './documents-view';
 import { FinanceView } from './finance-view';
 import { LabView } from './lab-view';
 import { ModuleActions } from './module-actions';
@@ -47,7 +48,7 @@ type ModuleKey =
 /** Módulos com tela dedicada; os demais caem no renderizador tabular genérico. */
 type GenericModuleKey = Exclude<
   ModuleKey,
-  'agenda' | 'pacientes' | 'financeiro' | 'retornos' | 'tarefas' | 'laboratorio' | 'configuracoes' | 'integracoes' | 'relatorios' | 'usuarios'
+  'agenda' | 'pacientes' | 'documentos' | 'financeiro' | 'retornos' | 'tarefas' | 'laboratorio' | 'configuracoes' | 'integracoes' | 'relatorios' | 'usuarios'
 >;
 
 type ViewData = { columns: string[]; rows: string[][]; metrics: Array<[string, string, string]> };
@@ -91,16 +92,6 @@ async function loadModule(module: GenericModuleKey, clinicId: string, patientId:
       columns: ['Plano', 'Total', 'Itens', 'Status'],
       rows: plans.map((item) => [text(item.title), currency(item.total), String(list(item.items).length), presentationLabel(item.status)]),
       metrics: [['Planos', String(plans.length), 'Todos os pacientes'], ['Evoluções', String(clinicalEntries.length), patient ? `Paciente: ${text(patient.fullName)}` : 'Nenhum paciente'], ['Odontogramas', String(odontograms.length), 'Histórico do paciente']],
-    };
-  }
-  if (module === 'documentos') {
-    const [templatesRaw, documentsRaw] = await Promise.all([api.get('/document-templates'), api.get(`/documents?clinicId=${clinicId}`)]);
-    const templates = list(templatesRaw);
-    const documents = list(documentsRaw).filter((item) => !patientId || item.patientId === patientId);
-    return {
-      columns: ['Documento/modelo', 'Tipo', 'Versão', 'Status'],
-      rows: [...documents.map((item) => [text(item.validationCode), 'Gerado', text(item.templateVersion), presentationLabel(item.status)]), ...templates.map((item) => [text(item.name), presentationLabel(item.type), text(item.version), 'Modelo'])],
-      metrics: [['Gerados', String(documents.length), 'Documentos congelados'], ['Assinados', String(documents.filter((item) => item.status === 'SIGNED').length), 'Imutáveis'], ['Modelos ativos', String(templates.length), 'Disponíveis para geração']],
     };
   }
   if (module === 'comissoes') {
@@ -156,6 +147,7 @@ export function ModuleView({ module }: { module: string }) {
       </Suspense>
     );
   }
+  if (key === 'documentos') return <DocumentsView />;
   if (key === 'financeiro') return <FinanceView />;
   if (key === 'retornos') return <ReturnsView />;
   if (key === 'tarefas') return <TasksView />;

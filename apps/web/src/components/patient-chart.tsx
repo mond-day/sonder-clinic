@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
@@ -23,6 +23,7 @@ import { useAuth } from './auth-provider';
 import { usePresentation } from './presentation-provider';
 import { useSelection } from './selection-provider';
 import { AnamnesisWorkspace } from '@/features/anamnesis/anamnesis-workspace';
+import { OdontogramBoard } from '@/features/odontogram/odontogram-board';
 import { EmptyState, Panel, StatusBadge } from './ui';
 import { Modal } from './modal';
 import { SearchableSelect } from './searchable-select';
@@ -38,18 +39,6 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
-
-const PERMANENT_TEETH = [
-  18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28,
-  48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38,
-];
-
-function toothClass(status: unknown) {
-  const value = String(status ?? '').toUpperCase();
-  if (['COMPLETED', 'EXISTING'].includes(value)) return 'done';
-  if (['PLANNED', 'IN_PROGRESS'].includes(value)) return 'pending';
-  return '';
-}
 
 export function PatientChart({ patientId }: { patientId: string }) {
   const router = useRouter();
@@ -92,7 +81,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
       api.get<RecordValue>(`/patients/${patientId}/clinical-record?clinicId=${clinicId}`).catch(() => ({ entries: [], alerts: [] })),
       api.get<RecordValue[]>(`/treatment-plans?clinicId=${clinicId}&patientId=${patientId}`).catch(() => []),
       api.get<RecordValue[]>(`/patients/${patientId}/odontograms`).catch(() => []),
-      api.get<RecordValue[]>(`/documents?clinicId=${clinicId}`).catch(() => []),
+      api.get<RecordValue[]>(`/documents?clinicId=${clinicId}&patientId=${patientId}`).catch(() => []),
       canFinance
         ? api.get<RecordValue[]>(`/receivables?clinicId=${clinicId}`).catch(() => [])
         : Promise.resolve([] as RecordValue[]),
@@ -122,15 +111,8 @@ export function PatientChart({ patientId }: { patientId: string }) {
 
   const entries = list(record?.entries);
   const alerts = list(record?.alerts ?? patient?.alerts);
-  const latestOdontogram = odontograms[0];
-  const findings = list(latestOdontogram?.findings);
-  const findingByTooth = useMemo(() => {
-    const map = new Map<string, RecordValue>();
-    for (const finding of findings) {
-      map.set(String(finding.toothFdi), finding);
-    }
-    return map;
-  }, [findings]);
+  const latestFindings = list(odontograms[0]?.findings);
+  const markedTeeth = new Set(latestFindings.map((item) => String(item.toothFdi)));
 
   const age = ageLabel(patient?.birthDate);
   const code = patient?.id ? `#${String(patient.id).slice(0, 8).toUpperCase()}` : '—';
@@ -291,19 +273,21 @@ export function PatientChart({ patientId }: { patientId: string }) {
             </Panel>
             <Panel title="Odontograma resumido" description="Última versão registrada" actions={<button className="button small" type="button" onClick={() => setTab('odontograma')}>Abrir</button>}>
               <div className="odontogram-wrap">
-                <div className="odontogram" aria-label="Odontograma resumido">
-                  {PERMANENT_TEETH.slice(0, 16).map((tooth) => {
-                    const finding = findingByTooth.get(String(tooth));
-                    return (
-                      <div key={tooth} className={`tooth ${toothClass(finding?.status)}`} title={text(finding?.notes, `Dente ${tooth}`)}>
-                        <span>{tooth}</span>
+                <div className="arch" aria-label="Odontograma resumido">
+                  {[18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28].map((tooth) => (
+                    <div key={tooth} className={`tooth ${markedTeeth.has(String(tooth)) ? 'selected' : ''}`}>
+                      <div className="tooth-number">{tooth}</div>
+                      <div className="tooth-shape">
+                        <button type="button" className={`face ${markedTeeth.has(String(tooth)) ? 'active' : ''}`} aria-hidden />
+                        <button type="button" className="face" aria-hidden />
+                        <button type="button" className="face" aria-hidden />
+                        <button type="button" className="face" aria-hidden />
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
                 <div className="legend-row">
-                  <span><i style={{ background: 'var(--danger)' }} />Pendente</span>
-                  <span><i style={{ background: 'var(--success)' }} />Concluído</span>
+                  <span><i style={{ background: '#f4c4c2' }} />Com achado</span>
                   <span><i style={{ background: '#b9c9cc' }} />Sem registro</span>
                 </div>
               </div>
@@ -384,36 +368,16 @@ export function PatientChart({ patientId }: { patientId: string }) {
       )}
 
       {activeTab === 'odontograma' && (
-        <Panel title="Odontograma" description="Dentição permanente com achados da última versão" actions={<button className="button primary small" type="button" onClick={() => setActiveModal('odontogram')}>＋ Registrar</button>}>
+        <Panel title="Odontograma 2D" description="Seleção por dente e por face, com painel compacto e histórico.">
           <div className="odontogram-wrap">
-            {odontograms.length === 0 ? (
-              <EmptyState title="Sem odontograma" description="Crie a primeira versão em Tratamentos." />
-            ) : (
-              <>
-                <p className="muted-note" style={{ marginBottom: 12 }}>
-                  Versão {text(latestOdontogram?.version, '1')} · {presentationLabel(latestOdontogram?.dentitionType)} · {dateTime(latestOdontogram?.createdAt)}
-                </p>
-                <div className="odontogram" aria-label="Odontograma completo">
-                  {PERMANENT_TEETH.map((tooth) => {
-                    const finding = findingByTooth.get(String(tooth));
-                    return (
-                      <div
-                        key={tooth}
-                        className={`tooth ${toothClass(finding?.status)}`}
-                        title={finding ? `${presentationLabel(finding.status)} · ${text(nested(finding, 'condition').name)}` : `Dente ${tooth}`}
-                      >
-                        <span>{tooth}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="legend-row">
-                  <span><i style={{ background: 'var(--danger)' }} />Tratamento pendente</span>
-                  <span><i style={{ background: 'var(--success)' }} />Concluído / existente</span>
-                  <span><i style={{ background: '#b9c9cc' }} />Sem registro</span>
-                </div>
-              </>
-            )}
+            <OdontogramBoard
+              patientId={patientId}
+              clinicId={clinicId}
+              professionals={professionals}
+              conditions={odontogramConditions}
+              odontograms={odontograms}
+              onSaved={load}
+            />
           </div>
         </Panel>
       )}
@@ -497,19 +461,38 @@ export function PatientChart({ patientId }: { patientId: string }) {
 
       {activeTab === 'documentos' && (
         <>
-        <Panel title="Documentos" description="Arquivos gerados para este paciente" actions={<><button className="button primary small" type="button" onClick={() => setActiveModal('document')}>Gerar documento</button><button className="button small" type="button" onClick={() => setActiveModal('prescription')}>Nova receita</button></>}>
+        <Panel
+          title="Documentos"
+          description="Prévia paper, geração e assinatura. Biblioteca completa em /documentos."
+          actions={(
+            <>
+              <Link className="button soft small" href="/documentos">Abrir biblioteca</Link>
+              <button className="button primary small" type="button" onClick={() => setActiveModal('document')}>Gerar documento</button>
+              <button className="button small" type="button" onClick={() => setActiveModal('prescription')}>Nova receita</button>
+            </>
+          )}
+        >
           {documents.length === 0 ? <EmptyState title="Nenhum documento" /> : (
-            <div className="document-grid">
-              {documents.map((doc) => (
-                <div className="doc-card" key={String(doc.id)}>
-                  <div className="doc-icon">PDF</div>
-                  <h3>{text(doc.validationCode, 'Documento')}</h3>
-                  <p>Versão {text(doc.templateVersion)} · {presentationLabel(doc.status)}</p>
-                  <div className="doc-actions">
-                    <StatusBadge tone={statusTone(doc.status)}>{presentationLabel(doc.status)}</StatusBadge>
+            <div className="document-paper-grid compact">
+              <aside className="doc-list">
+                {documents.map((doc) => (
+                  <div className="doc-template" key={String(doc.id)}>
+                    <strong>{text(nested(doc, 'template').name, text(doc.validationCode))}</strong>
+                    <br />
+                    <small>{presentationLabel(doc.status)} · v{text(doc.templateVersion)}</small>
                   </div>
+                ))}
+              </aside>
+              <article className="paper">
+                <p><strong>SONDER CLINIC</strong><br />Documento do prontuário</p>
+                <h2>{text(nested(documents[0]!, 'template').name, 'DOCUMENTO').toUpperCase()}</h2>
+                <p>Paciente: <strong>{text(patient.fullName)}</strong></p>
+                <p>{text(nested(documents[0]!, 'frozenContent').observacoes, 'Conteúdo congelado na geração.')}</p>
+                <div className="paper-signatures">
+                  <div>Assinatura do profissional</div>
+                  <div>Assinatura do paciente</div>
                 </div>
-              ))}
+              </article>
             </div>
           )}
         </Panel>

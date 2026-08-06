@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { prisma } from '@sonder/database';
+import { buildReportPdf } from '../../common/pdf';
 
 export const REPORT_CATALOG = [
   { id: 'appointments', name: 'Agendamentos', domain: 'clinical', permission: 'report.view_clinical' },
@@ -427,19 +428,24 @@ export class ReportsService {
       };
     }
     if (format === 'pdf') {
-      const text = [
-        `Relatório: ${reportId}`,
-        `Período: ${period.from.toISOString()} — ${period.to.toISOString()}`,
-        `Registros: ${rows.length}`,
-        '',
-        ...rows.slice(0, 200).map((row) => JSON.stringify(row)),
-      ].join('\n');
+      const catalogItem = REPORT_CATALOG.find((item) => item.id === reportId);
+      const pdf = await buildReportPdf({
+        title: catalogItem?.name ?? reportId,
+        subtitle: 'Sonder Clinic · exportação gráfica',
+        meta: [
+          ['Relatório', reportId],
+          ['Período', `${period.from.toISOString().slice(0, 10)} — ${period.to.toISOString().slice(0, 10)}`],
+          ['Registros', String(rows.length)],
+        ],
+        rows,
+        footerNote: 'Gerado automaticamente. Layout tabular A4 para impressão e arquivo.',
+      });
       return {
-        format: 'pdf-text',
-        filename: `${reportId}.txt`,
-        contentType: 'text/plain; charset=utf-8',
-        content: text,
-        meta: { ...meta, note: 'Exportação PDF textual; render gráfico fica para o cliente.' },
+        format: 'pdf',
+        filename: `${reportId}.pdf`,
+        contentType: 'application/pdf',
+        content: pdf,
+        meta,
       };
     }
     return { format: 'json', meta, rows, total: rows.length };

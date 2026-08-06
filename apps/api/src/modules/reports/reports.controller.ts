@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
@@ -46,6 +46,9 @@ export class ReportsController {
     if ('content' in result && result.content) {
       res.setHeader('Content-Type', result.contentType);
       res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+      if (Buffer.isBuffer(result.content)) {
+        return new StreamableFile(result.content);
+      }
       return result.content;
     }
     return result;

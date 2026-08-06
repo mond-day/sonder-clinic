@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   Building2,
   CircleDollarSign,
+  ClipboardList,
   FileText,
   MessageSquare,
   Palette,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { currency, dateOnly, initials, list, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { AnamnesisTemplateEditor } from '@/features/anamnesis/template-editor';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
 import { useWorkspace } from './workspace-provider';
@@ -26,6 +28,7 @@ import { Modal } from './modal';
 
 type SectionKey =
   | 'overview'
+  | 'anamnesis'
   | 'units'
   | 'procedures'
   | 'returns'
@@ -44,6 +47,7 @@ const sections: Array<{
   icon: typeof Building2;
 }> = [
   { key: 'overview', label: 'Visão geral', description: 'Todas as áreas de configuração da clínica.', icon: ShieldCheck },
+  { key: 'anamnesis', label: 'Anamnese (modelos)', description: 'Editor visual drag-and-drop de seções e perguntas.', icon: ClipboardList },
   { key: 'units', label: 'Unidades, consultórios e equipe', description: 'Estrutura, cadeiras e profissionais ativos.', icon: Building2 },
   { key: 'procedures', label: 'Procedimentos e especialidades', description: 'Tabela de valores e gatilhos de laboratório.', icon: Stethoscope },
   { key: 'returns', label: 'Retornos automáticos', description: 'Regras por procedimento e especialidade.', icon: RefreshCcw },
@@ -237,6 +241,8 @@ export function SettingsView() {
               </div>
             </Panel>
           )}
+
+          {section === 'anamnesis' && <AnamnesisTemplateEditor />}
 
           {section === 'units' && (
             <Panel

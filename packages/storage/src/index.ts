@@ -3,6 +3,12 @@ import { createWriteStream, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 export type StorageDriver = 'local' | 'minio' | 's3';
 
@@ -37,6 +43,24 @@ function resolveDriver(): StorageDriver {
   return 'local';
 }
 
+async function bodyToBuffer(body: Buffer | Readable): Promise<Buffer> {
+  if (Buffer.isBuffer(body)) return body;
+  const chunks: Buffer[] = [];
+  for await (const chunk of body) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+function buildObjectKey(input: PutObjectInput): string {
+  return [
+    input.organizationId,
+    input.clinicId ?? 'org',
+    randomUUID(),
+    input.filename.replaceAll(/[^a-zA-Z0-9._-]/g, '_'),
+  ].join('/');
+}
+
 class LocalStorageAdapter implements StorageAdapter {
   driver: StorageDriver = 'local';
   enabled = true;
@@ -49,12 +73,7 @@ class LocalStorageAdapter implements StorageAdapter {
   }
 
   async putObject(input: PutObjectInput): Promise<StoredObject> {
-    const objectKey = [
-      input.organizationId,
-      input.clinicId ?? 'org',
-      randomUUID(),
-      input.filename.replaceAll(/[^a-zA-Z0-9._-]/g, '_'),
-    ].join('/');
+    const objectKey = buildObjectKey(input);
     const fullPath = path.join(this.root, this.bucket, objectKey);
     await fs.mkdir(path.dirname(fullPath), { recursive: true });
     if (Buffer.isBuffer(input.body)) {
@@ -74,35 +93,68 @@ class LocalStorageAdapter implements StorageAdapter {
 }
 
 class MinioStorageAdapter implements StorageAdapter {
-  driver: StorageDriver = 'minio';
+  driver: StorageDriver;
   enabled: boolean;
   disabledReason?: string;
-  private readonly endpoint?: string;
-  private readonly accessKey?: string;
-  private readonly secretKey?: string;
+  private readonly client?: S3Client;
   private readonly bucket: string;
+  private readonly forcePathStyle: boolean;
 
-  constructor() {
-    this.endpoint = process.env.S3_ENDPOINT;
-    this.accessKey = process.env.S3_ACCESS_KEY;
-    this.secretKey = process.env.S3_SECRET_KEY;
+  constructor(driver: StorageDriver = 'minio') {
+    this.driver = driver;
+    const endpoint = process.env.S3_ENDPOINT;
+    const accessKey = process.env.S3_ACCESS_KEY;
+    const secretKey = process.env.S3_SECRET_KEY;
+    const region = process.env.S3_REGION ?? 'us-east-1';
     this.bucket = process.env.S3_BUCKET ?? 'sonder-clinic';
-    const ready = Boolean(this.endpoint && this.accessKey && this.secretKey);
+    this.forcePathStyle = (process.env.S3_FORCE_PATH_STYLE ?? 'true').toLowerCase() !== 'false';
+    const ready = Boolean(endpoint && accessKey && secretKey);
     this.enabled = ready;
     if (!ready) {
       this.disabledReason = 'MinIO/S3 não configurado (S3_ENDPOINT/S3_ACCESS_KEY/S3_SECRET_KEY).';
+      return;
     }
+    this.client = new S3Client({
+      region,
+      endpoint,
+      forcePathStyle: this.forcePathStyle,
+      credentials: {
+        accessKeyId: accessKey!,
+        secretAccessKey: secretKey!,
+      },
+    });
   }
 
   async putObject(input: PutObjectInput): Promise<StoredObject> {
-    if (!this.enabled) {
+    if (!this.enabled || !this.client) {
       throw new Error(this.disabledReason ?? 'Storage MinIO desabilitado.');
     }
-    // Adapter real via fetch S3-compatible PutObject (AWS SigV4 simplificado não embutido).
-    // Quando as credenciais existem, exige cliente S3; sem simular sucesso.
-    throw new Error(
-      'Adapter MinIO habilitado por env, mas o cliente S3 SDK ainda precisa ser provisionado no runtime. '
-      + 'Configure o deploy com o pacote S3 ou use STORAGE_DRIVER=local em desenvolvimento.',
+    const objectKey = buildObjectKey(input);
+    const body = await bodyToBuffer(input.body);
+    const result = await this.client.send(new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: objectKey,
+      Body: body,
+      ContentType: input.contentType,
+      Metadata: input.metadata,
+    }));
+    return {
+      bucket: this.bucket,
+      objectKey,
+      etag: result.ETag?.replaceAll('"', ''),
+      size: body.length,
+      driver: this.driver,
+    };
+  }
+
+  async getSignedUrl(objectKey: string, expiresSeconds = 300): Promise<string> {
+    if (!this.enabled || !this.client) {
+      throw new Error(this.disabledReason ?? 'Storage MinIO desabilitado.');
+    }
+    return getSignedUrl(
+      this.client,
+      new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }),
+      { expiresIn: expiresSeconds },
     );
   }
 }
@@ -133,7 +185,6 @@ class ClamAvScanner {
         detail: 'CLAMAV_HOST ausente — varredura não executada.',
       };
     }
-    // Sem socket ClamAV disponível neste monorepo: falha explícita, sem falso positivo.
     return {
       clean: false,
       engine: 'clamav',
@@ -144,7 +195,7 @@ class ClamAvScanner {
 
 export function createStorageAdapter(): StorageAdapter {
   const driver = resolveDriver();
-  if (driver === 'minio' || driver === 's3') return new MinioStorageAdapter();
+  if (driver === 'minio' || driver === 's3') return new MinioStorageAdapter(driver);
   return new LocalStorageAdapter();
 }
 

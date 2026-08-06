@@ -44,6 +44,8 @@ test('4. administrador abre configurações de anamnese/usuários', async ({ pag
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/usuários/i);
   await page.goto('/configuracoes');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/configurações/i);
+  await page.getByRole('button', { name: /anamnese \(modelos\)/i }).click();
+  await expect(page.getByText(/modelos de anamnese|editor visual/i).first()).toBeVisible();
 });
 
 test('5. página pública de assinatura responde a token inválido', async ({ page }) => {

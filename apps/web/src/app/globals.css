@@ -554,25 +554,6 @@ button { cursor: pointer; }
 .doc-card p { font-size: 9px; color: var(--muted); margin: 0; }
 .doc-card .doc-actions { margin-top: auto; padding-top: 9px; display: flex; gap: 6px; }
 .odontogram-wrap { padding: 16px; }
-.odontogram {
-  display: grid; grid-template-columns: repeat(16, minmax(36px, 1fr)); gap: 7px;
-  overflow: auto; padding-bottom: 6px;
-}
-.tooth {
-  min-width: 36px; height: 52px; border: 1px solid var(--line); border-radius: 10px;
-  background: #fff; display: grid; place-items: center; font-size: 10px; font-weight: 780; position: relative;
-}
-.tooth::before {
-  content: ""; width: 18px; height: 23px; border: 2px solid #b9c9cc;
-  border-radius: 9px 9px 12px 12px; position: absolute; top: 7px;
-}
-.tooth span { position: absolute; bottom: 4px; }
-.tooth.pending { background: var(--danger-soft); border-color: #efc3c8; }
-.tooth.pending::before { border-color: var(--danger); }
-.tooth.done { background: var(--success-soft); border-color: #b9dfca; }
-.tooth.done::before { border-color: var(--success); }
-.tooth.watch { background: var(--warning-soft); border-color: #eed39e; }
-.tooth.watch::before { border-color: var(--warning); }
 .legend-row {
   display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; font-size: 10px; color: var(--muted);
 }
@@ -1002,4 +983,93 @@ button { cursor: pointer; }
 @media (max-width: 980px) {
   .anamnesis-grid, .reports-layout, .users-layout { grid-template-columns: 1fr; }
   .anamnesis-workspace .metric-grid, .reports-view .metric-grid, .users-view .metric-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* —— Anamnese editor / odontograma faces / documentos paper (1.1.1) —— */
+.anamnesis-editor-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 16px; padding: 14px; }
+.anamnesis-template-list { display: grid; gap: 12px; align-content: start; }
+.template-stack { display: grid; gap: 8px; max-height: 520px; overflow: auto; }
+.template-card {
+  text-align: left; border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+  background: var(--surface); display: grid; gap: 4px; cursor: pointer;
+}
+.template-card strong { font-size: 13px; }
+.template-card span { font-size: 11px; color: var(--muted); }
+.template-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
+.template-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.anamnesis-builder { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 14px; margin-top: 12px; }
+.anamnesis-workspace.editor-mode { display: grid; gap: 12px; }
+.section-rail { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: var(--surface-soft); }
+.section-rail small { display: block; color: var(--muted); margin-bottom: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.section-nav { display: grid; gap: 6px; }
+.section-nav button {
+  display: flex; gap: 8px; align-items: center; text-align: left; border: 1px solid transparent;
+  background: transparent; border-radius: 10px; padding: 8px 10px; color: inherit;
+}
+.section-nav button.active, .section-nav button:hover { background: #fff; border-color: var(--line); }
+.section-number {
+  width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-dark); font-size: 10px; font-weight: 800;
+}
+.clinical-form-card { border: 1px solid var(--line); border-radius: 14px; padding: 16px; background: #fff; }
+.clinical-form-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+.clinical-form-head h2 { margin: 0 0 4px; font-size: 18px; }
+.clinical-form-head p { margin: 0; color: var(--muted); font-size: 12px; }
+.clinical-section-title { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+.question-builder-list { display: grid; gap: 10px; margin-bottom: 12px; }
+.builder-item { border: 1px dashed #d5e0de; border-radius: 12px; padding: 12px; background: #fbfdfd; cursor: grab; }
+.builder-item:active { cursor: grabbing; }
+.question-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.checkbox-row { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; }
+.button.wide, .wide { width: 100%; }
+.editor-meta { margin-bottom: 4px; }
+
+.odontogram { display: grid; gap: 17px; }
+.arch { display: grid; grid-template-columns: repeat(16, minmax(38px, 1fr)); gap: 5px; overflow: auto; padding: 4px; }
+.tooth { min-width: 38px; }
+.tooth-number { text-align: center; font-size: 9px; color: var(--muted); margin-bottom: 4px; }
+.tooth-shape {
+  width: 38px; height: 45px; margin: auto; border: 1px solid #b9c8c3; border-radius: 12px 12px 8px 8px;
+  position: relative; background: #fff; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; overflow: hidden;
+}
+.face { border: 0; background: #fff; padding: 0; cursor: pointer; }
+.face:nth-child(1) { border-right: 1px solid #dbe3e0; border-bottom: 1px solid #dbe3e0; }
+.face:nth-child(2) { border-bottom: 1px solid #dbe3e0; }
+.face:nth-child(3) { border-right: 1px solid #dbe3e0; }
+.face.active { background: #f4c4c2; }
+.face.planned { background: #b9d7f2; }
+.face.done { background: #b9e3d6; }
+.tooth.selected .tooth-shape { outline: 2px solid var(--accent); outline-offset: 2px; }
+.odontogram-board { display: grid; gap: 16px; }
+.odontogram-toolbar { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; }
+.odontogram-detail { border-top: 1px solid var(--line); padding-top: 14px; }
+.face-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.eyebrow { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+
+.document-paper-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 16px; padding: 14px; }
+.document-paper-grid.compact { padding: 0; }
+.doc-list { display: grid; gap: 8px; align-content: start; max-height: 720px; overflow: auto; }
+.doc-template {
+  text-align: left; border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px;
+  background: var(--surface); cursor: pointer;
+}
+.doc-template.active { border-color: var(--accent); background: var(--accent-soft); }
+.doc-template small { color: var(--muted); }
+.paper {
+  background: #fffef8; border: 1px solid #d7d2c4; box-shadow: 0 10px 30px rgba(24, 49, 57, .06);
+  padding: 36px 40px; min-height: 520px; color: #1d2a2e;
+}
+.paper h2 { text-align: center; letter-spacing: .04em; margin: 18px 0 22px; font-size: 18px; }
+.paper-signatures {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 60px;
+}
+.paper-signatures > div {
+  border-top: 1px solid #555; text-align: center; padding-top: 7px; font-size: 10px; color: #555;
+}
+.field-block { display: grid; gap: 6px; font-size: 12px; margin-bottom: 10px; }
+.field-block select, .filters input { width: 100%; }
+
+@media (max-width: 980px) {
+  .anamnesis-editor-layout, .anamnesis-builder, .document-paper-grid { grid-template-columns: 1fr; }
+  .arch { grid-template-columns: repeat(8, minmax(38px, 1fr)); }
 }

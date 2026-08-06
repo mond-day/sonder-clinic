@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { createHash, randomBytes } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
 import { z } from 'zod';
+import { buildClinicalDocumentPdf } from '../../common/pdf';
 import { parseWithZod } from '../../common/zod-validation';
 
 const money = (value: string) => new Prisma.Decimal(value);
@@ -97,22 +98,78 @@ export class OperationsService {
     return prisma.documentTemplate.findMany({ where: { organizationId, active: true }, orderBy: { name: 'asc' } });
   }
 
-  documents(organizationId: string, clinicId?: string) {
+  documents(organizationId: string, clinicId?: string, patientId?: string) {
     return prisma.generatedDocument.findMany({
-      where: { organizationId, clinicId },
+      where: { organizationId, clinicId, ...(patientId ? { patientId } : {}) },
       select: {
         id: true,
         patientId: true,
         treatmentId: true,
+        templateId: true,
         templateVersion: true,
         status: true,
         validationCode: true,
         generatedAt: true,
-        signatures: { select: { signerName: true, role: true, signedAt: true } },
+        frozenContent: true,
+        template: { select: { id: true, name: true, type: true, structuredContent: true, signatureRules: true } },
+        signatures: { select: { signerName: true, role: true, signedAt: true, method: true } },
       },
       orderBy: { generatedAt: 'desc' },
       take: 200,
     });
+  }
+
+  async getDocument(organizationId: string, id: string) {
+    const document = await prisma.generatedDocument.findFirst({
+      where: { id, organizationId },
+      include: {
+        template: true,
+        signatures: { orderBy: { signedAt: 'asc' } },
+      },
+    });
+    if (!document) throw new NotFoundException('Documento não encontrado.');
+    return document;
+  }
+
+  async documentPdf(organizationId: string, id: string) {
+    const document = await this.getDocument(organizationId, id);
+    const patient = await prisma.patient.findFirst({
+      where: { id: document.patientId, organizationId },
+      select: { fullName: true, cpf: true },
+    });
+    const clinic = await prisma.clinic.findFirst({
+      where: { id: document.clinicId, organizationId },
+      select: { tradeName: true, legalName: true },
+    });
+    const content = (document.frozenContent ?? {}) as Record<string, unknown>;
+    const bodyLines = [
+      content.titulo ? String(content.titulo) : '',
+      content.prescricao ? String(content.prescricao) : '',
+      content.observacoes ? String(content.observacoes) : '',
+      content.corpo ? String(content.corpo) : '',
+      ...Object.entries(content)
+        .filter(([key]) => !['titulo', 'prescricao', 'observacoes', 'corpo', 'paciente', 'data'].includes(key))
+        .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`),
+    ].filter(Boolean);
+    if (!bodyLines.length) {
+      bodyLines.push(`Modelo: ${document.template.name}`);
+      bodyLines.push(`Gerado em: ${document.generatedAt.toISOString()}`);
+    }
+    const pdf = await buildClinicalDocumentPdf({
+      clinicName: clinic?.tradeName ?? clinic?.legalName ?? 'Sonder Clinic',
+      title: document.template.name,
+      patientName: patient?.fullName ?? (typeof content.paciente === 'string' ? content.paciente : undefined),
+      patientDocument: patient?.cpf ? `CPF ${patient.cpf.replace(/^(\d{3})\d{5}(\d{2})$/, '$1.***.***-$2')}` : undefined,
+      bodyLines,
+      validationCode: document.validationCode,
+      footerLeft: 'Assinatura do profissional\nA1 ou assinatura na tela',
+      footerRight: 'Assinatura do paciente\nPresencial ou link remoto',
+    });
+    return {
+      filename: `${document.template.name.replaceAll(/\s+/g, '-').toLowerCase()}.pdf`,
+      contentType: 'application/pdf',
+      content: pdf,
+    };
   }
 
   createDocumentTemplate(organizationId: string, input: {

@@ -64,7 +64,7 @@ export function ReportsView() {
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `${selected}.${format === 'pdf' ? 'txt' : 'csv'}`;
+        anchor.download = `${selected}.${format === 'pdf' ? 'pdf' : 'csv'}`;
         anchor.click();
         URL.revokeObjectURL(url);
       }

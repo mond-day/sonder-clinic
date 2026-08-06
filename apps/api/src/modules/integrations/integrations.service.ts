@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
+import { storageStatus } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
 
@@ -67,6 +68,8 @@ export class IntegrationsService {
         credentials: encryptedCredentials ? { configured: true, masked: '••••••••' } : { configured: false },
       })),
       bootstrap,
+      storage: storageStatus().storage,
+      antivirus: storageStatus().antivirus,
     };
   }
 
