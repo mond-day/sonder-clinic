@@ -394,4 +394,94 @@ export class OperationsService {
       },
     });
   }
+
+  payables(organizationId: string, clinicId?: string) {
+    return prisma.payable.findMany({
+      where: { organizationId, ...(clinicId ? { clinicId } : {}) },
+      include: { payments: true },
+      orderBy: { dueDate: 'asc' },
+    });
+  }
+
+  async createPayable(organizationId: string, input: {
+    clinicId: string; description: string; originalAmount: string; dueDate: string;
+    supplierName?: string; notes?: string;
+  }) {
+    const clinic = await prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId } });
+    if (!clinic) throw new NotFoundException('Clínica não encontrada.');
+    return prisma.payable.create({
+      data: {
+        organizationId,
+        clinicId: input.clinicId,
+        description: input.description,
+        originalAmount: money(input.originalAmount),
+        dueDate: new Date(input.dueDate),
+        supplierName: input.supplierName,
+        notes: input.notes,
+      },
+    });
+  }
+
+  async payPayable(organizationId: string, id: string, input: { amount: string; method: string; notes?: string }) {
+    const payable = await prisma.payable.findFirst({ where: { id, organizationId } });
+    if (!payable) throw new NotFoundException('Conta a pagar não encontrada.');
+    if (payable.status === 'CANCELLED' || payable.status === 'PAID') {
+      throw new ConflictException('Título não aceita pagamento.');
+    }
+    const amount = money(input.amount);
+    return prisma.$transaction(async (tx) => {
+      await tx.payablePayment.create({
+        data: { payableId: id, amount, method: input.method, notes: input.notes },
+      });
+      const paidAmount = payable.paidAmount.add(amount);
+      const status = paidAmount.gte(payable.originalAmount) ? 'PAID' : 'PARTIALLY_PAID';
+      return tx.payable.update({
+        where: { id },
+        data: { paidAmount, status },
+        include: { payments: true },
+      });
+    });
+  }
+
+  async cancelPayable(organizationId: string, id: string, reason: string) {
+    const payable = await prisma.payable.findFirst({ where: { id, organizationId } });
+    if (!payable) throw new NotFoundException('Conta a pagar não encontrada.');
+    if (payable.paidAmount.gt(0)) throw new ConflictException('Título com pagamento deve ser estornado, não cancelado.');
+    return prisma.payable.update({
+      where: { id },
+      data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason },
+    });
+  }
+
+  cashflow(organizationId: string, clinicId: string | undefined, from?: string, to?: string) {
+    const periodFrom = from ? new Date(from) : new Date(Date.now() - 30 * 86400_000);
+    const periodTo = to ? new Date(to) : new Date();
+    return Promise.all([
+      prisma.payment.aggregate({
+        where: {
+          status: 'CONFIRMED',
+          paidAt: { gte: periodFrom, lte: periodTo },
+          receivable: { organizationId, ...(clinicId ? { clinicId } : {}) },
+        },
+        _sum: { amount: true },
+      }),
+      prisma.payablePayment.aggregate({
+        where: {
+          paidAt: { gte: periodFrom, lte: periodTo },
+          payable: { organizationId, ...(clinicId ? { clinicId } : {}) },
+        },
+        _sum: { amount: true },
+      }),
+    ]).then(([inflow, outflow]) => {
+      const inAmount = Number(inflow._sum.amount ?? 0);
+      const outAmount = Number(outflow._sum.amount ?? 0);
+      return {
+        from: periodFrom,
+        to: periodTo,
+        inflow: inAmount,
+        outflow: outAmount,
+        net: inAmount - outAmount,
+      };
+    });
+  }
 }

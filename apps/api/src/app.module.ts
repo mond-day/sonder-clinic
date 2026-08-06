@@ -9,6 +9,8 @@ import { ClinicalModule } from './modules/clinical/clinical.module';
 import { OperationsModule } from './modules/operations/operations.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
+import { UsersModule } from './modules/users/users.module';
+import { ReportsModule } from './modules/reports/reports.module';
 
 @Module({
   imports: [
@@ -21,6 +23,8 @@ import { WorkspaceModule } from './modules/workspace/workspace.module';
     OperationsModule,
     SettingsModule,
     WorkspaceModule,
+    UsersModule,
+    ReportsModule,
   ],
   controllers: [AppController],
 })

@@ -19,7 +19,8 @@ export class PermissionsGuard implements CanActivate {
     if (!required?.length) return true;
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    if (!required.every((permission) => request.auth.permissions.includes(permission))) {
+    // Qualquer permissão listada autoriza (aliases aditivos durante migração RBAC).
+    if (!required.some((permission) => request.auth.permissions.includes(permission))) {
       throw new ForbiddenException('Você não possui permissão para esta operação.');
     }
     return true;

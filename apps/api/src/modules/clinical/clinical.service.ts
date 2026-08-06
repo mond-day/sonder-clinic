@@ -7,20 +7,26 @@ import { parseWithZod } from '../../common/zod-validation';
 const sha256 = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const json = (value: unknown) => value as Prisma.InputJsonValue;
+
 const clinicalEntrySchema = z.object({
   clinicId: z.string().uuid(),
   professionalId: z.string().uuid(),
   type: z.string().min(2),
   renderedText: z.string().trim().min(2),
   structuredData: z.record(z.string(), z.unknown()).optional(),
-  clinicalDate: z.string().datetime(),
+  clinicalDate: z.string().datetime().or(z.string().min(8)),
   appointmentId: z.string().uuid().optional(),
   treatmentId: z.string().uuid().optional(),
+  treatmentItemId: z.string().uuid().optional(),
+  treatmentSessionId: z.string().uuid().optional(),
+  toothFdi: z.string().optional(),
+  region: z.string().optional(),
 });
+
 const odontogramSchema = z.object({
   clinicId: z.string().uuid(),
   professionalId: z.string().uuid(),
-  dentitionType: z.enum(['PERMANENT', 'DECIDUOUS']),
+  dentitionType: z.enum(['PERMANENT', 'DECIDUOUS', 'MIXED']),
   findings: z.array(z.object({
     conditionId: z.string().uuid(),
     toothFdi: z.string().regex(/^[1-8][1-8]$/),
@@ -39,16 +45,60 @@ export class ClinicalService {
       create: { organizationId, clinicId, patientId },
       update: {},
       include: {
-        entries: { include: { corrections: true }, orderBy: { clinicalDate: 'desc' } },
+        entries: {
+          include: { corrections: true, attachments: true },
+          orderBy: { clinicalDate: 'desc' },
+        },
         privateNotes: { orderBy: { createdAt: 'desc' } },
       },
     });
   }
 
-  async addEntry(organizationId: string, patientId: string, input: {
-    clinicId: string; professionalId: string; type: string; renderedText: string;
-    structuredData?: Record<string, unknown>; clinicalDate: string; appointmentId?: string; treatmentId?: string;
+  async listEntries(organizationId: string, patientId: string, filters: {
+    clinicId?: string; type?: string; status?: string; professionalId?: string;
+    from?: string; to?: string; treatmentId?: string; toothFdi?: string;
   }) {
+    await this.assertPatient(organizationId, patientId);
+    return prisma.clinicalEntry.findMany({
+      where: {
+        record: {
+          organizationId,
+          patientId,
+          ...(filters.clinicId ? { clinicId: filters.clinicId } : {}),
+        },
+        ...(filters.type ? { type: filters.type } : {}),
+        ...(filters.status ? { status: filters.status as never } : {}),
+        ...(filters.professionalId ? { professionalId: filters.professionalId } : {}),
+        ...(filters.treatmentId ? { treatmentId: filters.treatmentId } : {}),
+        ...(filters.toothFdi ? { toothFdi: filters.toothFdi } : {}),
+        ...(filters.from || filters.to
+          ? {
+              clinicalDate: {
+                ...(filters.from ? { gte: new Date(filters.from) } : {}),
+                ...(filters.to ? { lte: new Date(filters.to) } : {}),
+              },
+            }
+          : {}),
+      },
+      include: { corrections: true, attachments: true },
+      orderBy: { clinicalDate: 'desc' },
+    });
+  }
+
+  async getEntry(organizationId: string, id: string) {
+    const entry = await prisma.clinicalEntry.findFirst({
+      where: { id, record: { organizationId } },
+      include: {
+        corrections: { orderBy: { createdAt: 'asc' } },
+        attachments: true,
+        record: { select: { patientId: true, clinicId: true } },
+      },
+    });
+    if (!entry) throw new NotFoundException('Evolução clínica não encontrada.');
+    return entry;
+  }
+
+  async addEntry(organizationId: string, patientId: string, input: z.infer<typeof clinicalEntrySchema>) {
     parseWithZod(clinicalEntrySchema, input);
     await Promise.all([
       this.assertProfessional(organizationId, input.professionalId),
@@ -68,12 +118,69 @@ export class ClinicalService {
         professionalId: input.professionalId,
         appointmentId: input.appointmentId,
         treatmentId: input.treatmentId,
+        treatmentItemId: input.treatmentItemId,
+        treatmentSessionId: input.treatmentSessionId,
+        toothFdi: input.toothFdi,
+        region: input.region,
         type: input.type,
         renderedText: input.renderedText,
-        structuredData: json(input.structuredData ?? {}),
+        structuredData: json(input.structuredData ?? { schemaVersion: 1 }),
         clinicalDate: new Date(input.clinicalDate),
       },
+      include: { corrections: true, attachments: true },
     });
+  }
+
+  async updateDraft(organizationId: string, id: string, input: {
+    renderedText?: string; structuredData?: Record<string, unknown>; clinicalDate?: string;
+    type?: string; appointmentId?: string; treatmentId?: string; treatmentItemId?: string;
+    treatmentSessionId?: string; toothFdi?: string; region?: string;
+  }) {
+    const entry = await this.getEntry(organizationId, id);
+    if (entry.status !== 'DRAFT') throw new ConflictException('Somente rascunhos podem ser editados.');
+    return prisma.clinicalEntry.update({
+      where: { id },
+      data: {
+        renderedText: input.renderedText,
+        structuredData: input.structuredData ? json(input.structuredData) : undefined,
+        clinicalDate: input.clinicalDate ? new Date(input.clinicalDate) : undefined,
+        type: input.type,
+        appointmentId: input.appointmentId,
+        treatmentId: input.treatmentId,
+        treatmentItemId: input.treatmentItemId,
+        treatmentSessionId: input.treatmentSessionId,
+        toothFdi: input.toothFdi,
+        region: input.region,
+      },
+      include: { corrections: true, attachments: true },
+    });
+  }
+
+  async addAttachment(organizationId: string, id: string, input: { patientMediaId: string; label?: string }) {
+    const entry = await this.getEntry(organizationId, id);
+    if (entry.status !== 'DRAFT') throw new ConflictException('Anexos só podem ser adicionados em rascunho.');
+    const media = await prisma.patientMedia.findFirst({
+      where: { id: input.patientMediaId, organizationId, patientId: entry.record.patientId },
+    });
+    if (!media) throw new NotFoundException('Mídia do paciente não encontrada.');
+    return prisma.clinicalEntryAttachment.create({
+      data: {
+        clinicalEntryId: id,
+        patientMediaId: input.patientMediaId,
+        label: input.label,
+      },
+    });
+  }
+
+  async removeAttachment(organizationId: string, id: string, attachmentId: string) {
+    const entry = await this.getEntry(organizationId, id);
+    if (entry.status !== 'DRAFT') throw new ConflictException('Anexos só podem ser removidos em rascunho.');
+    const attachment = await prisma.clinicalEntryAttachment.findFirst({
+      where: { id: attachmentId, clinicalEntryId: id },
+    });
+    if (!attachment) throw new NotFoundException('Anexo não encontrado.');
+    await prisma.clinicalEntryAttachment.delete({ where: { id: attachmentId } });
+    return { ok: true };
   }
 
   async signEntry(organizationId: string, id: string) {
@@ -86,15 +193,18 @@ export class ClinicalService {
       renderedText: entry.renderedText,
       structuredData: entry.structuredData,
       clinicalDate: entry.clinicalDate.toISOString(),
+      toothFdi: entry.toothFdi,
+      region: entry.region,
     });
     return prisma.clinicalEntry.update({
       where: { id },
       data: { status: 'SIGNED', signedAt: new Date(), contentHash },
+      include: { corrections: true, attachments: true },
     });
   }
 
   async correctEntry(organizationId: string, id: string, authorId: string, input: {
-    reason: string; correctedContent: Record<string, unknown>;
+    reason: string; correctedContent: Record<string, unknown>; renderedText?: string; kind?: 'ADDENDUM' | 'CORRECTION';
   }) {
     const entry = await prisma.clinicalEntry.findFirst({
       where: { id, record: { organizationId } },
@@ -108,7 +218,9 @@ export class ClinicalService {
         data: {
           clinicalEntryId: id,
           authorId,
+          kind: input.kind ?? 'ADDENDUM',
           reason: input.reason,
+          renderedText: input.renderedText,
           correctedContent: json(input.correctedContent),
           signatureHash: sha256(input.correctedContent),
         },
@@ -124,65 +236,6 @@ export class ClinicalService {
     const record = await this.record(organizationId, input.clinicId, patientId);
     return prisma.privateClinicalNote.create({
       data: { clinicalRecordId: record.id, authorId: actorId, content: input.content },
-    });
-  }
-
-  listAnamnesisTemplates(organizationId: string) {
-    return prisma.anamnesisTemplate.findMany({
-      where: { organizationId, active: true },
-      orderBy: [{ audience: 'asc' }, { version: 'desc' }],
-    });
-  }
-
-  createAnamnesisTemplate(organizationId: string, input: {
-    name: string; audience: string; schemaJson: Record<string, unknown>; validityMonths?: number;
-  }) {
-    return prisma.anamnesisTemplate.create({
-      data: { organizationId, ...input, schemaJson: json(input.schemaJson), validityMonths: input.validityMonths ?? 6 },
-    });
-  }
-
-  async submitAnamnesis(organizationId: string, patientId: string, actorId: string, input: {
-    clinicId: string; templateId: string; answers: Record<string, unknown>;
-  }) {
-    await this.assertPatient(organizationId, patientId);
-    const template = await prisma.anamnesisTemplate.findFirst({
-      where: { id: input.templateId, organizationId, active: true },
-    });
-    if (!template) throw new NotFoundException('Modelo de anamnese não encontrado.');
-    const alerts = this.extractAlerts(input.answers);
-    const validUntil = new Date();
-    validUntil.setUTCMonth(validUntil.getUTCMonth() + template.validityMonths);
-    return prisma.$transaction(async (tx) => {
-      const response = await tx.anamnesisResponse.create({
-        data: {
-          organizationId,
-          clinicId: input.clinicId,
-          patientId,
-          templateId: template.id,
-          templateVersion: template.version,
-          answers: json(input.answers),
-          alerts: json(alerts),
-          completedById: actorId,
-          validUntil,
-        },
-      });
-      for (const alert of alerts) {
-        await tx.patientAlert.create({
-          data: { patientId, type: alert.type, message: alert.message, severity: 'WARNING' },
-        });
-      }
-      return response;
-    });
-  }
-
-  async signAnamnesis(organizationId: string, id: string, actorId: string) {
-    const response = await prisma.anamnesisResponse.findFirst({ where: { id, organizationId } });
-    if (!response) throw new NotFoundException('Anamnese não encontrada.');
-    if (response.signedAt) throw new ConflictException('Anamnese já assinada.');
-    return prisma.anamnesisResponse.update({
-      where: { id },
-      data: { signedById: actorId, signedAt: new Date(), contentHash: sha256(response.answers) },
     });
   }
 
@@ -227,7 +280,9 @@ export class ClinicalService {
     const findings = [
       ...(latest?.findings ?? [])
         .filter((finding) => !replacements.has(`${finding.toothFdi}:${finding.face ?? ''}`))
-        .map(({ conditionId, toothFdi, face, status, notes }) => ({ conditionId, toothFdi, face: face ?? undefined, status, notes: notes ?? undefined })),
+        .map(({ conditionId, toothFdi, face, status, notes }) => ({
+          conditionId, toothFdi, face: face ?? undefined, status, notes: notes ?? undefined,
+        })),
       ...input.findings,
     ];
     return prisma.odontogram.create({
@@ -259,14 +314,5 @@ export class ClinicalService {
       where: { id: professionalId, user: { organizationId }, status: 'ACTIVE' },
     });
     if (!professional) throw new NotFoundException('Profissional não encontrado.');
-  }
-
-  private extractAlerts(answers: Record<string, unknown>) {
-    const alertKeys = ['allergies', 'alergias', 'pregnancy', 'gestante', 'medications', 'medicamentos'];
-    return alertKeys.flatMap((key) => {
-      const value = answers[key];
-      if (!value || value === false || value === 'não') return [];
-      return [{ type: key.toUpperCase(), message: `${key}: ${String(value)}` }];
-    });
   }
 }

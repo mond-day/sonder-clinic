@@ -70,15 +70,9 @@ export class IntegrationsService {
     };
   }
 
-  async test(provider: Provider): Promise<{ success: boolean; provider: Provider; message: string }> {
-    const connection = (await this.list()).bootstrap.find((item) => item.provider === provider);
-    if (!connection || connection.status !== 'ready') {
-      return { success: false, provider, message: 'Credenciais não configuradas.' };
-    }
-    if (connection.mode === 'mock') {
-      return { success: true, provider, message: 'Adapter de desenvolvimento respondeu com sucesso.' };
-    }
-    return { success: true, provider, message: 'Configuração aceita; chamada externa não executada neste MVP.' };
+  async test(provider: Provider | 'GOOGLE_CALENDAR' | 'OPENAI') {
+    const { testProvider } = await import('../../integrations/adapters');
+    return testProvider(provider);
   }
 
   async save(organizationId: string, actorId: string, input: SaveConnectionInput) {

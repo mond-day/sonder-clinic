@@ -72,6 +72,22 @@ class PrescriptionDto {
   @IsString() @MinLength(3) purpose!: string;
   @IsArray() items!: unknown[];
 }
+class PayableDto {
+  @IsUUID() clinicId!: string;
+  @IsString() @MinLength(3) description!: string;
+  @IsString() originalAmount!: string;
+  @IsDateString() dueDate!: string;
+  @IsOptional() @IsString() supplierName?: string;
+  @IsOptional() @IsString() notes?: string;
+}
+class PayablePaymentDto {
+  @IsString() amount!: string;
+  @IsString() method!: string;
+  @IsOptional() @IsString() notes?: string;
+}
+class CancelPayableDto {
+  @IsString() @MinLength(3) reason!: string;
+}
 
 @ApiTags('operations')
 @Controller()
@@ -141,6 +157,32 @@ export class OperationsController {
   @Post('prescriptions') @RequirePermissions('medical_record.create')
   createPrescription(@Req() req: AuthenticatedRequest, @Body() body: PrescriptionDto) {
     return this.operations.createPrescription(req.auth.organizationId, body);
+  }
+
+  @Get('payables') @RequirePermissions('financial.view')
+  payables(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) {
+    return this.operations.payables(req.auth.organizationId, clinicId);
+  }
+  @Post('payables') @RequirePermissions('financial.create')
+  createPayable(@Req() req: AuthenticatedRequest, @Body() body: PayableDto) {
+    return this.operations.createPayable(req.auth.organizationId, body);
+  }
+  @Post('payables/:id/payments') @RequirePermissions('financial.create')
+  payPayable(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: PayablePaymentDto) {
+    return this.operations.payPayable(req.auth.organizationId, id, body);
+  }
+  @Post('payables/:id/cancel') @RequirePermissions('financial.cancel')
+  cancelPayable(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: CancelPayableDto) {
+    return this.operations.cancelPayable(req.auth.organizationId, id, body.reason);
+  }
+  @Get('cashflow') @RequirePermissions('financial.view')
+  cashflow(
+    @Req() req: AuthenticatedRequest,
+    @Query('clinicId') clinicId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.operations.cashflow(req.auth.organizationId, clinicId, from, to);
   }
 }
 

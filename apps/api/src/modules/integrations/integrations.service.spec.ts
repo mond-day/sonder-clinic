@@ -17,8 +17,9 @@ describe('IntegrationsService', () => {
 
     expect(listed.bootstrap).toHaveLength(4);
     await expect(service.test('NIBO')).resolves.toMatchObject({
-      success: true,
+      success: false,
       provider: 'NIBO',
+      enabled: false,
     });
   });
 
