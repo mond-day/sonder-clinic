@@ -1,4 +1,4 @@
-import { Body, ConflictException, Controller, Get, Headers, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, ConflictException, Controller, Get, Headers, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsArray, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -42,8 +42,15 @@ class GenerateDocumentDto {
 }
 class SignDocumentDto {
   @IsOptional() @IsString() signerId?: string; @IsString() signerName!: string;
-  @IsString() role!: string; @IsIn(['DRAWN', 'REMOTE', 'A1', 'MOCK_A1']) method!: string;
+  @IsString() role!: string; @IsIn(['DRAWN', 'REMOTE', 'A1']) method!: string;
   @IsOptional() @IsObject() evidence?: Record<string, unknown>;
+  @IsOptional() @IsUUID() clinicId?: string;
+}
+class UpdateTreatmentDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsString() discount?: string;
+  @IsOptional() @IsArray() items?: Array<{ id: string; unitPrice?: string; quantity?: number; status?: string }>;
 }
 class ReceivableDto {
   @IsUUID() clinicId!: string; @IsUUID() patientId!: string; @IsOptional() @IsUUID() treatmentId?: string;
@@ -107,6 +114,10 @@ export class OperationsController {
   createTreatment(@Req() req: AuthenticatedRequest, @Body() body: TreatmentDto) { return this.operations.createTreatment(req.auth.organizationId, body); }
   @Post('treatment-plans/:id/approve') @RequirePermissions('treatment.approve')
   approve(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: ApprovalDto) { return this.operations.approveTreatment(req.auth.organizationId, id, body.itemIds); }
+  @Patch('treatment-plans/:id') @RequirePermissions('treatment.create')
+  updateTreatment(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateTreatmentDto) {
+    return this.operations.updateTreatment(req.auth.organizationId, id, body);
+  }
   @Post('treatment-items/:id/sessions') @RequirePermissions('treatment.execute')
   session(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: SessionDto) { return this.operations.addSession(req.auth.organizationId, id, body); }
 

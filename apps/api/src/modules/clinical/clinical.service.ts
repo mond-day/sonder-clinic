@@ -1,12 +1,14 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
+import { createAntivirusScanner, createStorageAdapter } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
 
 const sha256 = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const json = (value: unknown) => value as Prisma.InputJsonValue;
+const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 
 const clinicalEntrySchema = z.object({
   clinicId: z.string().uuid(),
@@ -38,6 +40,9 @@ const odontogramSchema = z.object({
 
 @Injectable()
 export class ClinicalService {
+  private readonly storage = createStorageAdapter();
+  private readonly antivirus = createAntivirusScanner();
+
   async record(organizationId: string, clinicId: string, patientId: string) {
     await Promise.all([this.assertPatient(organizationId, patientId), this.assertClinic(organizationId, clinicId)]);
     return prisma.clinicalRecord.upsert({
@@ -297,6 +302,135 @@ export class ClinicalService {
       },
       include: { findings: { include: { condition: true } } },
     });
+  }
+
+  async listPatientMedia(organizationId: string, patientId: string) {
+    await this.assertPatient(organizationId, patientId);
+    return prisma.patientMedia.findMany({
+      where: { organizationId, patientId },
+      include: {
+        file: {
+          select: {
+            id: true,
+            originalName: true,
+            mimeType: true,
+            sizeBytes: true,
+            status: true,
+            antivirusStatus: true,
+            createdAt: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
+
+  async uploadPatientMedia(
+    organizationId: string,
+    patientId: string,
+    actorId: string,
+    input: {
+      clinicId: string;
+      type: string;
+      toothFdi?: string;
+      appointmentId?: string;
+      treatmentId?: string;
+      examDate?: string;
+      notes?: string;
+      file: { originalname: string; size: number; buffer: Buffer; mimetype: string };
+    },
+  ) {
+    await Promise.all([
+      this.assertPatient(organizationId, patientId),
+      this.assertClinic(organizationId, input.clinicId),
+    ]);
+    if (!this.storage.enabled) {
+      throw new BadRequestException(
+        this.storage.disabledReason
+          ?? 'Storage desabilitado — configure STORAGE_DRIVER=local ou MinIO/S3 com credenciais.',
+      );
+    }
+    const file = input.file;
+    if (!file?.buffer?.length) throw new BadRequestException('Envie um arquivo.');
+    if (file.size > MAX_MEDIA_BYTES) throw new BadRequestException('Arquivo deve ter no máximo 25 MB.');
+    const extension = file.originalname.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '';
+    const scan = await this.antivirus.scan(file.buffer);
+    // Sem ClamAV ativo/respondeu limpo → não marca como CLEAN (evita falso sucesso).
+    const antivirusStatus = scan.clean ? 'CLEAN' : 'PENDING';
+    const checksum = createHash('sha256').update(file.buffer).digest('hex');
+
+    let stored;
+    try {
+      stored = await this.storage.putObject({
+        organizationId,
+        clinicId: input.clinicId,
+        filename: file.originalname,
+        contentType: file.mimetype || 'application/octet-stream',
+        body: file.buffer,
+        keyPrefix: 'patient-media',
+        metadata: { kind: 'patient-media', patientId, type: input.type },
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Falha ao gravar no storage.';
+      throw new BadRequestException(detail);
+    }
+
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const fileObject = await tx.fileObject.create({
+          data: {
+            organizationId,
+            bucket: stored.bucket,
+            objectKey: stored.objectKey,
+            originalName: file.originalname,
+            mimeType: file.mimetype || 'application/octet-stream',
+            extension: extension || null,
+            sizeBytes: BigInt(file.size),
+            checksum,
+            status: 'AVAILABLE',
+            antivirusStatus,
+            createdById: actorId,
+            metadata: json({
+              kind: 'patient-media',
+              patientId,
+              type: input.type,
+              scanDetail: scan.detail ?? null,
+              scanEngine: scan.engine,
+            }),
+          },
+        });
+        return tx.patientMedia.create({
+          data: {
+            organizationId,
+            patientId,
+            fileId: fileObject.id,
+            type: input.type,
+            toothFdi: input.toothFdi,
+            appointmentId: input.appointmentId,
+            treatmentId: input.treatmentId,
+            examDate: input.examDate ? new Date(`${input.examDate}T00:00:00Z`) : undefined,
+            notes: input.notes,
+          },
+          include: {
+            file: {
+              select: {
+                id: true,
+                originalName: true,
+                mimeType: true,
+                sizeBytes: true,
+                status: true,
+                antivirusStatus: true,
+                createdAt: true,
+              },
+            },
+          },
+        });
+      });
+    } catch (error) {
+      await this.storage.deleteObject(stored.objectKey).catch(() => undefined);
+      throw error;
+    }
   }
 
   private async assertPatient(organizationId: string, patientId: string) {

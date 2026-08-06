@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsEmail, IsString, MinLength } from 'class-validator';
 import type { Request, Response } from 'express';
@@ -7,6 +7,21 @@ import { AuthService } from './auth.service';
 class LoginDto {
   @IsEmail()
   email!: string;
+
+  @IsString()
+  @MinLength(8)
+  password!: string;
+}
+
+class ForgotPasswordDto {
+  @IsEmail()
+  email!: string;
+}
+
+class ResetPasswordDto {
+  @IsString()
+  @MinLength(20)
+  token!: string;
 
   @IsString()
   @MinLength(8)
@@ -42,6 +57,21 @@ export class AuthController {
     response.clearCookie('access_token');
     response.clearCookie('refresh_token');
     return { success: true };
+  }
+
+  @Get('smtp-status')
+  smtpStatus() {
+    return this.auth.smtpStatus();
+  }
+
+  @Post('forgot-password')
+  forgotPassword(@Body() input: ForgotPasswordDto) {
+    return this.auth.requestPasswordReset(input.email);
+  }
+
+  @Post('reset-password')
+  resetPassword(@Body() input: ResetPasswordDto) {
+    return this.auth.resetPassword(input.token, input.password);
   }
 
   private setCookies(response: Response, accessToken: string, refreshToken: string): void {

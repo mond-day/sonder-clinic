@@ -37,6 +37,7 @@ export type StorageAdapter = {
   enabled: boolean;
   disabledReason?: string;
   putObject(input: PutObjectInput): Promise<StoredObject>;
+  getObject(objectKey: string): Promise<Buffer>;
   deleteObject(objectKey: string): Promise<void>;
   getSignedUrl?(objectKey: string, expiresSeconds?: number): Promise<string>;
 };
@@ -98,6 +99,11 @@ class LocalStorageAdapter implements StorageAdapter {
     return { bucket: this.bucket, objectKey, size: stat.size, driver: this.driver };
   }
 
+  async getObject(objectKey: string): Promise<Buffer> {
+    const fullPath = path.join(this.root, this.bucket, objectKey);
+    return fs.readFile(fullPath);
+  }
+
   async deleteObject(objectKey: string): Promise<void> {
     const fullPath = path.join(this.root, this.bucket, objectKey);
     await fs.rm(fullPath, { force: true });
@@ -157,6 +163,18 @@ class MinioStorageAdapter implements StorageAdapter {
       size: body.length,
       driver: this.driver,
     };
+  }
+
+  async getObject(objectKey: string): Promise<Buffer> {
+    if (!this.enabled || !this.client) {
+      throw new Error(this.disabledReason ?? 'Storage MinIO desabilitado.');
+    }
+    const result = await this.client.send(new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: objectKey,
+    }));
+    if (!result.Body) throw new Error('Objeto vazio no storage.');
+    return bodyToBuffer(result.Body as Readable);
   }
 
   async deleteObject(objectKey: string): Promise<void> {

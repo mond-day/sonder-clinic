@@ -309,22 +309,35 @@ model Chair {
 }
 
 model User {
-  id             String           @id @default(uuid()) @db.Uuid
-  organizationId String           @db.Uuid
+  id             String              @id @default(uuid()) @db.Uuid
+  organizationId String              @db.Uuid
   name           String
   email          String
   passwordHash   String
-  status         UserStatus       @default(ACTIVE)
+  status         UserStatus          @default(ACTIVE)
   lastLoginAt    DateTime?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  organization   Organization     @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  organization   Organization        @relation(fields: [organizationId], references: [id])
   roles          UserRole[]
   sessions       Session[]
   professional   Professional?
-  invitations    UserInvitation[] @relation("InvitedUsers")
+  invitations    UserInvitation[]    @relation("InvitedUsers")
+  passwordResets PasswordResetToken[]
 
   @@unique([organizationId, email])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
 }
 
 model UserInvitation {

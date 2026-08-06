@@ -1,9 +1,10 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
 import { z } from 'zod';
 import { buildClinicalDocumentPdf } from '../../common/pdf';
 import { parseWithZod } from '../../common/zod-validation';
+import { CertificateService } from '../settings/certificate.service';
 
 const money = (value: string) => new Prisma.Decimal(value);
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -22,6 +23,8 @@ const receivableSchema = z.object({
 
 @Injectable()
 export class OperationsService {
+  constructor(private readonly certificates: CertificateService) {}
+
   procedures(organizationId: string) {
     return prisma.procedure.findMany({ where: { organizationId, active: true }, orderBy: { name: 'asc' } });
   }
@@ -82,6 +85,50 @@ export class OperationsService {
       await tx.treatmentItem.updateMany({ where: { id: { in: itemIds }, treatmentPlanId: id }, data: { status: 'APPROVED', approvedAt: new Date() } });
       const status = itemIds.length === plan.items.length ? 'APPROVED' : 'PARTIALLY_APPROVED';
       return tx.treatmentPlan.update({ where: { id }, data: { status }, include: { items: true } });
+    });
+  }
+
+  async updateTreatment(organizationId: string, id: string, input: {
+    title?: string; notes?: string; discount?: string;
+    items?: Array<{ id: string; unitPrice?: string; quantity?: number; status?: string }>;
+  }) {
+    const plan = await prisma.treatmentPlan.findFirst({ where: { id, organizationId }, include: { items: true } });
+    if (!plan) throw new NotFoundException('Plano de tratamento não encontrado.');
+    if (['COMPLETED', 'CANCELLED'].includes(plan.status)) {
+      throw new ConflictException('Plano concluído ou cancelado não pode ser editado.');
+    }
+    return prisma.$transaction(async (tx) => {
+      if (input.items?.length) {
+        for (const item of input.items) {
+          const existing = plan.items.find((row) => row.id === item.id);
+          if (!existing) throw new ConflictException('Item não pertence ao plano.');
+          await tx.treatmentItem.update({
+            where: { id: item.id },
+            data: {
+              ...(item.unitPrice != null ? { unitPrice: money(item.unitPrice) } : {}),
+              ...(item.quantity != null ? { quantity: item.quantity } : {}),
+              ...(item.status ? { status: item.status as never } : {}),
+            },
+          });
+        }
+      }
+      const refreshed = await tx.treatmentItem.findMany({ where: { treatmentPlanId: id } });
+      const subtotal = refreshed.reduce(
+        (sum, item) => sum.add(item.unitPrice.mul(item.quantity)),
+        new Prisma.Decimal(0),
+      );
+      const discount = money(input.discount ?? String(plan.discount));
+      return tx.treatmentPlan.update({
+        where: { id },
+        data: {
+          title: input.title ?? plan.title,
+          notes: input.notes ?? plan.notes,
+          discount,
+          subtotal,
+          total: subtotal.sub(discount),
+        },
+        include: { items: true },
+      });
     });
   }
 
@@ -211,18 +258,58 @@ export class OperationsService {
 
   async signDocument(organizationId: string, id: string, input: {
     signerId?: string; signerName: string; role: string; method: string;
-    ipAddress?: string; userAgent?: string; evidence?: Record<string, unknown>;
+    ipAddress?: string; userAgent?: string; evidence?: Record<string, unknown>; clinicId?: string;
   }) {
     const document = await prisma.generatedDocument.findFirst({ where: { id, organizationId } });
     if (!document) throw new NotFoundException('Documento não encontrado.');
     if (document.status === 'SIGNED' || document.status === 'CANCELLED') throw new ConflictException('Documento imutável.');
+
+    if (input.method === 'MOCK_A1') {
+      throw new BadRequestException('Assinatura MOCK_A1 não é permitida. Use A1 com certificado válido ou DRAWN/REMOTE.');
+    }
+
+    let a1Evidence: Record<string, unknown> | undefined;
+    if (input.method === 'A1') {
+      const clinicId = input.clinicId ?? document.clinicId;
+      const signed = await this.certificates.signWithA1(
+        organizationId,
+        clinicId,
+        JSON.stringify({
+          documentId: document.id,
+          contentHash: document.contentHash,
+          signer: input.signerName,
+          role: input.role,
+          at: new Date().toISOString(),
+        }),
+      );
+      a1Evidence = {
+        a1: true,
+        algorithm: signed.algorithm,
+        signature: signed.signature,
+        subject: signed.subject,
+        serialNumber: signed.serialNumber,
+        validTo: signed.validTo,
+      };
+    }
+
     return prisma.$transaction(async (tx) => {
       const signature = await tx.documentSignature.create({
         data: {
           generatedDocumentId: id,
-          ...input,
-          evidence: json(input.evidence ?? {}),
-          signedHash: hash({ documentHash: document.contentHash, signer: input.signerName, at: new Date().toISOString() }),
+          signerId: input.signerId,
+          signerName: input.signerName,
+          role: input.role,
+          method: input.method,
+          evidence: json({ ...(input.evidence ?? {}), ...(a1Evidence ?? {}) }),
+          signedHash: hash({
+            documentHash: document.contentHash,
+            signer: input.signerName,
+            method: input.method,
+            a1: a1Evidence?.signature ?? null,
+            at: new Date().toISOString(),
+          }),
+          ipAddress: input.ipAddress,
+          userAgent: input.userAgent,
         },
       });
       await tx.generatedDocument.update({ where: { id }, data: { status: 'SIGNED' } });

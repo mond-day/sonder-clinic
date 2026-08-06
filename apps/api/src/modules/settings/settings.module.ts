@@ -10,5 +10,6 @@ import { CertificateService } from './certificate.service';
   imports: [AuthModule],
   controllers: [SettingsController],
   providers: [SettingsService, CertificateService, AuthGuard, PermissionsGuard],
+  exports: [CertificateService],
 })
 export class SettingsModule {}

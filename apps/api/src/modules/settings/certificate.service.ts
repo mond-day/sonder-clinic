@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, prisma } from '@sonder/database';
 import { createStorageAdapter, type StorageAdapter } from '@sonder/storage';
-import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import forge from 'node-forge';
@@ -165,6 +165,73 @@ export class CertificateService {
     }
   }
 
+  /**
+   * Assina um payload com a chave privada do PKCS#12 armazenado.
+   * Sem certificado válido/expirado → erro explícito (nunca simula sucesso).
+   */
+  async signWithA1(organizationId: string, clinicId: string, payload: string) {
+    await this.assertClinic(organizationId, clinicId);
+    const file = await this.findActive(organizationId, clinicId);
+    if (!file) {
+      throw new BadRequestException('Certificado A1 não configurado para esta clínica.');
+    }
+    const metadata = (file.metadata ?? {}) as Record<string, unknown>;
+    const validTo = metadata.validTo ? new Date(String(metadata.validTo)) : null;
+    if (validTo && Number.isFinite(validTo.getTime()) && validTo.getTime() < Date.now()) {
+      throw new BadRequestException('Certificado A1 expirado. Faça o upload de um certificado válido.');
+    }
+
+    const encryption = await prisma.fileObject.findFirst({
+      where: { id: file.id },
+      select: { encryption: true, objectKey: true, bucket: true },
+    });
+    if (!encryption) throw new BadRequestException('Certificado A1 não encontrado no armazenamento.');
+    const enc = (encryption.encryption ?? {}) as { password?: string };
+    if (!enc.password) throw new BadRequestException('Senha do certificado A1 indisponível.');
+
+    let buffer: Buffer;
+    try {
+      buffer = await this.storage.getObject(encryption.objectKey);
+    } catch {
+      if (encryption.bucket === 'certificates') {
+        const { readFile } = await import('node:fs/promises');
+        buffer = await readFile(resolve(LEGACY_CERTIFICATE_ROOT, encryption.objectKey)).catch(() => {
+          throw new BadRequestException('Arquivo do certificado A1 inacessível no storage.');
+        });
+      } else {
+        throw new BadRequestException('Arquivo do certificado A1 inacessível no storage.');
+      }
+    }
+
+    const password = this.decrypt(enc.password);
+    try {
+      const asn1 = forge.asn1.fromDer(buffer.toString('binary'), false);
+      const store = forge.pkcs12.pkcs12FromAsn1(asn1, false, password);
+      const keyBagOid = forge.pki.oids.pkcs8ShroudedKeyBag as string;
+      const certBagOid = forge.pki.oids.certBag as string;
+      const keyBags = store.getBags({ bagType: keyBagOid })[keyBagOid] ?? [];
+      const certBags = store.getBags({ bagType: certBagOid })[certBagOid] ?? [];
+      const privateKey = keyBags.find((bag: { key?: forge.pki.PrivateKey }) => bag.key)?.key;
+      const certificate = certBags.find((bag: { cert?: forge.pki.Certificate }) => bag.cert)?.cert;
+      if (!privateKey || !certificate) {
+        throw new Error('Chave ou certificado ausente no PKCS#12');
+      }
+      const md = forge.md.sha256.create();
+      md.update(payload, 'utf8');
+      const signature = forge.util.encode64((privateKey as forge.pki.rsa.PrivateKey).sign(md));
+      return {
+        algorithm: 'SHA256withRSA',
+        signature,
+        subject: String(metadata.subject ?? ''),
+        serialNumber: String(metadata.serialNumber ?? certificate.serialNumber),
+        validTo: metadata.validTo ? String(metadata.validTo) : certificate.validity.notAfter.toISOString(),
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException('Não foi possível assinar com o certificado A1 armazenado.');
+    }
+  }
+
   async remove(organizationId: string, clinicId: string, actorId: string) {
     await this.assertClinic(organizationId, clinicId);
     const files = await this.findActiveMany(prisma, organizationId, clinicId);
@@ -239,6 +306,17 @@ export class CertificateService {
     const cipher = createCipheriv('aes-256-gcm', this.key, iv);
     const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
     return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
+  }
+
+  private decrypt(payload: string) {
+    const [ivPart, tagPart, dataPart] = payload.split('.');
+    if (!ivPart || !tagPart || !dataPart) throw new BadRequestException('Criptografia do certificado inválida.');
+    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(ivPart, 'base64url'));
+    decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
+    return Buffer.concat([
+      decipher.update(Buffer.from(dataPart, 'base64url')),
+      decipher.final(),
+    ]).toString('utf8');
   }
 
   private readEncryptionKey() {

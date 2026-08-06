@@ -752,6 +752,7 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
     ['CONSENTIMENTO', 'Termo de consentimento para tratamento'],
     ['CONTRATO', 'Contrato de prestação de serviços odontológicos'],
     ['ATESTADO', 'Atestado odontológico'],
+    ['RECEITUARIO', 'Receituário odontológico'],
   ] as const;
   const templates = [];
   for (const [index, item] of templateData.entries()) {
@@ -763,9 +764,14 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
         organizationId,
         type: item[0],
         name: item[1],
-        structuredContent: json({ titulo: item[1], blocos: ['Identificação', 'Condições', 'Assinaturas'] }),
-        allowedVariables: json(['paciente.nome', 'clinica.nome', 'data']),
-        signatureRules: json({ paciente: true, profissional: index < 2 }),
+        structuredContent: json({
+          titulo: item[1],
+          blocos: item[0] === 'ATESTADO' || item[0] === 'RECEITUARIO'
+            ? ['Identificação do profissional (nome e CRO)', 'Identificação do paciente', 'Data', 'Corpo clínico', 'Assinatura']
+            : ['Identificação', 'Condições', 'Assinaturas'],
+        }),
+        allowedVariables: json(['paciente.nome', 'paciente.cpf', 'profissional.nome', 'profissional.cro', 'clinica.nome', 'data', 'corpo']),
+        signatureRules: json({ paciente: item[0] !== 'RECEITUARIO', profissional: true }),
       },
     });
     templates.push(template);

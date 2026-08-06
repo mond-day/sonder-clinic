@@ -20,7 +20,7 @@ class CreateAppointmentDto {
   @IsOptional() @IsIn(appointmentStatuses) status?: typeof appointmentStatuses[number];
   @IsOptional() @IsArray() @IsUUID(undefined, { each: true }) tagIds?: string[];
   @IsOptional() reminderEnabled?: boolean;
-  @IsOptional() @IsInt() @Min(15) @Max(10080) reminderLeadMinutes?: number;
+  @IsOptional() reminderLeadMinutes?: number | number[];
 }
 
 @ApiTags('appointments')

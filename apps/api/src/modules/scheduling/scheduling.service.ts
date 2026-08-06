@@ -16,7 +16,10 @@ const appointmentSchema = z.object({
   status: z.enum(['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW']).optional(),
   tagIds: z.array(z.string().uuid()).max(12).optional(),
   reminderEnabled: z.boolean().optional(),
-  reminderLeadMinutes: z.number().int().min(15).max(10080).optional(),
+  reminderLeadMinutes: z.union([
+    z.number().int().min(15).max(10080),
+    z.array(z.number().int().min(15).max(10080)).min(1).max(5),
+  ]).optional(),
 });
 
 export type AppointmentInput = {
@@ -32,7 +35,7 @@ export type AppointmentInput = {
   status?: 'SCHEDULED' | 'CONFIRMED' | 'CHECKED_IN' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
   tagIds?: string[];
   reminderEnabled?: boolean;
-  reminderLeadMinutes?: number;
+  reminderLeadMinutes?: number | number[];
 };
 
 const appointmentInclude = {
@@ -215,43 +218,48 @@ export class SchedulingService {
     clinicId: string,
     startAt: Date,
     enabled = false,
-    leadMinutes = 1440,
+    leadMinutes: number | number[] = 1440,
   ) {
-    if (!enabled) {
-      await transaction.appointmentReminder.deleteMany({ where: { appointmentId, channel: 'WHATSAPP' } });
-      return;
-    }
+    const leads = (Array.isArray(leadMinutes) ? leadMinutes : [leadMinutes])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value >= 15 && value <= 10080);
+    const uniqueLeads = [...new Set(leads.length ? leads : [1440])];
+
+    await transaction.appointmentReminder.deleteMany({
+      where: { appointmentId, channel: { startsWith: 'WHATSAPP' } },
+    });
+
+    if (!enabled) return;
+
     const evolution = await transaction.integrationConnection.findFirst({
       where: { clinicId, provider: 'EVOLUTION', status: 'ACTIVE', encryptedCredentials: { not: null } },
       select: { id: true },
     });
-    const scheduledFor = new Date(startAt.getTime() - leadMinutes * 60_000);
-    const reminder = await transaction.appointmentReminder.upsert({
-      where: { appointmentId_channel: { appointmentId, channel: 'WHATSAPP' } },
-      update: {
-        leadMinutes,
-        scheduledFor,
-        status: evolution ? 'PENDING' : 'DISABLED',
-        statusReason: evolution ? null : 'Evolution não configurado.',
-      },
-      create: {
-        organizationId,
-        appointmentId,
-        leadMinutes,
-        scheduledFor,
-        status: evolution ? 'PENDING' : 'DISABLED',
-        statusReason: evolution ? undefined : 'Evolution não configurado.',
-      },
-    });
-    if (evolution) {
-      await transaction.outboxEvent.create({
+
+    for (const minutes of uniqueLeads) {
+      const channel = uniqueLeads.length === 1 ? 'WHATSAPP' : `WHATSAPP:${minutes}`;
+      const scheduledFor = new Date(startAt.getTime() - minutes * 60_000);
+      const reminder = await transaction.appointmentReminder.create({
         data: {
-          aggregateType: 'AppointmentReminder',
-          aggregateId: reminder.id,
-          eventType: 'appointment.whatsapp-reminder.requested',
-          payload: { reminderId: reminder.id, appointmentId, scheduledFor: scheduledFor.toISOString() },
+          organizationId,
+          appointmentId,
+          channel,
+          leadMinutes: minutes,
+          scheduledFor,
+          status: evolution ? 'PENDING' : 'DISABLED',
+          statusReason: evolution ? null : 'Evolution não configurado.',
         },
       });
+      if (evolution) {
+        await transaction.outboxEvent.create({
+          data: {
+            aggregateType: 'AppointmentReminder',
+            aggregateId: reminder.id,
+            eventType: 'appointment.whatsapp-reminder.requested',
+            payload: { reminderId: reminder.id, appointmentId, scheduledFor: scheduledFor.toISOString(), leadMinutes: minutes },
+          },
+        });
+      }
     }
   }
 }

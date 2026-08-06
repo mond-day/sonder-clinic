@@ -1,8 +1,13 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { prisma } from '@sonder/database';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
+import { assertSmtpConfigured, sendMail, smtpConfigured } from '../../common/mail';
 
 type LoginResult = {
   accessToken: string;
@@ -72,6 +77,69 @@ export class AuthService {
       where: { refreshTokenHash: this.hash(refreshToken), revokedAt: null },
       data: { revokedAt: new Date() },
     });
+  }
+
+  /** Solicita reset. Sem SMTP → erro claro. Com SMTP → e-mail enviado (não revela se o e-mail existe). */
+  async requestPasswordReset(email: string): Promise<{ sent: true; smtpConfigured: true }> {
+    assertSmtpConfigured();
+    const normalized = email.toLowerCase().trim();
+    const user = await prisma.user.findFirst({
+      where: { email: normalized, status: 'ACTIVE' },
+      select: { id: true, name: true, email: true },
+    });
+    if (user) {
+      const token = randomBytes(32).toString('base64url');
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      await prisma.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: this.hash(token),
+          expiresAt,
+        },
+      });
+      const webUrl = (process.env.WEB_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+      const resetUrl = `${webUrl}/login?resetToken=${encodeURIComponent(token)}`;
+      await sendMail({
+        to: user.email,
+        subject: 'Redefinição de senha — Sonder Clinic',
+        text: [
+          `Olá, ${user.name}.`,
+          '',
+          'Recebemos um pedido para redefinir sua senha no Sonder Clinic.',
+          `Abra o link abaixo em até 1 hora:`,
+          resetUrl,
+          '',
+          'Se você não solicitou, ignore este e-mail.',
+        ].join('\n'),
+      });
+    }
+    return { sent: true, smtpConfigured: true };
+  }
+
+  async resetPassword(token: string, password: string): Promise<{ success: true }> {
+    if (password.length < 8) throw new BadRequestException('A senha deve ter ao menos 8 caracteres.');
+    const tokenHash = this.hash(token);
+    const row = await prisma.passwordResetToken.findFirst({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: new Date() } },
+      include: { user: { select: { id: true, status: true } } },
+    });
+    if (!row || row.user.status !== 'ACTIVE') {
+      throw new BadRequestException('Link de redefinição inválido ou expirado.');
+    }
+    const passwordHash = await argon2.hash(password);
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: row.userId }, data: { passwordHash } }),
+      prisma.passwordResetToken.update({ where: { id: row.id }, data: { usedAt: new Date() } }),
+      prisma.session.updateMany({
+        where: { userId: row.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+    return { success: true };
+  }
+
+  smtpStatus() {
+    return { smtpConfigured: smtpConfigured() };
   }
 
   private async issueForUser(

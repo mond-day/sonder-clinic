@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags } from '@nestjs/swagger';
 import { IsArray, IsDateString, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -160,5 +161,47 @@ export class ClinicalController {
   @RequirePermissions('treatment.create')
   createOdontogram(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() input: OdontogramDto) {
     return this.clinical.createOdontogram(req.auth.organizationId, id, input);
+  }
+
+  @Get('patients/:id/media')
+  @RequirePermissions('medical_record.view')
+  listMedia(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.clinical.listPatientMedia(req.auth.organizationId, id);
+  }
+
+  @Post('patients/:id/media')
+  @RequirePermissions('medical_record.create')
+  @UseInterceptors(FileInterceptor('file', {
+    limits: { fileSize: 25 * 1024 * 1024 },
+  }))
+  uploadMedia(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @UploadedFile() file: { originalname: string; size: number; buffer: Buffer; mimetype: string },
+    @Body() body: {
+      clinicId: string;
+      type?: string;
+      toothFdi?: string;
+      appointmentId?: string;
+      treatmentId?: string;
+      examDate?: string;
+      notes?: string;
+    },
+  ) {
+    return this.clinical.uploadPatientMedia(req.auth.organizationId, id, req.auth.userId, {
+      clinicId: body.clinicId,
+      type: body.type?.trim() || 'DOCUMENT',
+      toothFdi: body.toothFdi,
+      appointmentId: body.appointmentId,
+      treatmentId: body.treatmentId,
+      examDate: body.examDate,
+      notes: body.notes,
+      file: {
+        originalname: file?.originalname ?? 'upload.bin',
+        size: file?.size ?? 0,
+        buffer: file?.buffer ?? Buffer.alloc(0),
+        mimetype: file?.mimetype ?? 'application/octet-stream',
+      },
+    });
   }
 }
