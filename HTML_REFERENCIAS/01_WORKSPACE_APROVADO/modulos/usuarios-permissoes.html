@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Usuários e permissões · Sonder Clinic</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body data-page="modulos/usuarios-permissoes.html">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div><strong>Sonder Clinic</strong><small>Workspace clínico</small></div>
+      </div>
+      <button class="clinic-card" type="button" data-toast="Seletor de clínica preservado">
+        <span class="clinic-avatar">SC</span>
+        <span><small>Clínica ativa</small><strong>Sonder Odontologia</strong></span>
+        <b>⌄</b>
+      </button>
+      <nav class="sidebar-nav">
+        <a class="nav-item " href="../index.html"><span>Visão geral</span></a><a class="nav-item " href="../modulos/agenda.html"><span>Agenda</span><span class="nav-dot"></span></a><a class="nav-item " href="../modulos/pacientes.html"><span>Pacientes</span></a><a class="nav-item " href="../modulos/anamnese.html"><span>Anamnese</span></a><a class="nav-item " href="../modulos/odontograma.html"><span>Odontograma</span></a><a class="nav-item " href="../modulos/plano-tratamento.html"><span>Plano de tratamento</span></a><a class="nav-item " href="../modulos/evolucao.html"><span>Evolução clínica</span></a><a class="nav-item " href="../modulos/documentos.html"><span>Documentos</span></a><a class="nav-item " href="../modulos/tarefas.html"><span>Tarefas</span><span class="nav-count">7</span></a><a class="nav-item " href="../modulos/laboratorios.html"><span>Laboratórios</span><span class="nav-count teal">3</span></a><a class="nav-item " href="../modulos/financeiro.html"><span>Financeiro</span></a><a class="nav-item " href="../modulos/relatorios.html"><span>Relatórios</span></a><a class="nav-item active" href="../modulos/usuarios-permissoes.html"><span>Usuários e permissões</span></a><a class="nav-item " href="../modulos/configuracoes.html"><span>Configurações</span></a><a class="nav-item " href="../auditoria.html"><span>Auditoria da proposta</span></a>
+      </nav>
+      <div class="sidebar-alert">
+        <strong>12 pendências prioritárias</strong>
+        <span>Retornos, tarefas e laboratório.</span>
+        <button type="button" data-open="alert-center">Abrir central</button>
+      </div>
+      <div class="profile">
+        <span class="avatar">DL</span>
+        <span><strong>Daymond Lucas</strong><small>Administrador</small></span>
+        <button type="button" aria-label="Menu do usuário">•••</button>
+      </div>
+    </aside>
+    <div class="main-area">
+      <header class="topbar">
+        <button class="mobile-menu" type="button" data-toggle-sidebar aria-label="Abrir menu">☰</button>
+        <div class="global-search">
+          <span>⌕</span>
+          <input placeholder="Pesquisar paciente, CPF ou telefone" aria-label="Pesquisa global">
+          <kbd>⌘ K</kbd>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="icon-button" data-open="alert-center" aria-label="Notificações">♢<i></i></button>
+          <button type="button" class="button primary" data-toast="Ação rápida aberta">+ Novo</button>
+        </div>
+      </header>
+      <main class="content">
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow">Protótipo navegável </div>
+            <h1>Usuários e permissões</h1>
+            <p>Convites, perfis, vínculos com clínicas e matriz RBAC.</p>
+          </div>
+          <div class="heading-actions">
+            <button class="button" type="button" data-toast="Dados atualizados">Atualizar</button>
+            <button class="button primary" type="button" data-toast="Ação principal demonstrada">Ação principal</button>
+          </div>
+        </section>
+        
+<section class="grid cols-4"><div class="metric"><small>Usuários ativos</small><strong>18</strong><span>3 clínicas</span></div><div class="metric"><small>Convites pendentes</small><strong>2</strong><span>Expiram em 48 horas</span></div><div class="metric"><small>Perfis</small><strong>7</strong><span>RBAC por permissão</span></div><div class="metric warning"><small>Acessos sem MFA</small><strong>5</strong><span>Revisão recomendada</span></div></section>
+<section class="grid cols-2"><div class="panel"><header class="panel-header"><div><h2>Usuários e convites</h2><p>CRUD, clínicas vinculadas e status de acesso.</p></div><button class="button primary">+ Convidar usuário</button></header><div class="table-wrap"><table class="data-table"><thead><tr><th>Usuário</th><th>Perfil</th><th>Clínicas</th><th>Status</th><th></th></tr></thead><tbody><tr><td><div class="person"><span class="avatar">CA</span><span><strong>Camila Andrade</strong><span>camila@sonder.clinic</span></span></div></td><td>Dentista</td><td>Centro, Norte</td><td><span class="badge green">Ativa</span></td><td><button class="button small">Editar</button></td></tr><tr><td><div class="person"><span class="avatar">RC</span><span><strong>Renata Costa</strong><span>renata@sonder.clinic</span></span></div></td><td>Recepção</td><td>Centro</td><td><span class="badge green">Ativa</span></td><td><button class="button small">Editar</button></td></tr></tbody></table></div></div><div class="panel"><header class="panel-header"><div><h2>Perfis</h2><p>Permissões agrupadas por domínio.</p></div><button class="button primary">+ Novo perfil</button></header><div class="panel-body"><div class="card"><h4>Administrador</h4><p>72 permissões · todas as clínicas</p></div><div class="card"><h4>Dentista</h4><p>Prontuário, agenda, tratamento e documentos</p></div><div class="card"><h4>Recepção</h4><p>Agenda, pacientes e cobrança limitada</p></div></div></div></section>
+<section class="panel permission-matrix"><header class="panel-header"><div><h2>Matriz de permissões · perfil Dentista</h2><p>Alterações auditadas e aplicadas por clínica.</p></div><button class="button primary">Salvar perfil</button></header><div class="table-wrap"><table class="data-table"><thead><tr><th>Domínio</th><th>Visualizar</th><th>Criar</th><th>Editar</th><th>Excluir/cancelar</th><th>Assinar</th><th>Gerenciar</th></tr></thead><tbody><tr><td>Pacientes</td><td><button class="switch on"></button></td><td><button class="switch on"></button></td><td><button class="switch on"></button></td><td><button class="switch"></button></td><td>—</td><td><button class="switch"></button></td></tr><tr><td>Prontuário</td><td><button class="switch on"></button></td><td><button class="switch on"></button></td><td><button class="switch on"></button></td><td><button class="switch"></button></td><td><button class="switch on"></button></td><td><button class="switch"></button></td></tr><tr><td>Financeiro</td><td><button class="switch"></button></td><td><button class="switch"></button></td><td><button class="switch"></button></td><td><button class="switch"></button></td><td>—</td><td><button class="switch"></button></td></tr></tbody></table></div></section>
+
+      </main>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" data-close="alert-center"></div>
+  <aside class="drawer right" id="alert-center" aria-hidden="true">
+    <header><div><small>Central operacional</small><h2>Notificações e alertas</h2></div><button type="button" data-close="alert-center">×</button></header>
+    <div class="drawer-body">
+      <div class="notice danger"><strong>3 retornos vencidos</strong><span>Pacientes sem continuidade clínica.</span></div>
+      <div class="notice warning"><strong>2 trabalhos laboratoriais em risco</strong><span>Prazo previsto para hoje.</span></div>
+      <div class="notice info"><strong>7 tarefas abertas</strong><span>2 atribuídas a você.</span></div>
+      <button class="button primary wide" type="button" data-toast="Todas as notificações marcadas como lidas">Marcar todas como lidas</button>
+    </div>
+  </aside>
+  <div class="toast" role="status" aria-live="polite"></div>
+  <script src="../scripts.js"></script>
+</body>
+</html>

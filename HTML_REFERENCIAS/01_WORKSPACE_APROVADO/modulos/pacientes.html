@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pacientes e prontuário · Sonder Clinic</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body data-page="modulos/pacientes.html">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div><strong>Sonder Clinic</strong><small>Workspace clínico</small></div>
+      </div>
+      <button class="clinic-card" type="button" data-toast="Seletor de clínica preservado">
+        <span class="clinic-avatar">SC</span>
+        <span><small>Clínica ativa</small><strong>Sonder Odontologia</strong></span>
+        <b>⌄</b>
+      </button>
+      <nav class="sidebar-nav">
+        <a class="nav-item " href="../index.html"><span>Visão geral</span></a><a class="nav-item " href="../modulos/agenda.html"><span>Agenda</span><span class="nav-dot"></span></a><a class="nav-item active" href="../modulos/pacientes.html"><span>Pacientes</span></a><a class="nav-item " href="../modulos/anamnese.html"><span>Anamnese</span></a><a class="nav-item " href="../modulos/odontograma.html"><span>Odontograma</span></a><a class="nav-item " href="../modulos/plano-tratamento.html"><span>Plano de tratamento</span></a><a class="nav-item " href="../modulos/evolucao.html"><span>Evolução clínica</span></a><a class="nav-item " href="../modulos/documentos.html"><span>Documentos</span></a><a class="nav-item " href="../modulos/tarefas.html"><span>Tarefas</span><span class="nav-count">7</span></a><a class="nav-item " href="../modulos/laboratorios.html"><span>Laboratórios</span><span class="nav-count teal">3</span></a><a class="nav-item " href="../modulos/financeiro.html"><span>Financeiro</span></a><a class="nav-item " href="../modulos/relatorios.html"><span>Relatórios</span></a><a class="nav-item " href="../modulos/usuarios-permissoes.html"><span>Usuários e permissões</span></a><a class="nav-item " href="../modulos/configuracoes.html"><span>Configurações</span></a><a class="nav-item " href="../auditoria.html"><span>Auditoria da proposta</span></a>
+      </nav>
+      <div class="sidebar-alert">
+        <strong>12 pendências prioritárias</strong>
+        <span>Retornos, tarefas e laboratório.</span>
+        <button type="button" data-open="alert-center">Abrir central</button>
+      </div>
+      <div class="profile">
+        <span class="avatar">DL</span>
+        <span><strong>Daymond Lucas</strong><small>Administrador</small></span>
+        <button type="button" aria-label="Menu do usuário">•••</button>
+      </div>
+    </aside>
+    <div class="main-area">
+      <header class="topbar">
+        <button class="mobile-menu" type="button" data-toggle-sidebar aria-label="Abrir menu">☰</button>
+        <div class="global-search">
+          <span>⌕</span>
+          <input placeholder="Pesquisar paciente, CPF ou telefone" aria-label="Pesquisa global">
+          <kbd>⌘ K</kbd>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="icon-button" data-open="alert-center" aria-label="Notificações">♢<i></i></button>
+          <button type="button" class="button primary" data-toast="Ação rápida aberta">+ Novo</button>
+        </div>
+      </header>
+      <main class="content">
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow">Protótipo navegável </div>
+            <h1>Pacientes e prontuário</h1>
+            <p>Pesquisa primeiro, menu contextual e ficha isolada com modo atendimento.</p>
+          </div>
+          <div class="heading-actions">
+            <button class="button" type="button" data-toast="Dados atualizados">Atualizar</button>
+            <button class="button primary" type="button" data-toast="Ação principal demonstrada">Ação principal</button>
+          </div>
+        </section>
+        
+<section class="panel">
+  <header class="panel-header"><div><h2>Pesquisa de pacientes</h2><p>O prontuário abre isolado; nenhum outro paciente permanece visível.</p></div><button class="button primary">+ Novo paciente</button></header>
+  <div class="panel-body">
+    <div class="filters"><input placeholder="Pesquisar por nome, CPF ou telefone"><select><option>Todos os pacientes</option><option>Em tratamento</option><option>Com retorno pendente</option><option>Com pendência financeira</option></select></div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Paciente</th><th>Contato</th><th>Última consulta</th><th>Tratamento atual</th><th>Próxima ação</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        <tr><td><div class="person"><span class="avatar">MC</span><span><strong>Mariana Costa</strong><span>CPF ***.321.***-09 · #PAC-1023</span></span></div></td><td>(66) 99921-8040</td><td>28/07/2026</td><td>Reabilitação posterior</td><td>Consulta em 10/08</td><td><span class="badge green">Em tratamento</span></td><td><div class="dropdown"><button class="button small" data-dropdown>Mais ações ▾</button><div class="dropdown-menu"><button data-open="patient-preview">Ver detalhes</button><button data-open="patient-edit">Editar cadastro</button><a href="anamnese.html">Abrir prontuário</a><button data-toast="WhatsApp aberto">Enviar WhatsApp</button><button data-toast="Novo agendamento iniciado">Criar agendamento</button><button data-toast="Biblioteca de documentos aberta">Criar documento</button><div class="separator"></div><button class="destructive" data-toast="Paciente arquivado após confirmação">Arquivar paciente</button><button class="destructive" data-toast="Exclusão bloqueada: paciente possui vínculos">Excluir paciente</button></div></div></td></tr>
+        <tr><td><div class="person"><span class="avatar">RA</span><span><strong>Rafael Almeida</strong><span>CPF ***.908.***-44 · #PAC-1017</span></span></div></td><td>(66) 99810-3162</td><td>02/08/2026</td><td>Implante unitário</td><td>Trabalho no laboratório</td><td><span class="badge blue">Laboratório</span></td><td><div class="dropdown"><button class="button small" data-dropdown>Mais ações ▾</button><div class="dropdown-menu"><button data-open="patient-preview">Ver detalhes</button><a href="odontograma.html">Abrir prontuário</a><button>Criar tarefa</button><div class="separator"></div><button class="destructive">Arquivar paciente</button></div></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="patient-header" style="margin-top:16px">
+  <div class="patient-cover"></div>
+  <div class="patient-identity"><div class="patient-avatar">MC</div><div><h2>Mariana Costa</h2><p>34 anos · #PAC-1023 · Paciente ativa</p></div><div class="patient-actions"><button class="button" data-presentation>Ativar modo atendimento</button><button class="button primary">Agendar</button></div></div>
+  <div class="tabs" data-tabs><button class="tab active" data-target="patient-summary">Resumo</button><button class="tab" data-target="patient-anamnesis">Anamnese</button><button class="tab" data-target="patient-odontogram">Odontograma</button><button class="tab" data-target="patient-treatment">Tratamentos</button><button class="tab" data-target="patient-evolution">Evolução</button><button class="tab sensitive" data-target="patient-finance">Financeiro</button><button class="tab" data-target="patient-docs">Documentos</button></div>
+  <div data-tab-root>
+    <div class="tab-panel active panel-body" id="patient-summary"><div class="grid cols-3"><div class="info-item"><small>Alertas clínicos</small><strong>Alergia a dipirona</strong></div><div class="info-item"><small>Próxima consulta</small><strong>10/08 às 08:00</strong></div><div class="info-item sensitive"><small>Pendência financeira</small><strong>R$ 480,00</strong></div></div></div>
+    <div class="tab-panel panel-body" id="patient-anamnesis"><strong>Anamnese adulta finalizada em 22/07/2026.</strong></div>
+    <div class="tab-panel panel-body" id="patient-odontogram"><strong>Odontograma atualizado há 8 dias.</strong></div>
+    <div class="tab-panel panel-body" id="patient-treatment"><strong>Plano Reabilitação posterior · Em andamento.</strong></div>
+    <div class="tab-panel panel-body" id="patient-evolution"><strong>4 evoluções clínicas registradas.</strong></div>
+    <div class="tab-panel panel-body sensitive" id="patient-finance"><strong>2 parcelas em aberto.</strong></div>
+    <div class="tab-panel panel-body" id="patient-docs"><strong>6 documentos gerados.</strong></div>
+  </div>
+</section>
+<div class="modal-backdrop" data-for="patient-preview" data-close="patient-preview"></div><section class="modal" id="patient-preview"><header><div><small>Paciente</small><h2>Resumo cadastral</h2></div><button data-close="patient-preview">×</button></header><div class="modal-body"><div class="info-grid"><div class="info-item"><small>Nome</small><strong>Mariana Costa</strong></div><div class="info-item"><small>Telefone</small><strong>(66) 99921-8040</strong></div><div class="info-item"><small>Nascimento</small><strong>14/03/1992</strong></div><div class="info-item"><small>Responsável</small><strong>Não se aplica</strong></div></div></div></section>
+
+      </main>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" data-close="alert-center"></div>
+  <aside class="drawer right" id="alert-center" aria-hidden="true">
+    <header><div><small>Central operacional</small><h2>Notificações e alertas</h2></div><button type="button" data-close="alert-center">×</button></header>
+    <div class="drawer-body">
+      <div class="notice danger"><strong>3 retornos vencidos</strong><span>Pacientes sem continuidade clínica.</span></div>
+      <div class="notice warning"><strong>2 trabalhos laboratoriais em risco</strong><span>Prazo previsto para hoje.</span></div>
+      <div class="notice info"><strong>7 tarefas abertas</strong><span>2 atribuídas a você.</span></div>
+      <button class="button primary wide" type="button" data-toast="Todas as notificações marcadas como lidas">Marcar todas como lidas</button>
+    </div>
+  </aside>
+  <div class="toast" role="status" aria-live="polite"></div>
+  <script src="../scripts.js"></script>
+</body>
+</html>

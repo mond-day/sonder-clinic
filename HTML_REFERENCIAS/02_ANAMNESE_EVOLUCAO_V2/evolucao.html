@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Evolução clínica · Sonder Clinic</title><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app-shell focus-shell">
+
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><div class="brand-mark">S</div><div><strong>Sonder Clinic</strong><small>Recorte clínico</small></div></div>
+      <button class="clinic-card" type="button" data-toast="Clínica ativa preservada"><span class="clinic-avatar">SC</span><span><small>Clínica ativa</small><strong>Sonder Odontologia</strong></span><b>⌄</b></button>
+      <nav class="sidebar-nav">
+        <a class="nav-item " href="anamnese.html"><span>Anamnese clínica</span><span class="nav-dot"></span></a>
+        <a class="nav-item active" href="evolucao.html"><span>Evolução clínica</span><span class="nav-count teal">3</span></a>
+      </nav>
+      <div class="focus-nav-note">Exibição focada somente nos dois módulos solicitados para revisão visual.</div>
+      <div class="side-spacer"></div>
+      <div class="profile"><span class="avatar">DL</span><span><strong>Daymond Lucas</strong><small>Administrador</small></span><button type="button">•••</button></div>
+    </aside>
+<div class="main-area">
+<header class="topbar"><button class="mobile-menu" type="button" data-toggle-sidebar>☰</button><div class="global-search"><span>⌕</span><input placeholder="Pesquisar paciente para abrir o prontuário"><kbd>⌘ K</kbd></div><div class="top-actions"><a class="button" href="index.html">Visão geral</a><button class="icon-button" data-toast="Nenhuma nova notificação">♢<i></i></button></div></header>
+<main class="content">
+<section class="page-heading"><div><div class="eyebrow">Revisão visual focada</div><h1>Evolução clínica</h1><p>Histórico cronológico selecionável, registro detalhado da sessão e criação estruturada com revisão e assinatura.</p></div><div class="heading-actions"><button class="button" data-toast="Dados atualizados">Atualizar</button><button class="button primary" data-toast="Fluxo principal iniciado">Ação principal</button></div></section>
+
+<div class="patient-context"><div class="patient-avatar">MC</div><div><h2>Mariana Costa</h2><p>34 anos · #PAC-1023 · Plano Reabilitação posterior</p><div class="clinical-alert-strip"><span class="clinical-alert">⚠ Alergia a dipirona</span><span class="clinical-alert info">Última consulta: hoje às 14:00</span></div></div><div class="patient-context-actions"><button class="button">Abrir odontograma</button><button class="button">Abrir tratamento</button><button class="button primary" data-open="evolution-composer">+ Nova evolução</button></div></div>
+<section class="grid cols-4"><div class="metric"><small>Registros clínicos</small><strong>24</strong><span>Últimos 12 meses</span></div><div class="metric"><small>Assinados</small><strong>22</strong><span>Imutáveis</span></div><div class="metric warning"><small>Rascunhos</small><strong>2</strong><span>Aguardando revisão</span></div><div class="metric"><small>Com anexos</small><strong>9</strong><span>Imagens e documentos</span></div></section>
+<section class="evolution-layout">
+<aside class="evolution-sidebar">
+<div class="evolution-filters"><div class="filters"><input style="min-width:0;width:100%" placeholder="Buscar no histórico"><select style="width:100%"><option>Todos os tipos</option><option>Consultas</option><option>Procedimentos</option><option>Contatos</option></select></div></div>
+<div class="evolution-list">
+<button class="evolution-item active" data-evolution-id="endo"><div class="evolution-item-head"><div><strong>Tratamento endodôntico · 16</strong><small>05/08/2026 · Dra. Camila</small></div><span class="badge green">Assinada</span></div><p>Abertura coronária e instrumentação inicial.</p></button>
+<button class="evolution-item" data-evolution-id="draft"><div class="evolution-item-head"><div><strong>Acompanhamento pós-operatório</strong><small>06/08/2026 · Dra. Camila</small></div><span class="badge amber">Rascunho</span></div><p>Sensibilidade leve relatada em contato remoto.</p></button>
+<button class="evolution-item" data-evolution-id="planning"><div class="evolution-item-head"><div><strong>Avaliação e planejamento</strong><small>28/07/2026 · Dr. Renato</small></div><span class="badge green">Assinada</span></div><p>Definido plano reabilitador da região posterior.</p></button>
+<button class="evolution-item"><div class="evolution-item-head"><div><strong>Consulta inicial</strong><small>21/07/2026 · Dra. Camila</small></div><span class="badge green">Assinada</span></div><p>Anamnese revisada e exame clínico realizado.</p></button>
+<button class="evolution-item"><div class="evolution-item-head"><div><strong>Radiografia anexada</strong><small>21/07/2026 · Sistema</small></div><span class="badge blue">Anexo</span></div><p>Imagem periapical dos elementos 16 e 17.</p></button>
+</div>
+</aside>
+
+<section class="evolution-detail">
+<article class="record-header"><div class="record-header-top"><div><div class="eyebrow" data-evo-eyebrow>Sessão clínica assinada</div><h2 data-evo-title>Tratamento endodôntico · elemento 16</h2><p><span data-evo-professional>Dra. Camila Andrade</span> · <span data-evo-date>05/08/2026 · 14:30</span></p></div><div class="toolbar"><span class="badge green" data-evo-status>Assinada</span><button class="button">Imprimir</button><button class="button primary" data-toast="Novo adendo iniciado">Adicionar adendo</button></div></div><div class="record-meta"><span class="badge blue" data-evo-plan>Reabilitação posterior direita</span><span class="badge" data-evo-procedure>Tratamento endodôntico</span><span class="badge purple">Dente <b data-evo-tooth>16</b></span><span class="badge amber" data-evo-session>Sessão 1 de 2</span></div></article>
+<article class="record-section"><h3>Registro clínico</h3><p class="clinical-summary" data-evo-summary>Realizada anestesia infiltrativa, isolamento absoluto, abertura coronária e instrumentação inicial dos canais. Irrigação com hipoclorito de sódio a 2,5%. Paciente permaneceu estável e sem intercorrências durante o atendimento.</p></article>
+<article class="record-section"><h3>Dados estruturados da sessão</h3><div class="procedure-grid"><div class="procedure-box"><small>Materiais utilizados</small><strong data-evo-materials>Limas rotatórias, hipoclorito 2,5%, EDTA</strong></div><div class="procedure-box"><small>Anestésico</small><strong data-evo-anesthetic>Articaína 4% com epinefrina</strong></div><div class="procedure-box"><small>Intercorrências</small><strong data-evo-events>Nenhuma intercorrência</strong></div><div class="procedure-box"><small>Próxima conduta</small><strong data-evo-next>Obturação dos canais em 12/08/2026</strong></div><div class="procedure-box" style="grid-column:span 2"><small>Orientações ao paciente</small><strong data-evo-guidance>Evitar mastigação na região por 24 horas e retornar em caso de dor espontânea.</strong></div></div></article>
+<div class="grid cols-2">
+<article class="record-section"><h3>Anexos da evolução</h3><div class="attachments"><div class="attachment"><i></i><strong>Radiografia inicial</strong><span>JPG · 1,4 MB</span></div><div class="attachment"><i></i><strong>Fotografia intraoral</strong><span>JPG · 980 KB</span></div><div class="attachment"><i></i><strong>Documento de orientação</strong><span>PDF · 240 KB</span></div></div></article>
+<article class="record-section"><h3>Auditoria e assinatura</h3><div class="audit-stamp"><b>✓</b><div><strong>Registro finalizado e íntegro</strong><span>Assinado por Dra. Camila em 05/08/2026 às 14:46. Alterações permitidas somente por adendo.</span></div></div><div class="timeline" style="margin-top:13px"><div class="timeline-item"><small>14:46</small><strong>Assinatura registrada</strong><p>Hash e autoria gravados.</p></div><div class="timeline-item"><small>14:30</small><strong>Evolução criada</strong><p>Originada do agendamento AG-2026-184.</p></div></div></article>
+</div>
+</section>
+</section>
+
+<div class="modal-backdrop" data-for="evolution-composer" data-close="evolution-composer"></div>
+<section class="modal large composer-modal" id="evolution-composer" data-composer>
+<header><div><small>Prontuário clínico</small><h2>Nova evolução</h2></div><button data-close="evolution-composer">×</button></header>
+<div class="modal-body">
+<div class="composer-layout">
+<aside class="composer-steps"><div class="composer-step active"><i>1</i>Vínculos</div><div class="composer-step"><i>2</i>Registro clínico</div><div class="composer-step"><i>3</i>Complementos</div><div class="composer-step"><i>4</i>Revisão e assinatura</div></aside>
+<div class="composer-content">
+<section data-composer-panel="1">
+<div class="clinical-section-title"><span class="section-number">1</span><div><h3>Contexto da evolução</h3><p>Relacione o registro à consulta, ao plano e ao item executado.</p></div></div>
+<div class="form-grid"><div class="form-field"><span>Profissional</span><select><option>Dra. Camila Andrade</option></select></div><div class="form-field"><span>Data e horário clínico</span><input type="datetime-local" value="2026-08-05T14:30"></div><div class="form-field"><span>Agendamento relacionado</span><select><option>05/08 · 14:00 · Endodontia</option></select></div><div class="form-field"><span>Tipo de registro</span><select><option>Evolução de procedimento</option><option>Avaliação</option><option>Contato remoto</option><option>Intercorrência</option></select></div><div class="form-field"><span>Plano de tratamento</span><select><option>Reabilitação posterior direita</option></select></div><div class="form-field"><span>Procedimento / item</span><select><option>Tratamento endodôntico · 16</option></select></div><div class="form-field"><span>Dente ou região</span><input value="16"></div><div class="form-field"><span>Sessão</span><input value="Sessão 1 de 2"></div></div>
+</section>
+<section data-composer-panel="2" hidden>
+<div class="clinical-section-title"><span class="section-number">2</span><div><h3>Registro clínico estruturado</h3><p>Escolha um modelo e ajuste o texto conforme o atendimento real.</p></div></div>
+<div class="template-chips"><button class="template-chip active">Evolução geral</button><button class="template-chip">Endodontia</button><button class="template-chip">Cirurgia</button><button class="template-chip">Ortodontia</button><button class="template-chip">Implante</button><button class="template-chip">Prótese</button></div>
+<div class="form-field"><span>Descrição clínica principal</span><textarea style="min-height:150px">Realizada anestesia infiltrativa, isolamento absoluto, abertura coronária e instrumentação inicial dos canais. Irrigação abundante, medicação intracanal e selamento provisório. Paciente permaneceu estável, sem intercorrências.</textarea></div>
+<div class="notice info"><strong>Assistência de preenchimento</strong><span>O sistema pode sugerir estrutura e termos, mas o profissional deve revisar integralmente antes de assinar.</span></div>
+</section>
+<section data-composer-panel="3" hidden>
+<div class="clinical-section-title"><span class="section-number">3</span><div><h3>Complementos clínicos</h3><p>Campos opcionais que melhoram a rastreabilidade da sessão.</p></div></div>
+<div class="smart-block"><div class="smart-block-head"><strong>Procedimento executado</strong><button>Remover bloco</button></div><div class="form-grid"><div class="form-field"><span>Procedimento</span><input value="Instrumentação endodôntica"></div><div class="form-field"><span>Dente/região</span><input value="16"></div><div class="form-field"><span>Materiais</span><input value="Limas rotatórias, hipoclorito 2,5%"></div><div class="form-field"><span>Anestésico</span><input value="Articaína 4%"></div></div></div>
+<div class="form-grid"><div class="form-field"><span>Intercorrências</span><textarea>Nenhuma.</textarea></div><div class="form-field"><span>Orientações</span><textarea>Evitar mastigação na região por 24 horas.</textarea></div><div class="form-field"><span>Próxima conduta</span><textarea>Obturação dos canais na próxima sessão.</textarea></div><div class="form-field"><span>Data sugerida</span><input type="date" value="2026-08-12"></div></div>
+<div class="toolbar" style="margin-top:12px"><button class="button">+ Adicionar procedimento</button><button class="button">Anexar imagem</button><button class="button">Anexar documento</button></div>
+</section>
+<section data-composer-panel="4" hidden>
+<div class="clinical-section-title"><span class="section-number">4</span><div><h3>Revisão e assinatura</h3><p>Após a assinatura, o conteúdo ficará imutável e aceitará apenas adendos.</p></div></div>
+<div class="review-panel"><div class="review-paper"><div class="eyebrow">Prévia do registro</div><h3>Tratamento endodôntico · elemento 16</h3><p>Realizada anestesia infiltrativa, isolamento absoluto, abertura coronária e instrumentação inicial dos canais. Irrigação abundante, medicação intracanal e selamento provisório.</p><p><strong>Materiais:</strong> Limas rotatórias e hipoclorito 2,5%.<br><strong>Intercorrências:</strong> nenhuma.<br><strong>Próxima conduta:</strong> obturação dos canais.</p></div><aside class="review-checks"><strong style="font-size:10px">Confirmações obrigatórias</strong><label><input type="checkbox" checked> Revisei o conteúdo clínico.</label><label><input type="checkbox" checked> Confirmei paciente, dente e procedimento.</label><label><input type="checkbox"> Declaro que o registro corresponde ao atendimento realizado.</label><div class="notice warning"><strong>Assinatura pendente</strong><span>O botão de finalizar será habilitado após todas as confirmações.</span></div></aside></div>
+</section>
+</div></div></div>
+<footer class="modal-footer"><button class="button" data-composer-prev>← Voltar</button><button class="button secondary" data-toast="Rascunho salvo">Salvar rascunho</button><button class="button primary" data-composer-next>Continuar →</button><button class="button primary" data-composer-finish hidden data-toast="Evolução finalizada e assinada">Finalizar e assinar</button></footer>
+</section>
+
+
+</main></div></div>
+<div class="toast" role="status" aria-live="polite"></div>
+<script src="scripts.js"></script>
+</body></html>

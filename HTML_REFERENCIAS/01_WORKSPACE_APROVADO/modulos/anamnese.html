@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Anamnese clínica · Sonder Clinic</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body data-page="modulos/anamnese.html">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div><strong>Sonder Clinic</strong><small>Workspace clínico</small></div>
+      </div>
+      <button class="clinic-card" type="button" data-toast="Seletor de clínica preservado">
+        <span class="clinic-avatar">SC</span>
+        <span><small>Clínica ativa</small><strong>Sonder Odontologia</strong></span>
+        <b>⌄</b>
+      </button>
+      <nav class="sidebar-nav">
+        <a class="nav-item " href="../index.html"><span>Visão geral</span></a><a class="nav-item " href="../modulos/agenda.html"><span>Agenda</span><span class="nav-dot"></span></a><a class="nav-item " href="../modulos/pacientes.html"><span>Pacientes</span></a><a class="nav-item active" href="../modulos/anamnese.html"><span>Anamnese</span></a><a class="nav-item " href="../modulos/odontograma.html"><span>Odontograma</span></a><a class="nav-item " href="../modulos/plano-tratamento.html"><span>Plano de tratamento</span></a><a class="nav-item " href="../modulos/evolucao.html"><span>Evolução clínica</span></a><a class="nav-item " href="../modulos/documentos.html"><span>Documentos</span></a><a class="nav-item " href="../modulos/tarefas.html"><span>Tarefas</span><span class="nav-count">7</span></a><a class="nav-item " href="../modulos/laboratorios.html"><span>Laboratórios</span><span class="nav-count teal">3</span></a><a class="nav-item " href="../modulos/financeiro.html"><span>Financeiro</span></a><a class="nav-item " href="../modulos/relatorios.html"><span>Relatórios</span></a><a class="nav-item " href="../modulos/usuarios-permissoes.html"><span>Usuários e permissões</span></a><a class="nav-item " href="../modulos/configuracoes.html"><span>Configurações</span></a><a class="nav-item " href="../auditoria.html"><span>Auditoria da proposta</span></a>
+      </nav>
+      <div class="sidebar-alert">
+        <strong>12 pendências prioritárias</strong>
+        <span>Retornos, tarefas e laboratório.</span>
+        <button type="button" data-open="alert-center">Abrir central</button>
+      </div>
+      <div class="profile">
+        <span class="avatar">DL</span>
+        <span><strong>Daymond Lucas</strong><small>Administrador</small></span>
+        <button type="button" aria-label="Menu do usuário">•••</button>
+      </div>
+    </aside>
+    <div class="main-area">
+      <header class="topbar">
+        <button class="mobile-menu" type="button" data-toggle-sidebar aria-label="Abrir menu">☰</button>
+        <div class="global-search">
+          <span>⌕</span>
+          <input placeholder="Pesquisar paciente, CPF ou telefone" aria-label="Pesquisa global">
+          <kbd>⌘ K</kbd>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="icon-button" data-open="alert-center" aria-label="Notificações">♢<i></i></button>
+          <button type="button" class="button primary" data-toast="Ação rápida aberta">+ Novo</button>
+        </div>
+      </header>
+      <main class="content">
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow">Protótipo navegável </div>
+            <h1>Anamnese clínica</h1>
+            <p>Modelos adulto, infantil, idoso e gestante com versões e assinatura híbrida.</p>
+          </div>
+          <div class="heading-actions">
+            <button class="button" type="button" data-toast="Dados atualizados">Atualizar</button>
+            <button class="button primary" type="button" data-toast="Ação principal demonstrada">Ação principal</button>
+          </div>
+        </section>
+        
+<section class="grid cols-4">
+  <button class="setting-card" data-toast="Modelo adulto selecionado"><strong>Adulto</strong><span>Histórico médico e odontológico completo.</span><span class="badge green">Modelo ativo</span></button>
+  <button class="setting-card" data-toast="Modelo infantil selecionado"><strong>Infantil</strong><span>Responsável, nascimento, hábitos e comportamento.</span><span class="badge blue">Responsável obrigatório</span></button>
+  <button class="setting-card" data-toast="Modelo idoso selecionado"><strong>Idoso</strong><span>Autonomia, polifarmácia, cognição e mobilidade.</span><span class="badge purple">Avaliação ampliada</span></button>
+  <button class="setting-card" data-toast="Modelo gestante selecionado"><strong>Gestante</strong><span>Trimestre, risco, obstetra e recomendações.</span><span class="badge amber">Cuidados especiais</span></button>
+</section>
+<section class="panel" data-edit-root>
+  <header class="panel-header"><div><h2>Anamnese adulta · versão 3</h2><p>Rascunho salvo automaticamente. A finalização cria uma versão imutável.</p></div><div class="toolbar"><span class="badge amber">Rascunho</span><button class="button" type="button">Histórico</button><button class="button primary" type="button" data-edit-toggle>Editar</button></div></header>
+  <div class="panel-body">
+    <div class="accordion open"><button type="button">1. Identificação e queixa principal <span>⌃</span></button><div class="accordion-content"><div class="form-grid"><div class="form-field span-2"><span>Queixa principal</span><textarea disabled>Desconforto na mastigação do lado direito.</textarea></div><div class="form-field"><span>Última consulta médica</span><input disabled value="Março de 2026"></div><div class="form-field"><span>Médico responsável</span><input disabled value="Dr. Paulo Mendes"></div></div></div></div>
+    <div class="accordion"><button type="button">2. Histórico médico <span>⌄</span></button><div class="accordion-content"><div class="form-grid"><div class="form-field"><span>Hipertensão</span><select disabled><option>Não</option></select></div><div class="form-field"><span>Diabetes</span><select disabled><option>Não</option></select></div><div class="form-field"><span>Problemas cardíacos</span><select disabled><option>Não</option></select></div><div class="form-field"><span>Distúrbio de coagulação</span><select disabled><option>Não</option></select></div><div class="form-field span-2"><span>Alergias</span><input disabled value="Dipirona"></div></div></div></div>
+    <div class="accordion"><button type="button">3. Medicamentos, cirurgias e hábitos <span>⌄</span></button><div class="accordion-content"><div class="form-grid"><div class="form-field span-2"><span>Medicamentos em uso</span><textarea disabled>Anticoncepcional oral.</textarea></div><div class="form-field"><span>Tabagismo</span><select disabled><option>Não</option></select></div><div class="form-field"><span>Consumo de álcool</span><select disabled><option>Social</option></select></div></div></div></div>
+    <div class="accordion"><button type="button">4. Histórico odontológico e risco <span>⌄</span></button><div class="accordion-content"><div class="form-grid"><div class="form-field"><span>Sangramento gengival</span><select disabled><option>Às vezes</option></select></div><div class="form-field"><span>Bruxismo</span><select disabled><option>Suspeita</option></select></div><div class="form-field span-2"><span>Avaliação de risco</span><textarea disabled>Risco moderado. Confirmar alergia antes da prescrição.</textarea></div></div></div></div>
+    <div class="accordion"><button type="button">5. Assinaturas e aceite <span>⌄</span></button><div class="accordion-content"><div class="grid cols-2"><div class="state-box"><strong>Assinatura na clínica</strong><br>Tablet ou tela de assinatura.</div><div class="state-box"><strong>Assinatura remota</strong><br>Link seguro enviado ao paciente.</div></div></div></div>
+  </div>
+  <footer class="modal-footer">
+    <div data-view-actions class="inline-actions"><button class="button">Imprimir</button><button class="button">Duplicar como nova versão</button><button class="button primary" data-toast="Anamnese finalizada e bloqueada">Finalizar e assinar</button></div>
+    <div data-edit-actions hidden class="inline-actions"><button class="button" data-edit-toggle>Cancelar</button><button class="button secondary" data-toast="Rascunho salvo">Salvar rascunho</button><button class="button primary" data-save-edit>Salvar</button></div>
+  </footer>
+</section>
+
+      </main>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" data-close="alert-center"></div>
+  <aside class="drawer right" id="alert-center" aria-hidden="true">
+    <header><div><small>Central operacional</small><h2>Notificações e alertas</h2></div><button type="button" data-close="alert-center">×</button></header>
+    <div class="drawer-body">
+      <div class="notice danger"><strong>3 retornos vencidos</strong><span>Pacientes sem continuidade clínica.</span></div>
+      <div class="notice warning"><strong>2 trabalhos laboratoriais em risco</strong><span>Prazo previsto para hoje.</span></div>
+      <div class="notice info"><strong>7 tarefas abertas</strong><span>2 atribuídas a você.</span></div>
+      <button class="button primary wide" type="button" data-toast="Todas as notificações marcadas como lidas">Marcar todas como lidas</button>
+    </div>
+  </aside>
+  <div class="toast" role="status" aria-live="polite"></div>
+  <script src="../scripts.js"></script>
+</body>
+</html>

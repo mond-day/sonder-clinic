@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Evolução clínica · Sonder Clinic</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body data-page="modulos/evolucao.html">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div><strong>Sonder Clinic</strong><small>Workspace clínico</small></div>
+      </div>
+      <button class="clinic-card" type="button" data-toast="Seletor de clínica preservado">
+        <span class="clinic-avatar">SC</span>
+        <span><small>Clínica ativa</small><strong>Sonder Odontologia</strong></span>
+        <b>⌄</b>
+      </button>
+      <nav class="sidebar-nav">
+        <a class="nav-item " href="../index.html"><span>Visão geral</span></a><a class="nav-item " href="../modulos/agenda.html"><span>Agenda</span><span class="nav-dot"></span></a><a class="nav-item " href="../modulos/pacientes.html"><span>Pacientes</span></a><a class="nav-item " href="../modulos/anamnese.html"><span>Anamnese</span></a><a class="nav-item " href="../modulos/odontograma.html"><span>Odontograma</span></a><a class="nav-item " href="../modulos/plano-tratamento.html"><span>Plano de tratamento</span></a><a class="nav-item active" href="../modulos/evolucao.html"><span>Evolução clínica</span></a><a class="nav-item " href="../modulos/documentos.html"><span>Documentos</span></a><a class="nav-item " href="../modulos/tarefas.html"><span>Tarefas</span><span class="nav-count">7</span></a><a class="nav-item " href="../modulos/laboratorios.html"><span>Laboratórios</span><span class="nav-count teal">3</span></a><a class="nav-item " href="../modulos/financeiro.html"><span>Financeiro</span></a><a class="nav-item " href="../modulos/relatorios.html"><span>Relatórios</span></a><a class="nav-item " href="../modulos/usuarios-permissoes.html"><span>Usuários e permissões</span></a><a class="nav-item " href="../modulos/configuracoes.html"><span>Configurações</span></a><a class="nav-item " href="../auditoria.html"><span>Auditoria da proposta</span></a>
+      </nav>
+      <div class="sidebar-alert">
+        <strong>12 pendências prioritárias</strong>
+        <span>Retornos, tarefas e laboratório.</span>
+        <button type="button" data-open="alert-center">Abrir central</button>
+      </div>
+      <div class="profile">
+        <span class="avatar">DL</span>
+        <span><strong>Daymond Lucas</strong><small>Administrador</small></span>
+        <button type="button" aria-label="Menu do usuário">•••</button>
+      </div>
+    </aside>
+    <div class="main-area">
+      <header class="topbar">
+        <button class="mobile-menu" type="button" data-toggle-sidebar aria-label="Abrir menu">☰</button>
+        <div class="global-search">
+          <span>⌕</span>
+          <input placeholder="Pesquisar paciente, CPF ou telefone" aria-label="Pesquisa global">
+          <kbd>⌘ K</kbd>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="icon-button" data-open="alert-center" aria-label="Notificações">♢<i></i></button>
+          <button type="button" class="button primary" data-toast="Ação rápida aberta">+ Novo</button>
+        </div>
+      </header>
+      <main class="content">
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow">Protótipo navegável </div>
+            <h1>Evolução clínica</h1>
+            <p>Registro estruturado por procedimento, sessão, dente e tratamento.</p>
+          </div>
+          <div class="heading-actions">
+            <button class="button" type="button" data-toast="Dados atualizados">Atualizar</button>
+            <button class="button primary" type="button" data-toast="Ação principal demonstrada">Ação principal</button>
+          </div>
+        </section>
+        
+<section class="grid cols-3">
+  <div class="metric"><small>Evoluções registradas</small><strong>24</strong><span>Últimos 90 dias</span></div><div class="metric"><small>Com vínculo de tratamento</small><strong>21</strong><span>87,5% dos registros</span></div><div class="metric warning"><small>Rascunhos</small><strong>2</strong><span>Aguardando assinatura</span></div>
+</section>
+<section class="grid cols-2">
+  <div class="panel"><header class="panel-header"><div><h2>Nova evolução clínica</h2><p>Campos mínimos obrigatórios e estrutura clínica opcional.</p></div><span class="badge amber">Rascunho</span></header><div class="panel-body"><div class="form-grid"><div class="form-field"><span>Profissional</span><select><option>Dra. Camila Andrade</option></select></div><div class="form-field"><span>Data e horário</span><input type="datetime-local" value="2026-08-05T14:30"></div><div class="form-field"><span>Plano de tratamento</span><select><option>Reabilitação posterior direita</option></select></div><div class="form-field"><span>Procedimento / item</span><select><option>Tratamento endodôntico · 16</option></select></div><div class="form-field"><span>Dente ou região</span><input value="16"></div><div class="form-field"><span>Sessão clínica</span><input value="Sessão 1"></div><div class="form-field span-2"><span>Descrição da evolução</span><textarea>Realizada abertura coronária e instrumentação inicial, sem intercorrências.</textarea></div></div><div class="accordion"><button>Dados complementares opcionais <span>⌄</span></button><div class="accordion-content"><div class="form-grid"><div class="form-field"><span>Materiais utilizados</span><input value="Limas rotatórias, hipoclorito 2,5%"></div><div class="form-field"><span>Anestésico</span><input value="Articaína 4%"></div><div class="form-field"><span>Intercorrências</span><input value="Nenhuma"></div><div class="form-field"><span>Próxima conduta</span><input value="Obturação na próxima sessão"></div><div class="form-field span-2"><span>Orientações</span><textarea>Evitar mastigação na região nas próximas 24 horas.</textarea></div></div></div></div></div><footer class="modal-footer"><button class="button">Salvar rascunho</button><button class="button primary" data-toast="Evolução assinada e tornada imutável">Finalizar e assinar</button></footer></div>
+  <div class="panel"><header class="panel-header"><div><h2>Histórico cronológico</h2><p>Registros assinados aceitam somente adendo.</p></div></header><div class="panel-body"><div class="timeline"><div class="timeline-item"><small>05/08/2026 · 14:30 · Dra. Camila</small><strong>Tratamento endodôntico · elemento 16</strong><p>Abertura coronária e instrumentação inicial. Sessão 1.</p><span class="badge amber">Rascunho</span></div><div class="timeline-item"><small>28/07/2026 · 09:10 · Dr. Renato</small><strong>Avaliação e planejamento</strong><p>Solicitada radiografia e definido plano reabilitador.</p><span class="badge green">Assinada</span> <button class="button small">Adicionar adendo</button></div><div class="timeline-item"><small>21/07/2026 · 16:40 · Dra. Camila</small><strong>Consulta inicial</strong><p>Anamnese revisada e exame clínico realizado.</p><span class="badge green">Assinada</span></div></div></div></div>
+</section>
+
+      </main>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" data-close="alert-center"></div>
+  <aside class="drawer right" id="alert-center" aria-hidden="true">
+    <header><div><small>Central operacional</small><h2>Notificações e alertas</h2></div><button type="button" data-close="alert-center">×</button></header>
+    <div class="drawer-body">
+      <div class="notice danger"><strong>3 retornos vencidos</strong><span>Pacientes sem continuidade clínica.</span></div>
+      <div class="notice warning"><strong>2 trabalhos laboratoriais em risco</strong><span>Prazo previsto para hoje.</span></div>
+      <div class="notice info"><strong>7 tarefas abertas</strong><span>2 atribuídas a você.</span></div>
+      <button class="button primary wide" type="button" data-toast="Todas as notificações marcadas como lidas">Marcar todas como lidas</button>
+    </div>
+  </aside>
+  <div class="toast" role="status" aria-live="polite"></div>
+  <script src="../scripts.js"></script>
+</body>
+</html>

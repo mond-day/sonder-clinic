@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Configurações · Sonder Clinic</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body data-page="modulos/configuracoes.html">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div><strong>Sonder Clinic</strong><small>Workspace clínico</small></div>
+      </div>
+      <button class="clinic-card" type="button" data-toast="Seletor de clínica preservado">
+        <span class="clinic-avatar">SC</span>
+        <span><small>Clínica ativa</small><strong>Sonder Odontologia</strong></span>
+        <b>⌄</b>
+      </button>
+      <nav class="sidebar-nav">
+        <a class="nav-item " href="../index.html"><span>Visão geral</span></a><a class="nav-item " href="../modulos/agenda.html"><span>Agenda</span><span class="nav-dot"></span></a><a class="nav-item " href="../modulos/pacientes.html"><span>Pacientes</span></a><a class="nav-item " href="../modulos/anamnese.html"><span>Anamnese</span></a><a class="nav-item " href="../modulos/odontograma.html"><span>Odontograma</span></a><a class="nav-item " href="../modulos/plano-tratamento.html"><span>Plano de tratamento</span></a><a class="nav-item " href="../modulos/evolucao.html"><span>Evolução clínica</span></a><a class="nav-item " href="../modulos/documentos.html"><span>Documentos</span></a><a class="nav-item " href="../modulos/tarefas.html"><span>Tarefas</span><span class="nav-count">7</span></a><a class="nav-item " href="../modulos/laboratorios.html"><span>Laboratórios</span><span class="nav-count teal">3</span></a><a class="nav-item " href="../modulos/financeiro.html"><span>Financeiro</span></a><a class="nav-item " href="../modulos/relatorios.html"><span>Relatórios</span></a><a class="nav-item " href="../modulos/usuarios-permissoes.html"><span>Usuários e permissões</span></a><a class="nav-item active" href="../modulos/configuracoes.html"><span>Configurações</span></a><a class="nav-item " href="../auditoria.html"><span>Auditoria da proposta</span></a>
+      </nav>
+      <div class="sidebar-alert">
+        <strong>12 pendências prioritárias</strong>
+        <span>Retornos, tarefas e laboratório.</span>
+        <button type="button" data-open="alert-center">Abrir central</button>
+      </div>
+      <div class="profile">
+        <span class="avatar">DL</span>
+        <span><strong>Daymond Lucas</strong><small>Administrador</small></span>
+        <button type="button" aria-label="Menu do usuário">•••</button>
+      </div>
+    </aside>
+    <div class="main-area">
+      <header class="topbar">
+        <button class="mobile-menu" type="button" data-toggle-sidebar aria-label="Abrir menu">☰</button>
+        <div class="global-search">
+          <span>⌕</span>
+          <input placeholder="Pesquisar paciente, CPF ou telefone" aria-label="Pesquisa global">
+          <kbd>⌘ K</kbd>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="icon-button" data-open="alert-center" aria-label="Notificações">♢<i></i></button>
+          <button type="button" class="button primary" data-toast="Ação rápida aberta">+ Novo</button>
+        </div>
+      </header>
+      <main class="content">
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow">Protótipo navegável </div>
+            <h1>Configurações</h1>
+            <p>Organização por domínio, distinguindo recursos reais, parciais e novos contratos.</p>
+          </div>
+          <div class="heading-actions">
+            <button class="button" type="button" data-toast="Dados atualizados">Atualizar</button>
+            <button class="button primary" type="button" data-toast="Ação principal demonstrada">Ação principal</button>
+          </div>
+        </section>
+        
+<section class="panel"><header class="panel-header"><div><h2>Configurações do sistema</h2><p>Categorias organizadas; recursos reais e pendentes claramente diferenciados.</p></div><div class="toolbar"><input class="field" placeholder="Pesquisar configuração"><button class="button">Auditoria</button></div></header><div class="panel-body"><div class="settings-grid"><button class="setting-card" data-toast="Clínica aberto"><div class="status-line"><strong>Clínica</strong><span class="badge green">Real</span></div><span>Unidades, cadeiras, dados fiscais e horários</span><b>Configurar →</b></button><button class="setting-card" data-toast="Usuários aberto"><div class="status-line"><strong>Usuários</strong><span class="badge amber">Nova API</span></div><span>Convites, perfis, permissões e clínicas</span><b>Configurar →</b></button><button class="setting-card" data-toast="Profissionais aberto"><div class="status-line"><strong>Profissionais</strong><span class="badge green">Real</span></div><span>CRO, especialidades e agenda</span><b>Configurar →</b></button><button class="setting-card" data-toast="Agenda aberto"><div class="status-line"><strong>Agenda</strong><span class="badge green">Real</span></div><span>Status, etiquetas, lembretes e bloqueios</span><b>Configurar →</b></button><button class="setting-card" data-toast="Procedimentos aberto"><div class="status-line"><strong>Procedimentos</strong><span class="badge green">Real</span></div><span>Tabela clínica, duração e preço</span><b>Configurar →</b></button><button class="setting-card" data-toast="Documentos aberto"><div class="status-line"><strong>Documentos</strong><span class="badge blue">Parcial</span></div><span>Modelos, variáveis e assinaturas</span><b>Configurar →</b></button><button class="setting-card" data-toast="Financeiro aberto"><div class="status-line"><strong>Financeiro</strong><span class="badge amber">Nova API</span></div><span>Categorias, centros de custo e regras</span><b>Configurar →</b></button><button class="setting-card" data-toast="Laboratórios aberto"><div class="status-line"><strong>Laboratórios</strong><span class="badge amber">Nova API</span></div><span>Parceiros, materiais, prazos e preços</span><b>Configurar →</b></button><button class="setting-card" data-toast="Notificações aberto"><div class="status-line"><strong>Notificações</strong><span class="badge blue">Parcial</span></div><span>Canais, eventos e preferências</span><b>Configurar →</b></button><button class="setting-card" data-toast="Integrações aberto"><div class="status-line"><strong>Integrações</strong><span class="badge green">Real</span></div><span>Nibo, Evolution, Chatwoot, Google e IA</span><b>Configurar →</b></button><button class="setting-card" data-toast="Segurança aberto"><div class="status-line"><strong>Segurança</strong><span class="badge blue">Parcial</span></div><span>Sessões, MFA, certificado A1 e auditoria</span><b>Configurar →</b></button><button class="setting-card" data-toast="Aparência aberto"><div class="status-line"><strong>Aparência</strong><span class="badge green">Real</span></div><span>Logo, nome, cores e documentos legais</span><b>Configurar →</b></button></div></div></section>
+<section class="grid cols-2"><div class="panel"><header class="panel-header"><div><h2>Integrações</h2><p>Credenciais mascaradas e criptografadas por clínica.</p></div></header><div class="panel-body"><div class="card"><div class="status-line"><h4>Nibo</h4><span class="badge green">Conectado</span></div><p>Financeiro e clientes · escopo por clínica</p></div><div class="card"><div class="status-line"><h4>Evolution API</h4><span class="badge amber">Configurar</span></div><p>Lembretes e mensagens de WhatsApp</p></div><div class="card"><div class="status-line"><h4>Certificado A1</h4><span class="badge blue">Arquivo protegido</span></div><p>Upload privado; assinatura depende de validação do provedor.</p></div></div></div><div class="panel"><header class="panel-header"><div><h2>Auditoria e segurança</h2></div></header><div class="panel-body"><div class="timeline"><div class="timeline-item"><small>Hoje · 21:40</small><strong>Permissão alterada</strong><p>Perfil Recepção · acesso financeiro removido.</p></div><div class="timeline-item"><small>Hoje · 17:18</small><strong>Integração atualizada</strong><p>Credencial Evolution substituída.</p></div><div class="timeline-item"><small>Ontem · 14:10</small><strong>Documento legal publicado</strong><p>Consentimento LGPD versão 4.</p></div></div></div></div></section>
+
+      </main>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" data-close="alert-center"></div>
+  <aside class="drawer right" id="alert-center" aria-hidden="true">
+    <header><div><small>Central operacional</small><h2>Notificações e alertas</h2></div><button type="button" data-close="alert-center">×</button></header>
+    <div class="drawer-body">
+      <div class="notice danger"><strong>3 retornos vencidos</strong><span>Pacientes sem continuidade clínica.</span></div>
+      <div class="notice warning"><strong>2 trabalhos laboratoriais em risco</strong><span>Prazo previsto para hoje.</span></div>
+      <div class="notice info"><strong>7 tarefas abertas</strong><span>2 atribuídas a você.</span></div>
+      <button class="button primary wide" type="button" data-toast="Todas as notificações marcadas como lidas">Marcar todas como lidas</button>
+    </div>
+  </aside>
+  <div class="toast" role="status" aria-live="polite"></div>
+  <script src="../scripts.js"></script>
+</body>
+</html>

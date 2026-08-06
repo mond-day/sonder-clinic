@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Auditoria e dependências · Sonder Clinic</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="auditoria.html">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div><strong>Sonder Clinic</strong><small>Workspace clínico</small></div>
+      </div>
+      <button class="clinic-card" type="button" data-toast="Seletor de clínica preservado">
+        <span class="clinic-avatar">SC</span>
+        <span><small>Clínica ativa</small><strong>Sonder Odontologia</strong></span>
+        <b>⌄</b>
+      </button>
+      <nav class="sidebar-nav">
+        <a class="nav-item " href="index.html"><span>Visão geral</span></a><a class="nav-item " href="modulos/agenda.html"><span>Agenda</span><span class="nav-dot"></span></a><a class="nav-item " href="modulos/pacientes.html"><span>Pacientes</span></a><a class="nav-item " href="modulos/anamnese.html"><span>Anamnese</span></a><a class="nav-item " href="modulos/odontograma.html"><span>Odontograma</span></a><a class="nav-item " href="modulos/plano-tratamento.html"><span>Plano de tratamento</span></a><a class="nav-item " href="modulos/evolucao.html"><span>Evolução clínica</span></a><a class="nav-item " href="modulos/documentos.html"><span>Documentos</span></a><a class="nav-item " href="modulos/tarefas.html"><span>Tarefas</span><span class="nav-count">7</span></a><a class="nav-item " href="modulos/laboratorios.html"><span>Laboratórios</span><span class="nav-count teal">3</span></a><a class="nav-item " href="modulos/financeiro.html"><span>Financeiro</span></a><a class="nav-item " href="modulos/relatorios.html"><span>Relatórios</span></a><a class="nav-item " href="modulos/usuarios-permissoes.html"><span>Usuários e permissões</span></a><a class="nav-item " href="modulos/configuracoes.html"><span>Configurações</span></a><a class="nav-item active" href="auditoria.html"><span>Auditoria da proposta</span></a>
+      </nav>
+      <div class="sidebar-alert">
+        <strong>12 pendências prioritárias</strong>
+        <span>Retornos, tarefas e laboratório.</span>
+        <button type="button" data-open="alert-center">Abrir central</button>
+      </div>
+      <div class="profile">
+        <span class="avatar">DL</span>
+        <span><strong>Daymond Lucas</strong><small>Administrador</small></span>
+        <button type="button" aria-label="Menu do usuário">•••</button>
+      </div>
+    </aside>
+    <div class="main-area">
+      <header class="topbar">
+        <button class="mobile-menu" type="button" data-toggle-sidebar aria-label="Abrir menu">☰</button>
+        <div class="global-search">
+          <span>⌕</span>
+          <input placeholder="Pesquisar paciente, CPF ou telefone" aria-label="Pesquisa global">
+          <kbd>⌘ K</kbd>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="icon-button" data-open="alert-center" aria-label="Notificações">♢<i></i></button>
+          <button type="button" class="button primary" data-toast="Ação rápida aberta">+ Novo</button>
+        </div>
+      </header>
+      <main class="content">
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow">Protótipo navegável </div>
+            <h1>Auditoria e dependências</h1>
+            <p>Problemas encontrados, proposta visual e impacto provável em frontend, backend e regra de negócio.</p>
+          </div>
+          <div class="heading-actions">
+            <button class="button" type="button" data-toast="Dados atualizados">Atualizar</button>
+            <button class="button primary" type="button" data-toast="Ação principal demonstrada">Ação principal</button>
+          </div>
+        </section>
+        
+<section class="panel"><header class="panel-header"><div><h2>Matriz de análise</h2><p>Baseada no repositório atualizado e nas decisões aprovadas.</p></div><span class="badge green">Escopo fechado</span></header><div class="table-wrap"><table class="data-table audit-table"><thead><tr><th>Módulo</th><th>Problema atual</th><th>Proposta HTML</th><th>Frontend</th><th>Backend</th><th>Regra</th></tr></thead><tbody><tr><td><strong>Agenda</strong></td><td>Modal abre editável e etiquetas em checkboxes</td><td>Visualização inicial, edição explícita e combobox</td><td>Refatorar estado e componente</td><td>Histórico de mudanças e motivo de cancelamento</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Pacientes</strong></td><td>“Mais ações” redireciona diretamente</td><td>Menu contextual com ações e confirmação</td><td>Menu, modal e estados</td><td>Arquivamento seguro</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Anamnese</strong></td><td>Formulário atual é simplificado</td><td>4 modelos, versões, rascunho e assinaturas</td><td>Wizard/accordions</td><td>Templates versionados e assinatura remota</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Odontograma</strong></td><td>Registro unitário por formulário</td><td>2D por faces, seleção múltipla e histórico</td><td>Componente clínico novo</td><td>Modelo de faces e versão</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Tratamentos</strong></td><td>Fluxo parcial</td><td>Etapas, aprovação parcial e geração financeira opcional</td><td>Drawer/página contextual</td><td>Aprovação e títulos automáticos</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Evolução</strong></td><td>Texto geral com vínculo opcional</td><td>Timeline e campos estruturados</td><td>Formulário e timeline</td><td>Imutabilidade/adendo</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Documentos</strong></td><td>Geração básica</td><td>Biblioteca, prévia, assinatura e histórico</td><td>Editor e preview</td><td>Assinatura remota/A1</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Tarefas</strong></td><td>Modal editável e dados mínimos</td><td>Visualização, checklist, comentários, anexos e recorrência</td><td>Kanban e modal</td><td>Novas entidades/rotas</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Laboratórios</strong></td><td>4 status e poucos campos</td><td>Macrostatus + timeline detalhada e cadastro de laboratórios</td><td>Kanban e detalhe</td><td>Eventos e cadastro</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Financeiro</strong></td><td>Recebíveis reais; demais módulos ausentes</td><td>Gestão financeira completa</td><td>Subnavegação e tabelas</td><td>Payables, recorrências, caixa e comissões</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Relatórios</strong></td><td>Resumo agregado</td><td>15 relatórios e 4 exportações</td><td>Catálogo e dashboards</td><td>Consultas agregadas/exportação</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Usuários/RBAC</strong></td><td>RBAC sem CRUD</td><td>Usuários, convites, perfis e matriz</td><td>Novas telas</td><td>CRUD e auditoria</td><td><span class="badge amber">Sim</span></td></tr><tr><td><strong>Configurações</strong></td><td>Seções reais e pendentes misturadas</td><td>Catálogo por domínio e status</td><td>Organização visual</td><td>Novos contratos conforme módulo</td><td><span class="badge amber">Sim</span></td></tr></tbody></table></div></section>
+<section class="grid cols-2"><div class="panel"><header class="panel-header"><div><h2>Mocks, stubs e lacunas identificadas</h2></div></header><div class="panel-body"><div class="notice warning"><strong>Integrações externas</strong><span>Nibo, Evolution, Chatwoot, Google e IA podem operar com flags MOCK em desenvolvimento.</span></div><div class="notice warning"><strong>Financeiro ampliado</strong><span>Payables, recorrências, fluxo de caixa e eventos de comissão ainda não possuem contratos completos.</span></div><div class="notice warning"><strong>Equipe e permissões</strong><span>O RBAC existe, mas usuários, convites e perfis não possuem CRUD HTTP completo.</span></div><div class="notice warning"><strong>Assinaturas e storage</strong><span>A1 possui base segura, porém assinatura clínica completa e link remoto exigem novos fluxos.</span></div></div></div><div class="panel"><header class="panel-header"><div><h2>Decisões aprovadas</h2></div></header><div class="panel-body"><div class="timeline"><div class="timeline-item"><strong>Modelo visual único</strong><p>Workspace Sonder, próximo ao Codental na organização.</p></div><div class="timeline-item"><strong>Escopo full stack</strong><p>Frontend, NestJS, Prisma, migrações, seed, RBAC e testes.</p></div><div class="timeline-item"><strong>Odontograma 3D</strong><p>Somente conceito; 2D funcional é prioridade.</p></div><div class="timeline-item"><strong>Financeiro e comissões</strong><p>Regra configurável por produção, recebimento ou valor fixo.</p></div><div class="timeline-item"><strong>Implementação única pelo Cursor</strong><p>Sem pausas por módulo após a aprovação visual.</p></div></div></div></section>
+
+      </main>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" data-close="alert-center"></div>
+  <aside class="drawer right" id="alert-center" aria-hidden="true">
+    <header><div><small>Central operacional</small><h2>Notificações e alertas</h2></div><button type="button" data-close="alert-center">×</button></header>
+    <div class="drawer-body">
+      <div class="notice danger"><strong>3 retornos vencidos</strong><span>Pacientes sem continuidade clínica.</span></div>
+      <div class="notice warning"><strong>2 trabalhos laboratoriais em risco</strong><span>Prazo previsto para hoje.</span></div>
+      <div class="notice info"><strong>7 tarefas abertas</strong><span>2 atribuídas a você.</span></div>
+      <button class="button primary wide" type="button" data-toast="Todas as notificações marcadas como lidas">Marcar todas como lidas</button>
+    </div>
+  </aside>
+  <div class="toast" role="status" aria-live="polite"></div>
+  <script src="scripts.js"></script>
+</body>
+</html>

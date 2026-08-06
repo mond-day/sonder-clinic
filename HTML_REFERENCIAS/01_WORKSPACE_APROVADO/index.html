@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Visão geral dos protótipos · Sonder Clinic</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="index.html">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div><strong>Sonder Clinic</strong><small>Workspace clínico</small></div>
+      </div>
+      <button class="clinic-card" type="button" data-toast="Seletor de clínica preservado">
+        <span class="clinic-avatar">SC</span>
+        <span><small>Clínica ativa</small><strong>Sonder Odontologia</strong></span>
+        <b>⌄</b>
+      </button>
+      <nav class="sidebar-nav">
+        <a class="nav-item active" href="index.html"><span>Visão geral</span></a><a class="nav-item " href="modulos/agenda.html"><span>Agenda</span><span class="nav-dot"></span></a><a class="nav-item " href="modulos/pacientes.html"><span>Pacientes</span></a><a class="nav-item " href="modulos/anamnese.html"><span>Anamnese</span></a><a class="nav-item " href="modulos/odontograma.html"><span>Odontograma</span></a><a class="nav-item " href="modulos/plano-tratamento.html"><span>Plano de tratamento</span></a><a class="nav-item " href="modulos/evolucao.html"><span>Evolução clínica</span></a><a class="nav-item " href="modulos/documentos.html"><span>Documentos</span></a><a class="nav-item " href="modulos/tarefas.html"><span>Tarefas</span><span class="nav-count">7</span></a><a class="nav-item " href="modulos/laboratorios.html"><span>Laboratórios</span><span class="nav-count teal">3</span></a><a class="nav-item " href="modulos/financeiro.html"><span>Financeiro</span></a><a class="nav-item " href="modulos/relatorios.html"><span>Relatórios</span></a><a class="nav-item " href="modulos/usuarios-permissoes.html"><span>Usuários e permissões</span></a><a class="nav-item " href="modulos/configuracoes.html"><span>Configurações</span></a><a class="nav-item " href="auditoria.html"><span>Auditoria da proposta</span></a>
+      </nav>
+      <div class="sidebar-alert">
+        <strong>12 pendências prioritárias</strong>
+        <span>Retornos, tarefas e laboratório.</span>
+        <button type="button" data-open="alert-center">Abrir central</button>
+      </div>
+      <div class="profile">
+        <span class="avatar">DL</span>
+        <span><strong>Daymond Lucas</strong><small>Administrador</small></span>
+        <button type="button" aria-label="Menu do usuário">•••</button>
+      </div>
+    </aside>
+    <div class="main-area">
+      <header class="topbar">
+        <button class="mobile-menu" type="button" data-toggle-sidebar aria-label="Abrir menu">☰</button>
+        <div class="global-search">
+          <span>⌕</span>
+          <input placeholder="Pesquisar paciente, CPF ou telefone" aria-label="Pesquisa global">
+          <kbd>⌘ K</kbd>
+        </div>
+        <div class="top-actions">
+          <button type="button" class="icon-button" data-open="alert-center" aria-label="Notificações">♢<i></i></button>
+          <button type="button" class="button primary" data-toast="Ação rápida aberta">+ Novo</button>
+        </div>
+      </header>
+      <main class="content">
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow">Protótipo navegável · versão de aprovação</div>
+            <h1>Visão geral dos protótipos</h1>
+            <p>Pacote consolidado para validação visual antes do Markdown técnico.</p>
+          </div>
+          <div class="heading-actions">
+            <button class="button" type="button" data-toast="Dados atualizados">Atualizar</button>
+            <button class="button primary" type="button" data-toast="Ação principal demonstrada">Ação principal</button>
+          </div>
+        </section>
+        
+<section class="grid cols-4">
+  <div class="metric"><small>Módulos prototipados</small><strong>13</strong><span>Todos em uma única identidade visual</span></div>
+  <div class="metric"><small>Fluxos com backend atual</small><strong>8</strong><span>Preservados como contratos reais</span></div>
+  <div class="metric warning"><small>Áreas que exigem nova API</small><strong>5</strong><span>Financeiro, RBAC e recursos avançados</span></div>
+  <div class="metric"><small>Modelo aprovado</small><strong>Workspace</strong><span>Identidade Sonder + organização Codental</span></div>
+</section>
+<section class="panel">
+  <header class="panel-header"><div><h2>Como avaliar</h2><p>Abra cada módulo pela barra lateral e valide composição, hierarquia e comportamento.</p></div><a class="button primary" href="auditoria.html">Abrir auditoria</a></header>
+  <div class="panel-body">
+    <div class="grid cols-3">
+      <div class="report-card"><h3>1. Fluxos clínicos</h3><p>Agenda, pacientes, anamnese, odontograma, tratamento, evolução e documentos.</p></div>
+      <div class="report-card"><h3>2. Operação da equipe</h3><p>Tarefas, retornos, laboratório, notificações e permissões.</p></div>
+      <div class="report-card"><h3>3. Gestão</h3><p>Financeiro completo, relatórios e configurações organizadas.</p></div>
+    </div>
+  </div>
+</section>
+<section class="panel">
+  <header class="panel-header"><div><h2>Princípios consolidados</h2><p>Decisões aprovadas antes da criação dos protótipos.</p></div></header>
+  <div class="panel-body">
+    <div class="grid cols-2">
+      <div class="notice info"><strong>Visualização antes da edição</strong><span>Modais e detalhes começam em leitura; edição é uma ação explícita.</span></div>
+      <div class="notice info"><strong>Implementação full stack única</strong><span>Após aprovação visual, o Markdown abrangerá Next.js, NestJS, Prisma, migrações, seed, RBAC e testes.</span></div>
+      <div class="notice info"><strong>Sem mocks de produção</strong><span>Recursos sem endpoint são demonstrados no HTML e especificados como novos contratos.</span></div>
+      <div class="notice info"><strong>Auditoria e imutabilidade clínica</strong><span>Registros assinados recebem versão ou adendo, nunca sobrescrita silenciosa.</span></div>
+    </div>
+  </div>
+</section>
+
+      </main>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" data-close="alert-center"></div>
+  <aside class="drawer right" id="alert-center" aria-hidden="true">
+    <header><div><small>Central operacional</small><h2>Notificações e alertas</h2></div><button type="button" data-close="alert-center">×</button></header>
+    <div class="drawer-body">
+      <div class="notice danger"><strong>3 retornos vencidos</strong><span>Pacientes sem continuidade clínica.</span></div>
+      <div class="notice warning"><strong>2 trabalhos laboratoriais em risco</strong><span>Prazo previsto para hoje.</span></div>
+      <div class="notice info"><strong>7 tarefas abertas</strong><span>2 atribuídas a você.</span></div>
+      <button class="button primary wide" type="button" data-toast="Todas as notificações marcadas como lidas">Marcar todas como lidas</button>
+    </div>
+  </aside>
+  <div class="toast" role="status" aria-live="polite"></div>
+  <script src="scripts.js"></script>
+</body>
+</html>
