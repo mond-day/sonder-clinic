@@ -23,7 +23,7 @@ Push em `main` sem tag gera imagem com versão `0.0.0-sha.<sha>` + tag `sha-<sha
 
 ## Como publicar uma release
 
-1. Atualize a versão nos `package.json` do root e apps (`1.1.2` → `1.1.4`).
+1. Atualize a versão nos `package.json` do root e apps (`1.1.3` → `1.1.4`).
 2. Commit das mudanças.
 3. Crie e envie a tag anotada:
 
