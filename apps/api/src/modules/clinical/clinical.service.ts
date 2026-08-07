@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID as cryptoRandomUuid } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
 import { createAntivirusScanner, createStorageAdapter } from '@sonder/storage';
 import { z } from 'zod';
@@ -208,6 +208,43 @@ export class ClinicalService {
     });
   }
 
+  async cancelEntry(organizationId: string, id: string, authorId: string, reason: string) {
+    if (!reason?.trim() || reason.trim().length < 3) {
+      throw new BadRequestException('Motivo do cancelamento é obrigatório.');
+    }
+    const entry = await prisma.clinicalEntry.findFirst({
+      where: { id, record: { organizationId } },
+    });
+    if (!entry) throw new NotFoundException('Evolução clínica não encontrada.');
+    if (entry.status === 'CANCELLED') return entry;
+    if (entry.status === 'DRAFT') {
+      return prisma.clinicalEntry.update({
+        where: { id },
+        data: { status: 'CANCELLED' },
+        include: { corrections: true, attachments: true },
+      });
+    }
+    // Assinado/corrigido: cancela com adendo de motivo (sem exclusão física).
+    return prisma.$transaction(async (tx) => {
+      await tx.clinicalEntryCorrection.create({
+        data: {
+          clinicalEntryId: id,
+          authorId,
+          kind: 'ADDENDUM',
+          reason: reason.trim(),
+          renderedText: `Cancelamento: ${reason.trim()}`,
+          correctedContent: json({ cancelled: true, reason: reason.trim() }),
+          signatureHash: sha256({ cancelled: true, reason: reason.trim() }),
+        },
+      });
+      return tx.clinicalEntry.update({
+        where: { id },
+        data: { status: 'CANCELLED' },
+        include: { corrections: true, attachments: true },
+      });
+    });
+  }
+
   async correctEntry(organizationId: string, id: string, authorId: string, input: {
     reason: string; correctedContent: Record<string, unknown>; renderedText?: string; kind?: 'ADDENDUM' | 'CORRECTION';
   }) {
@@ -252,11 +289,55 @@ export class ClinicalService {
     });
   }
 
-  getOdontogramConditions(organizationId: string) {
+  getOdontogramConditions(organizationId: string, includeInactive = false) {
     return prisma.odontogramCondition.findMany({
-      where: { organizationId, active: true },
-      select: { id: true, code: true, name: true, color: true },
+      where: { organizationId, ...(includeInactive ? {} : { active: true }) },
+      select: { id: true, code: true, name: true, color: true, icon: true, active: true },
       orderBy: { name: 'asc' },
+    });
+  }
+
+  async createOdontogramCondition(
+    organizationId: string,
+    input: { code: string; name: string; color: string; icon?: string },
+  ) {
+    const code = input.code.trim().toUpperCase();
+    const name = input.name.trim();
+    if (!code || name.length < 2) throw new BadRequestException('Código e nome são obrigatórios.');
+    try {
+      return await prisma.odontogramCondition.create({
+        data: {
+          organizationId,
+          code,
+          name,
+          color: input.color,
+          icon: input.icon,
+          active: true,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Já existe uma condição com este código.');
+      }
+      throw error;
+    }
+  }
+
+  async updateOdontogramCondition(
+    organizationId: string,
+    id: string,
+    input: { name?: string; color?: string; icon?: string | null; active?: boolean },
+  ) {
+    const existing = await prisma.odontogramCondition.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Condição não encontrada.');
+    return prisma.odontogramCondition.update({
+      where: { id },
+      data: {
+        name: input.name?.trim(),
+        color: input.color,
+        icon: input.icon === undefined ? undefined : input.icon,
+        active: input.active,
+      },
     });
   }
 
@@ -304,10 +385,14 @@ export class ClinicalService {
     });
   }
 
-  async listPatientMedia(organizationId: string, patientId: string) {
+  async listPatientMedia(organizationId: string, patientId: string, includeArchived = false) {
     await this.assertPatient(organizationId, patientId);
     return prisma.patientMedia.findMany({
-      where: { organizationId, patientId },
+      where: {
+        organizationId,
+        patientId,
+        ...(includeArchived ? {} : { archivedAt: null }),
+      },
       include: {
         file: {
           select: {
@@ -320,9 +405,185 @@ export class ClinicalService {
             createdAt: true,
           },
         },
+        folder: { select: { id: true, name: true } },
+        annotations: { orderBy: { createdAt: 'desc' }, take: 20 },
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
+    });
+  }
+
+  async getPatientMedia(organizationId: string, patientId: string, mediaId: string) {
+    await this.assertPatient(organizationId, patientId);
+    const media = await prisma.patientMedia.findFirst({
+      where: { id: mediaId, organizationId, patientId },
+      include: {
+        file: true,
+        folder: true,
+        annotations: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+    if (!media) throw new NotFoundException('Mídia do paciente não encontrada.');
+    return media;
+  }
+
+  async downloadPatientMedia(organizationId: string, patientId: string, mediaId: string, actorId?: string) {
+    const media = await this.getPatientMedia(organizationId, patientId, mediaId);
+    if (media.archivedAt) throw new ConflictException('Arquivo arquivado.');
+    if (!this.storage.enabled) {
+      throw new BadRequestException(
+        this.storage.disabledReason
+          ?? 'Storage desabilitado — configure STORAGE_DRIVER=local ou MinIO/S3 com credenciais.',
+      );
+    }
+    if (media.file.antivirusStatus === 'INFECTED') {
+      throw new ConflictException('Arquivo rejeitado pelo antivírus.');
+    }
+    const buffer = await this.storage.getObject(media.file.objectKey);
+    await prisma.auditEvent.create({
+      data: {
+        actorId,
+        action: 'patient_media.downloaded',
+        entity: 'PatientMedia',
+        entityId: mediaId,
+        changes: json({ patientId, fileId: media.fileId, antivirusStatus: media.file.antivirusStatus }),
+        correlationId: cryptoRandomUuid(),
+      },
+    });
+    return {
+      filename: media.displayName ?? media.file.originalName,
+      contentType: media.file.mimeType,
+      content: buffer,
+      antivirusStatus: media.file.antivirusStatus,
+    };
+  }
+
+  async updatePatientMedia(organizationId: string, patientId: string, mediaId: string, input: {
+    displayName?: string | null;
+    type?: string;
+    toothFdi?: string | null;
+    examDate?: string | null;
+    notes?: string | null;
+    treatmentId?: string | null;
+    appointmentId?: string | null;
+    folderId?: string | null;
+  }) {
+    await this.getPatientMedia(organizationId, patientId, mediaId);
+    if (input.folderId) {
+      const folder = await prisma.patientDocumentFolder.findFirst({
+        where: { id: input.folderId, organizationId, patientId, archivedAt: null },
+      });
+      if (!folder) throw new NotFoundException('Pasta não encontrada.');
+    }
+    return prisma.patientMedia.update({
+      where: { id: mediaId },
+      data: {
+        displayName: input.displayName === undefined ? undefined : input.displayName,
+        type: input.type,
+        toothFdi: input.toothFdi === undefined ? undefined : input.toothFdi,
+        examDate: input.examDate === undefined
+          ? undefined
+          : (input.examDate ? new Date(`${input.examDate}T00:00:00Z`) : null),
+        notes: input.notes === undefined ? undefined : input.notes,
+        treatmentId: input.treatmentId === undefined ? undefined : input.treatmentId,
+        appointmentId: input.appointmentId === undefined ? undefined : input.appointmentId,
+        folderId: input.folderId === undefined ? undefined : input.folderId,
+      },
+      include: {
+        file: {
+          select: {
+            id: true,
+            originalName: true,
+            mimeType: true,
+            sizeBytes: true,
+            status: true,
+            antivirusStatus: true,
+            createdAt: true,
+          },
+        },
+        folder: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  async archivePatientMedia(organizationId: string, patientId: string, mediaId: string, actorId?: string) {
+    await this.getPatientMedia(organizationId, patientId, mediaId);
+    const updated = await prisma.patientMedia.update({
+      where: { id: mediaId },
+      data: { archivedAt: new Date(), archivedById: actorId },
+    });
+    await prisma.auditEvent.create({
+      data: {
+        actorId,
+        action: 'patient_media.archived',
+        entity: 'PatientMedia',
+        entityId: mediaId,
+        changes: json({ patientId }),
+        correlationId: cryptoRandomUuid(),
+      },
+    });
+    return updated;
+  }
+
+  async restorePatientMedia(organizationId: string, patientId: string, mediaId: string, actorId?: string) {
+    await this.getPatientMedia(organizationId, patientId, mediaId);
+    const updated = await prisma.patientMedia.update({
+      where: { id: mediaId },
+      data: { archivedAt: null, archivedById: null },
+    });
+    await prisma.auditEvent.create({
+      data: {
+        actorId,
+        action: 'patient_media.restored',
+        entity: 'PatientMedia',
+        entityId: mediaId,
+        changes: json({ patientId }),
+        correlationId: cryptoRandomUuid(),
+      },
+    });
+    return updated;
+  }
+
+  async addMediaAnnotation(organizationId: string, patientId: string, mediaId: string, actorId: string, input: {
+    type: string; coordinates: Record<string, unknown>; text?: string;
+  }) {
+    await this.getPatientMedia(organizationId, patientId, mediaId);
+    const latest = await prisma.imageAnnotation.findFirst({
+      where: { patientMediaId: mediaId },
+      orderBy: { version: 'desc' },
+      select: { version: true },
+    });
+    return prisma.imageAnnotation.create({
+      data: {
+        patientMediaId: mediaId,
+        authorId: actorId,
+        type: input.type,
+        coordinates: json(input.coordinates),
+        text: input.text,
+        version: (latest?.version ?? 0) + 1,
+      },
+    });
+  }
+
+  async updateMediaAnnotation(
+    organizationId: string,
+    patientId: string,
+    mediaId: string,
+    annotationId: string,
+    input: { type?: string; coordinates?: Record<string, unknown>; text?: string | null },
+  ) {
+    await this.getPatientMedia(organizationId, patientId, mediaId);
+    const annotation = await prisma.imageAnnotation.findFirst({
+      where: { id: annotationId, patientMediaId: mediaId },
+    });
+    if (!annotation) throw new NotFoundException('Anotação não encontrada.');
+    return prisma.imageAnnotation.update({
+      where: { id: annotationId },
+      data: {
+        type: input.type,
+        coordinates: input.coordinates ? json(input.coordinates) : undefined,
+        text: input.text === undefined ? undefined : input.text,
+      },
     });
   }
 
@@ -338,6 +599,8 @@ export class ClinicalService {
       treatmentId?: string;
       examDate?: string;
       notes?: string;
+      displayName?: string;
+      folderId?: string;
       file: { originalname: string; size: number; buffer: Buffer; mimetype: string };
     },
   ) {
@@ -345,6 +608,12 @@ export class ClinicalService {
       this.assertPatient(organizationId, patientId),
       this.assertClinic(organizationId, input.clinicId),
     ]);
+    if (input.folderId) {
+      const folder = await prisma.patientDocumentFolder.findFirst({
+        where: { id: input.folderId, organizationId, patientId, archivedAt: null },
+      });
+      if (!folder) throw new NotFoundException('Pasta não encontrada.');
+    }
     if (!this.storage.enabled) {
       throw new BadRequestException(
         this.storage.disabledReason
@@ -411,11 +680,13 @@ export class ClinicalService {
             patientId,
             fileId: fileObject.id,
             type: input.type,
+            displayName: input.displayName,
             toothFdi: input.toothFdi,
             appointmentId: input.appointmentId,
             treatmentId: input.treatmentId,
             examDate: input.examDate ? new Date(`${input.examDate}T00:00:00Z`) : undefined,
             notes: input.notes,
+            folderId: input.folderId,
           },
           include: {
             file: {
@@ -429,6 +700,7 @@ export class ClinicalService {
                 createdAt: true,
               },
             },
+            folder: { select: { id: true, name: true } },
           },
         });
       });

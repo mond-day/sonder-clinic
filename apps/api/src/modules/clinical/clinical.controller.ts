@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags } from '@nestjs/swagger';
-import { IsArray, IsDateString, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsHexColor, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import type { Response } from 'express';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { ClinicalService } from './clinical.service';
@@ -26,6 +27,9 @@ class CorrectionDto {
   @IsObject() correctedContent!: Record<string, unknown>;
   @IsOptional() @IsString() renderedText?: string;
   @IsOptional() @IsIn(['ADDENDUM', 'CORRECTION']) kind?: 'ADDENDUM' | 'CORRECTION';
+}
+class CancelEntryDto {
+  @IsString() @MinLength(3) reason!: string;
 }
 class PrivateNoteDto {
   @IsUUID() clinicId!: string;
@@ -60,6 +64,40 @@ class OdontogramDto {
   @IsUUID() professionalId!: string;
   @IsIn(['PERMANENT', 'DECIDUOUS', 'MIXED']) dentitionType!: string;
   @IsArray() @ValidateNested({ each: true }) @Type(() => FindingDto) findings!: FindingDto[];
+}
+class MediaPatchDto {
+  @IsOptional() @IsString() displayName?: string | null;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() @IsString() toothFdi?: string | null;
+  @IsOptional() @IsDateString() examDate?: string | null;
+  @IsOptional() @IsString() notes?: string | null;
+  @IsOptional() @IsUUID() treatmentId?: string | null;
+  @IsOptional() @IsUUID() appointmentId?: string | null;
+  @IsOptional() @IsUUID() folderId?: string | null;
+}
+class MediaAnnotationDto {
+  @IsString() @MinLength(2) type!: string;
+  @IsObject() coordinates!: Record<string, unknown>;
+  @IsOptional() @IsString() text?: string;
+}
+class MediaAnnotationPatchDto {
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() @IsObject() coordinates?: Record<string, unknown>;
+  @IsOptional() @IsString() text?: string | null;
+}
+
+class OdontogramConditionDto {
+  @IsString() @MinLength(1) code!: string;
+  @IsString() @MinLength(2) name!: string;
+  @IsHexColor() color!: string;
+  @IsOptional() @IsString() icon?: string;
+}
+
+class OdontogramConditionPatchDto {
+  @IsOptional() @IsString() @MinLength(2) name?: string;
+  @IsOptional() @IsHexColor() color?: string;
+  @IsOptional() @IsString() icon?: string | null;
+  @IsOptional() @IsBoolean() active?: boolean;
 }
 
 @ApiTags('clinical')
@@ -133,6 +171,12 @@ export class ClinicalController {
     return this.clinical.signEntry(req.auth.organizationId, id);
   }
 
+  @Post('clinical-entries/:id/cancel')
+  @RequirePermissions('medical_record.correct', 'medical_record.create')
+  cancelEntry(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() input: CancelEntryDto) {
+    return this.clinical.cancelEntry(req.auth.organizationId, id, req.auth.userId, input.reason);
+  }
+
   @Post('clinical-entries/:id/corrections')
   @RequirePermissions('medical_record.correct')
   correct(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() input: CorrectionDto) {
@@ -152,9 +196,21 @@ export class ClinicalController {
   }
 
   @Get('odontogram-conditions')
-  @RequirePermissions('medical_record.view')
-  conditions(@Req() req: AuthenticatedRequest) {
-    return this.clinical.getOdontogramConditions(req.auth.organizationId);
+  @RequirePermissions('medical_record.view', 'procedure_table.manage')
+  conditions(@Req() req: AuthenticatedRequest, @Query('includeInactive') includeInactive?: string) {
+    return this.clinical.getOdontogramConditions(req.auth.organizationId, includeInactive === 'true');
+  }
+
+  @Post('odontogram-conditions')
+  @RequirePermissions('procedure_table.manage')
+  createCondition(@Req() req: AuthenticatedRequest, @Body() body: OdontogramConditionDto) {
+    return this.clinical.createOdontogramCondition(req.auth.organizationId, body);
+  }
+
+  @Patch('odontogram-conditions/:id')
+  @RequirePermissions('procedure_table.manage')
+  updateCondition(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: OdontogramConditionPatchDto) {
+    return this.clinical.updateOdontogramCondition(req.auth.organizationId, id, body);
   }
 
   @Post('patients/:id/odontograms')
@@ -164,13 +220,84 @@ export class ClinicalController {
   }
 
   @Get('patients/:id/media')
-  @RequirePermissions('medical_record.view')
-  listMedia(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.clinical.listPatientMedia(req.auth.organizationId, id);
+  @RequirePermissions('medical_record.view', 'document.view')
+  listMedia(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('includeArchived') includeArchived?: string,
+  ) {
+    return this.clinical.listPatientMedia(req.auth.organizationId, id, includeArchived === 'true');
+  }
+
+  @Get('patients/:id/media/:mediaId')
+  @RequirePermissions('medical_record.view', 'document.view')
+  getMedia(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('mediaId') mediaId: string) {
+    return this.clinical.getPatientMedia(req.auth.organizationId, id, mediaId);
+  }
+
+  @Get('patients/:id/media/:mediaId/download')
+  @RequirePermissions('medical_record.view', 'document.view')
+  async downloadMedia(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('mediaId') mediaId: string,
+    @Res() res: Response,
+  ) {
+    const file = await this.clinical.downloadPatientMedia(req.auth.organizationId, id, mediaId, req.auth.userId);
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.setHeader('X-Antivirus-Status', file.antivirusStatus);
+    res.send(file.content);
+  }
+
+  @Patch('patients/:id/media/:mediaId')
+  @RequirePermissions('medical_record.create', 'document.create')
+  updateMedia(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('mediaId') mediaId: string,
+    @Body() body: MediaPatchDto,
+  ) {
+    return this.clinical.updatePatientMedia(req.auth.organizationId, id, mediaId, body);
+  }
+
+  @Post('patients/:id/media/:mediaId/archive')
+  @RequirePermissions('medical_record.create', 'document.archive')
+  archiveMedia(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('mediaId') mediaId: string) {
+    return this.clinical.archivePatientMedia(req.auth.organizationId, id, mediaId, req.auth.userId);
+  }
+
+  @Post('patients/:id/media/:mediaId/restore')
+  @RequirePermissions('medical_record.create', 'document.archive')
+  restoreMedia(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('mediaId') mediaId: string) {
+    return this.clinical.restorePatientMedia(req.auth.organizationId, id, mediaId, req.auth.userId);
+  }
+
+  @Post('patients/:id/media/:mediaId/annotations')
+  @RequirePermissions('medical_record.create', 'document.create')
+  addAnnotation(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('mediaId') mediaId: string,
+    @Body() body: MediaAnnotationDto,
+  ) {
+    return this.clinical.addMediaAnnotation(req.auth.organizationId, id, mediaId, req.auth.userId, body);
+  }
+
+  @Patch('patients/:id/media/:mediaId/annotations/:annotationId')
+  @RequirePermissions('medical_record.create', 'document.create')
+  updateAnnotation(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('mediaId') mediaId: string,
+    @Param('annotationId') annotationId: string,
+    @Body() body: MediaAnnotationPatchDto,
+  ) {
+    return this.clinical.updateMediaAnnotation(req.auth.organizationId, id, mediaId, annotationId, body);
   }
 
   @Post('patients/:id/media')
-  @RequirePermissions('medical_record.create')
+  @RequirePermissions('medical_record.create', 'document.create')
   @UseInterceptors(FileInterceptor('file', {
     limits: { fileSize: 25 * 1024 * 1024 },
   }))
@@ -186,6 +313,8 @@ export class ClinicalController {
       treatmentId?: string;
       examDate?: string;
       notes?: string;
+      displayName?: string;
+      folderId?: string;
     },
   ) {
     return this.clinical.uploadPatientMedia(req.auth.organizationId, id, req.auth.userId, {
@@ -196,6 +325,8 @@ export class ClinicalController {
       treatmentId: body.treatmentId,
       examDate: body.examDate,
       notes: body.notes,
+      displayName: body.displayName,
+      folderId: body.folderId,
       file: {
         originalname: file?.originalname ?? 'upload.bin',
         size: file?.size ?? 0,

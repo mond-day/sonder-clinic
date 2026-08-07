@@ -78,6 +78,118 @@ export class IntegrationsService {
     return testProvider(provider);
   }
 
+  async testConnection(organizationId: string, id: string) {
+    const connection = await prisma.integrationConnection.findFirst({
+      where: { id, clinic: { organizationId } },
+    });
+    if (!connection) throw new NotFoundException('Integração não encontrada.');
+    if (!connection.encryptedCredentials) {
+      return {
+        success: false,
+        provider: connection.provider,
+        connectionId: id,
+        enabled: false,
+        message: 'Conexão sem credenciais salvas. Configure as credenciais antes de testar.',
+        mode: 'stub',
+      };
+    }
+    const credentials = this.decryptForAdapter(connection.encryptedCredentials);
+    const provider = connection.provider as Provider | 'GOOGLE_CALENDAR' | 'OPENAI';
+    if (provider === 'GOOGLE_CALENDAR') {
+      return this.googleCalendarOauthStatus(organizationId, id, credentials);
+    }
+    const mock = (process.env[`${provider}_MOCK`] ?? 'true').toLowerCase() === 'true';
+    if (mock) {
+      return {
+        success: false,
+        provider,
+        connectionId: id,
+        enabled: false,
+        message: `${provider} em modo MOCK (*_MOCK=true). Credenciais da conexão foram carregadas, mas nenhum sucesso foi simulado.`,
+        mode: 'mock',
+        credentialsConfigured: Object.keys(credentials).length > 0,
+      };
+    }
+    const { testProvider } = await import('../../integrations/adapters');
+    const result = await testProvider(provider);
+    await prisma.integrationConnection.update({
+      where: { id },
+      data: {
+        lastSyncAt: result.success ? new Date() : connection.lastSyncAt,
+        status: result.success ? 'ACTIVE' : connection.status === 'DISABLED' ? 'DISABLED' : 'ERROR',
+      },
+    });
+    return {
+      ...result,
+      connectionId: id,
+      mode: 'live',
+      credentialsConfigured: true,
+      note: 'Teste usa adapter do provedor; credenciais persistidas foram descriptografadas para validar presença, não reenviadas ao cliente.',
+    };
+  }
+
+  /**
+   * Superfície honesta do OAuth Google Calendar (A38).
+   * Sem clientId/secret → stub explícito. Com credenciais → ainda PARTIAL (fluxo OAuth/sync bidirecional não implementado).
+   */
+  googleCalendarOauthStatus(
+    organizationId?: string,
+    connectionId?: string,
+    connectionCredentials?: Record<string, string>,
+  ) {
+    void organizationId;
+    const envMock = (process.env.GOOGLE_CALENDAR_MOCK ?? 'true').toLowerCase() === 'true';
+    const envClientId = process.env.GOOGLE_CLIENT_ID?.trim();
+    const envClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+    const clientId = connectionCredentials?.clientId?.trim() || envClientId;
+    const clientSecret = connectionCredentials?.clientSecret?.trim() || envClientSecret;
+    const hasCredentials = Boolean(clientId && clientSecret);
+
+    if (envMock || !hasCredentials) {
+      return {
+        success: false,
+        provider: 'GOOGLE_CALENDAR' as const,
+        connectionId: connectionId ?? null,
+        enabled: false,
+        oauthReady: false,
+        syncBidirectional: false,
+        status: 'PARTIAL_STUB',
+        mode: envMock ? 'mock' : 'missing_credentials',
+        message: envMock
+          ? 'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true). OAuth e sync bidirecional não estão disponíveis — não declarar GO.'
+          : 'Google Calendar sem credenciais. Configure clientId/clientSecret na conexão ou GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET. OAuth ainda é stub (A38).',
+      };
+    }
+
+    return {
+      success: false,
+      provider: 'GOOGLE_CALENDAR' as const,
+      connectionId: connectionId ?? null,
+      enabled: true,
+      oauthReady: false,
+      syncBidirectional: false,
+      status: 'PARTIAL_STUB',
+      mode: 'credentials_present',
+      message:
+        'Credenciais presentes, mas o fluxo OAuth (consentimento + refresh token) e a sincronização bidirecional ainda não estão implementados. Status PARTIAL — não declarar GO.',
+    };
+  }
+
+  async startGoogleCalendarOauth(organizationId: string, connectionId: string) {
+    const connection = await prisma.integrationConnection.findFirst({
+      where: { id: connectionId, clinic: { organizationId }, provider: 'GOOGLE_CALENDAR' },
+    });
+    if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
+    const credentials = connection.encryptedCredentials
+      ? this.decryptForAdapter(connection.encryptedCredentials)
+      : {};
+    const status = this.googleCalendarOauthStatus(organizationId, connectionId, credentials);
+    // Nunca simular redirect OAuth bem-sucedido.
+    throw new BadRequestException(
+      `${status.message} Endpoint /integrations/:id/oauth/start existe como superfície; implemente o consentimento Google antes de usar em produção.`,
+    );
+  }
+
   async save(organizationId: string, actorId: string, input: SaveConnectionInput) {
     const clinic = await prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId } });
     if (!clinic) throw new NotFoundException('Clínica não encontrada.');

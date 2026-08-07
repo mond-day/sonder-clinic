@@ -87,7 +87,7 @@ export function ReportsView() {
       .finally(() => setLoading(false));
   }, []);
 
-  const run = useCallback(async (format: 'json' | 'csv' | 'pdf' = 'json') => {
+  const run = useCallback(async (format: 'json' | 'csv' | 'xlsx' | 'pdf' = 'json') => {
     if (!clinicId || !selected) return;
     setRunning(true);
     setError(null);
@@ -110,7 +110,8 @@ export function ReportsView() {
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `${selected}.${format === 'pdf' ? 'pdf' : 'csv'}`;
+        const extension = format === 'pdf' ? 'pdf' : format === 'xlsx' ? 'xlsx' : 'csv';
+        anchor.download = `${selected}.${extension}`;
         anchor.click();
         URL.revokeObjectURL(url);
       }
@@ -187,6 +188,9 @@ export function ReportsView() {
             <div className="heading-actions" style={{ marginLeft: 0 }}>
               <button type="button" className="button soft small" disabled={running} onClick={() => void run('csv')}>
                 Exportar CSV
+              </button>
+              <button type="button" className="button soft small" disabled={running} onClick={() => void run('xlsx')}>
+                Exportar XLSX
               </button>
               <button type="button" className="button soft small" disabled={running} onClick={() => void run('pdf')}>
                 Exportar PDF

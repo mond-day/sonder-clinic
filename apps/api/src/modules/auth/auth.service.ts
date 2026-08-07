@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -8,6 +9,7 @@ import { prisma } from '@sonder/database';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
 import { assertSmtpConfigured, sendMail, smtpConfigured } from '../../common/mail';
+import { hashInviteToken } from '../users/users-invitations.utils';
 
 type LoginResult = {
   accessToken: string;
@@ -138,8 +140,77 @@ export class AuthService {
     return { success: true };
   }
 
+  async getInvitation(token: string) {
+    const invitation = await this.findPendingInvitation(token);
+    const organization = await prisma.organization.findUniqueOrThrow({
+      where: { id: invitation.organizationId },
+      select: { tradeName: true },
+    });
+    return {
+      email: invitation.email,
+      name: invitation.name,
+      organizationName: organization.tradeName,
+      expiresAt: invitation.expiresAt,
+    };
+  }
+
+  async acceptInvitation(token: string, password: string): Promise<{ success: true; email: string }> {
+    if (password.length < 8) throw new BadRequestException('A senha deve ter ao menos 8 caracteres.');
+    const invitation = await this.findPendingInvitation(token);
+    const existing = await prisma.user.findFirst({
+      where: { organizationId: invitation.organizationId, email: invitation.email },
+    });
+    if (existing) throw new ConflictException('Usuário já cadastrado para este e-mail.');
+
+    const role = await prisma.role.findFirst({
+      where: { id: invitation.roleId, organizationId: invitation.organizationId },
+    });
+    if (!role) throw new BadRequestException('Perfil do convite não é mais válido.');
+
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+    await prisma.$transaction(async (tx) => {
+      await tx.user.create({
+        data: {
+          organizationId: invitation.organizationId,
+          name: invitation.name,
+          email: invitation.email,
+          passwordHash,
+          status: 'ACTIVE',
+          roles: { create: { roleId: invitation.roleId } },
+        },
+      });
+      await tx.userInvitation.update({
+        where: { id: invitation.id },
+        data: { status: 'ACCEPTED', acceptedAt: new Date() },
+      });
+    });
+    return { success: true, email: invitation.email };
+  }
+
   smtpStatus() {
     return { smtpConfigured: smtpConfigured() };
+  }
+
+  private async findPendingInvitation(token: string) {
+    if (!token || token.length < 20) {
+      throw new BadRequestException('Token de convite inválido.');
+    }
+    const invitation = await prisma.userInvitation.findFirst({
+      where: { tokenHash: hashInviteToken(token) },
+    });
+    if (!invitation) throw new BadRequestException('Convite inválido ou expirado.');
+    if (invitation.status === 'REVOKED') throw new BadRequestException('Convite revogado.');
+    if (invitation.status === 'ACCEPTED') throw new ConflictException('Convite já foi aceito.');
+    if (invitation.expiresAt <= new Date() || invitation.status === 'EXPIRED') {
+      if (invitation.status === 'PENDING') {
+        await prisma.userInvitation.update({ where: { id: invitation.id }, data: { status: 'EXPIRED' } });
+      }
+      throw new BadRequestException('Convite expirado.');
+    }
+    if (invitation.status !== 'PENDING') {
+      throw new BadRequestException('Convite indisponível.');
+    }
+    return invitation;
   }
 
   private async issueForUser(

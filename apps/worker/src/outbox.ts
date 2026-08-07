@@ -1,5 +1,6 @@
 import { createDecipheriv } from 'node:crypto';
 import { prisma } from '@sonder/database';
+import { isWithinAllowedHours, nextAllowedWindowStart } from './allowed-hours';
 import { readEvolutionConfiguration, sendEvolutionText } from './evolution';
 
 const WHATSAPP_REMINDER_EVENT = 'appointment.whatsapp-reminder.requested';
@@ -191,22 +192,22 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
   ]);
 }
 
-async function processEvent(event: OutboxEvent): Promise<void> {
+async function processEvent(event: OutboxEvent): Promise<'done' | 'deferred'> {
   if (event.eventType === WHATSAPP_REMINDER_EVENT) {
     await processWhatsAppReminder(event);
-    return;
+    return 'done';
   }
   if (event.eventType === APPOINTMENT_COMPLETED_EVENT) {
-    await processAppointmentCompleted(event);
-    return;
+    return processAppointmentCompleted(event);
   }
   await prisma.outboxEvent.update({
     where: { id: event.id },
     data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
   });
+  return 'done';
 }
 
-async function processAppointmentCompleted(event: OutboxEvent): Promise<void> {
+async function processAppointmentCompleted(event: OutboxEvent): Promise<'done' | 'deferred'> {
   const payload = (event.payload ?? {}) as {
     organizationId?: string;
     clinicId?: string;
@@ -231,18 +232,43 @@ async function processAppointmentCompleted(event: OutboxEvent): Promise<void> {
     },
   });
 
-  for (const rule of rules) {
+  const matching = rules.filter((rule) => {
     const conditions = (rule.conditions ?? {}) as { specialty?: string; category?: string };
-    if (conditions.specialty && conditions.specialty !== payload.category) continue;
-    if (conditions.category && conditions.category !== payload.category) continue;
+    if (conditions.specialty && conditions.specialty !== payload.category) return false;
+    if (conditions.category && conditions.category !== payload.category) return false;
+    const action = (rule.action ?? {}) as { type?: string; reason?: string };
+    return action.type === 'CREATE_RETURN_ALERT' && Boolean(action.reason);
+  });
 
+  const dueNow = matching.filter((rule) => isWithinAllowedHours(rule.allowedHours));
+  const deferred = matching.filter((rule) => !isWithinAllowedHours(rule.allowedHours));
+
+  // Se todas as regras aplicáveis estão fora da janela, adia o evento (sem consumir attempts).
+  if (dueNow.length === 0 && deferred.length > 0) {
+    const leaseUntil = deferred
+      .map((rule) => nextAllowedWindowStart(rule.allowedHours))
+      .sort((a, b) => a.getTime() - b.getTime())[0]!;
+    await prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: {
+        lockedBy: null,
+        leaseUntil,
+        processingAt: null,
+        lastError: `Aguardando allowedHours até ${leaseUntil.toISOString()}`,
+      },
+    });
+    return 'deferred';
+  }
+
+  for (const rule of dueNow) {
+    const conditions = (rule.conditions ?? {}) as { specialty?: string; category?: string };
     const action = (rule.action ?? {}) as {
       type?: string;
       reason?: string;
       preferredChannel?: 'WHATSAPP' | 'PHONE' | 'EMAIL' | 'IN_PERSON';
       daysAfter?: number;
     };
-    if (action.type !== 'CREATE_RETURN_ALERT' || !action.reason) continue;
+    if (!action.reason) continue;
 
     const daysAfter = typeof action.daysAfter === 'number' ? action.daysAfter : 7;
     const dueAt = new Date();
@@ -277,28 +303,74 @@ async function processAppointmentCompleted(event: OutboxEvent): Promise<void> {
     });
   }
 
+  // Regras fora da janela misturadas com dueNow são ignoradas neste evento (ver A38).
   await prisma.outboxEvent.update({
     where: { id: event.id },
     data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
   });
+  return 'done';
 }
 
 export async function processOutbox(): Promise<void> {
+  const workerId = `worker-${process.pid}-${Date.now()}`;
+  const leaseMs = 60_000;
+  const now = new Date();
+
+  // Claim atômico com SKIP LOCKED para múltiplas réplicas.
+  const claimed = await prisma.$queryRaw<Array<{ id: string }>>`
+    UPDATE "OutboxEvent" AS o
+    SET
+      "lockedBy" = ${workerId},
+      "leaseUntil" = ${new Date(now.getTime() + leaseMs)},
+      "processingAt" = ${now}
+    WHERE o.id IN (
+      SELECT id FROM "OutboxEvent"
+      WHERE "processedAt" IS NULL
+        AND "deadLetterAt" IS NULL
+        AND "attempts" < ${MAX_ATTEMPTS}
+        AND ("leaseUntil" IS NULL OR "leaseUntil" < ${now})
+      ORDER BY "createdAt" ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT 20
+    )
+    RETURNING o.id
+  `;
+
+  if (!claimed.length) return;
+
   const events = await prisma.outboxEvent.findMany({
-    where: { processedAt: null, attempts: { lt: MAX_ATTEMPTS } },
+    where: { id: { in: claimed.map((row) => row.id) }, lockedBy: workerId },
     orderBy: { createdAt: 'asc' },
-    take: 20,
   });
+
   for (const event of events) {
     try {
-      await processEvent(event);
+      const outcome = await processEvent(event);
+      if (outcome === 'deferred') {
+        // leaseUntil já definido em processAppointmentCompleted — não zerar.
+        continue;
+      }
+      await prisma.outboxEvent.update({
+        where: { id: event.id },
+        data: {
+          lockedBy: null,
+          leaseUntil: null,
+          processingAt: null,
+        },
+      });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Erro desconhecido';
+      const nextAttempts = event.attempts + 1;
+      const deadLetter = nextAttempts >= MAX_ATTEMPTS;
       const eventUpdate = prisma.outboxEvent.update({
         where: { id: event.id },
         data: {
           attempts: { increment: 1 },
           lastError: reason.slice(0, 500),
+          lockedBy: null,
+          leaseUntil: null,
+          processingAt: null,
+          ...(deadLetter ? { deadLetterAt: new Date() } : {}),
         },
       });
       if (event.eventType === WHATSAPP_REMINDER_EVENT) {

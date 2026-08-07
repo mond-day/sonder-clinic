@@ -32,12 +32,16 @@ const statusTones: Record<string, 'gray' | 'amber' | 'blue' | 'green' | 'red'> =
 const createSchema = z.object({
   patientId: z.string().uuid('Selecione um paciente.'),
   description: z.string().trim().min(3, 'Descreva o trabalho laboratorial.'),
-  laboratoryName: z.string().trim().min(2, 'Informe o laboratório.'),
+  laboratoryId: z.string().uuid().optional(),
+  laboratoryName: z.string().trim().min(2).optional(),
   toothFdi: z.string().regex(/^[1-8][1-8]$/, 'Use a numeração FDI com dois dígitos.').optional(),
   specialty: z.string().trim().optional(),
   dueAt: z.string().datetime().optional(),
   cost: z.string().regex(/^\d+([.,]\d{1,2})?$/, 'Informe um valor válido.').transform((value) => value.replace(',', '.')).optional(),
   professionalId: z.string().uuid().optional(),
+}).refine((value) => Boolean(value.laboratoryId || value.laboratoryName), {
+  message: 'Selecione ou informe o laboratório.',
+  path: ['laboratoryId'],
 });
 
 function deadline(value: unknown, status: string) {
@@ -61,6 +65,7 @@ export function LabView() {
   const { refresh: refreshWorkspace } = useWorkspace();
   const [cases, setCases] = useState<RecordValue[]>([]);
   const [patients, setPatients] = useState<RecordValue[]>([]);
+  const [laboratories, setLaboratories] = useState<RecordValue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
@@ -76,10 +81,12 @@ export function LabView() {
     Promise.all([
       api.get<RecordValue[]>(`/lab-cases?clinicId=${clinicId}`),
       api.get<RecordValue[]>(`/patients?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
+      api.get<RecordValue[]>(`/laboratories?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
     ])
-      .then(([nextCases, nextPatients]) => {
+      .then(([nextCases, nextPatients, nextLabs]) => {
         setCases(list(nextCases));
         setPatients(list(nextPatients));
+        setLaboratories(list(nextLabs));
       })
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao carregar os casos.'))
       .finally(() => setLoading(false));
@@ -98,7 +105,9 @@ export function LabView() {
 
   const open = cases.filter((item) => !['INSTALLED', 'CANCELLED'].includes(String(item.status)));
   const late = open.filter((item) => deadline(item.dueAt, String(item.status)).late);
-  const totalCost = cases.reduce((sum, item) => sum + Number(item.cost ?? 0), 0);
+  const totalCost = cases
+    .filter((item) => String(item.status) !== 'CANCELLED')
+    .reduce((sum, item) => sum + Number(item.cost ?? 0), 0);
 
   async function advance(id: string, status: Status, success: string) {
     setBusy(true);
@@ -123,7 +132,8 @@ export function LabView() {
     const parsed = createSchema.safeParse({
       patientId: String(data.get('patientId') ?? ''),
       description: String(data.get('description') ?? ''),
-      laboratoryName: String(data.get('laboratoryName') ?? ''),
+      laboratoryId: String(data.get('laboratoryId') ?? '') || undefined,
+      laboratoryName: String(data.get('laboratoryName') ?? '').trim() || undefined,
       toothFdi: String(data.get('toothFdi') ?? '').trim() || undefined,
       specialty: String(data.get('specialty') ?? '').trim() || undefined,
       dueAt: rawDue ? new Date(`${rawDue}T12:00:00.000Z`).toISOString() : undefined,
@@ -210,8 +220,16 @@ export function LabView() {
               <label>Tipo/especialidade<input name="specialty" list="lab-specialties" placeholder="Prótese" /><datalist id="lab-specialties"><option value="Prótese" /><option value="Ortodontia" /><option value="Implantodontia" /></datalist></label>
               <label>Dente FDI<input name="toothFdi" maxLength={2} placeholder="16" /></label>
             </Disclosure>
-            <Disclosure title="Laboratório e prazo" description="O prazo é tratado somente como data">
-              <label>Laboratório<input name="laboratoryName" list="laboratories" placeholder="Laboratório Sorriso" required /><datalist id="laboratories">{[...new Set(cases.map((item) => text(item.laboratoryName, '')).filter(Boolean))].map((name) => <option key={name} value={name} />)}</datalist></label>
+            <Disclosure title="Laboratório e prazo" description="Preferir cadastro por ID; nome livre só como fallback">
+              <label>Laboratório cadastrado
+                <select name="laboratoryId" defaultValue="">
+                  <option value="">Selecionar…</option>
+                  {laboratories.map((lab) => (
+                    <option key={String(lab.id)} value={String(lab.id)}>{text(lab.name)}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Ou nome livre<input name="laboratoryName" list="laboratories" placeholder="Somente se não houver cadastro" /><datalist id="laboratories">{laboratories.map((lab) => <option key={String(lab.id)} value={text(lab.name)} />)}</datalist></label>
               <label>Prazo<input name="dueAt" type="date" /></label>
               <label>Custo<input name="cost" inputMode="decimal" placeholder="480,00" /></label>
               <label className="span-2">Descrição<input name="description" placeholder="Coroa cerâmica" required /></label>

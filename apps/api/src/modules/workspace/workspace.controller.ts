@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { WorkspaceService } from './workspace.service';
@@ -89,6 +90,15 @@ class UpdateTaskDto {
   @IsOptional() @IsUUID() patientId?: string;
 }
 
+class ChecklistItemDto {
+  @IsString() @MinLength(1) title!: string;
+}
+
+class ChecklistItemPatchDto {
+  @IsOptional() @IsString() @MinLength(1) title?: string;
+  @IsOptional() @IsBoolean() completed?: boolean;
+}
+
 class LabCaseQueryDto {
   @IsOptional() @IsUUID() clinicId?: string;
   @IsOptional() @IsIn(labStatuses) status?: typeof labStatuses[number];
@@ -99,13 +109,34 @@ class CreateLabCaseDto {
   @IsUUID() clinicId!: string;
   @IsUUID() patientId!: string;
   @IsOptional() @IsUUID() professionalId?: string;
+  @IsOptional() @IsUUID() laboratoryId?: string;
   @IsString() @MinLength(3) description!: string;
   @IsOptional() @IsString() toothFdi?: string;
-  @IsString() @MinLength(2) laboratoryName!: string;
+  @IsOptional() @IsString() @MinLength(2) laboratoryName?: string;
   @IsOptional() @IsString() specialty?: string;
   @IsOptional() @IsDateString() dueAt?: string;
   @IsOptional() @IsString() cost?: string;
   @IsOptional() @IsString() notes?: string;
+}
+
+class CreateLaboratoryDto {
+  @IsString() @MinLength(2) name!: string;
+  @IsOptional() @IsUUID() clinicId?: string;
+  @IsOptional() @IsString() taxId?: string;
+  @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() email?: string;
+  @IsOptional() @IsInt() @Min(0) defaultLeadDays?: number;
+  @IsOptional() @IsString() notes?: string;
+}
+
+class UpdateLaboratoryDto {
+  @IsOptional() @IsString() @MinLength(2) name?: string;
+  @IsOptional() @IsString() taxId?: string | null;
+  @IsOptional() @IsString() phone?: string | null;
+  @IsOptional() @IsString() email?: string | null;
+  @IsOptional() @IsInt() @Min(0) defaultLeadDays?: number | null;
+  @IsOptional() @IsString() notes?: string | null;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
 }
 
 class UpdateLabCaseStatusDto {
@@ -197,10 +228,90 @@ export class WorkspaceController {
     return this.workspace.updateTask(req.auth.organizationId, id, body);
   }
 
+  @Post('tasks/:id/checklist')
+  @RequirePermissions('task.manage')
+  addChecklistItem(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: ChecklistItemDto) {
+    return this.workspace.addTaskChecklistItem(req.auth.organizationId, id, body.title);
+  }
+
+  @Patch('tasks/:id/checklist/:itemId')
+  @RequirePermissions('task.manage')
+  updateChecklistItem(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() body: ChecklistItemPatchDto,
+  ) {
+    return this.workspace.updateTaskChecklistItem(req.auth.organizationId, id, itemId, body, req.auth.userId);
+  }
+
+  @Delete('tasks/:id/checklist/:itemId')
+  @RequirePermissions('task.manage')
+  deleteChecklistItem(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('itemId') itemId: string) {
+    return this.workspace.deleteTaskChecklistItem(req.auth.organizationId, id, itemId);
+  }
+
+  @Post('tasks/:id/participants')
+  @RequirePermissions('task.manage')
+  addParticipant(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: { userId: string }) {
+    return this.workspace.addTaskParticipant(req.auth.organizationId, id, body.userId);
+  }
+
+  @Delete('tasks/:id/participants/:userId')
+  @RequirePermissions('task.manage')
+  removeParticipant(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('userId') userId: string) {
+    return this.workspace.removeTaskParticipant(req.auth.organizationId, id, userId);
+  }
+
+  @Post('tasks/:id/comments')
+  @RequirePermissions('task.manage')
+  addComment(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: { content: string }) {
+    return this.workspace.addTaskComment(req.auth.organizationId, id, req.auth.userId, body.content);
+  }
+
+  @Post('tasks/:id/attachments')
+  @RequirePermissions('task.manage')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024, files: 1 } }))
+  addAttachment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @UploadedFile() file: { originalname: string; size: number; buffer: Buffer; mimetype: string },
+  ) {
+    return this.workspace.addTaskAttachment(req.auth.organizationId, id, req.auth.userId, file);
+  }
+
+  @Delete('tasks/:id/attachments/:attachmentId')
+  @RequirePermissions('task.manage')
+  removeAttachment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    return this.workspace.removeTaskAttachment(req.auth.organizationId, id, attachmentId);
+  }
+
   @Get('lab-cases')
   @RequirePermissions('lab_case.view')
   labCases(@Req() req: AuthenticatedRequest, @Query() query: LabCaseQueryDto) {
     return this.workspace.labCases(req.auth.organizationId, query);
+  }
+
+  @Get('laboratories')
+  @RequirePermissions('lab_case.view', 'laboratory.manage')
+  laboratories(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) {
+    return this.workspace.listLaboratories(req.auth.organizationId, clinicId);
+  }
+
+  @Post('laboratories')
+  @RequirePermissions('laboratory.manage')
+  createLaboratory(@Req() req: AuthenticatedRequest, @Body() body: CreateLaboratoryDto) {
+    return this.workspace.createLaboratory(req.auth.organizationId, body);
+  }
+
+  @Patch('laboratories/:id')
+  @RequirePermissions('laboratory.manage')
+  updateLaboratory(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateLaboratoryDto) {
+    return this.workspace.updateLaboratory(req.auth.organizationId, id, body);
   }
 
   @Post('lab-cases')

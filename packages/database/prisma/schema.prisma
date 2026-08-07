@@ -74,6 +74,14 @@ enum TreatmentStatus {
   CANCELLED
 }
 
+enum TreatmentItemStatus {
+  PLANNED
+  APPROVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
 enum ToothFindingStatus {
   EXISTING
   PLANNED
@@ -85,6 +93,19 @@ enum DocumentStatus {
   DRAFT
   GENERATED
   PARTIALLY_SIGNED
+  SIGNED
+  CANCELLED
+}
+
+enum DocumentTemplateStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum PrescriptionStatus {
+  DRAFT
+  REVIEWED
   SIGNED
   CANCELLED
 }
@@ -108,6 +129,7 @@ enum ReceivableStatus {
 enum PaymentStatus {
   PENDING
   CONFIRMED
+  PARTIALLY_REFUNDED
   REFUNDED
   FAILED
   CANCELLED
@@ -120,6 +142,7 @@ enum CommissionStatus {
   PAID
   REVERSED
   BLOCKED
+  PENDING_ADJUSTMENT
 }
 
 enum DeliveryStatus {
@@ -846,8 +869,13 @@ model OutboxEvent {
   processedAt   DateTime?
   attempts      Int       @default(0)
   lastError     String?
+  lockedBy      String?
+  leaseUntil    DateTime?
+  processingAt  DateTime?
+  deadLetterAt  DateTime?
 
   @@index([processedAt, createdAt])
+  @@index([leaseUntil, processedAt, attempts])
 }
 
 model WebhookReceipt {
@@ -1135,108 +1163,171 @@ model PriceTableItem {
 }
 
 model TreatmentPlan {
-  id             String          @id @default(uuid()) @db.Uuid
-  organizationId String          @db.Uuid
-  clinicId       String          @db.Uuid
-  patientId      String          @db.Uuid
-  professionalId String          @db.Uuid
-  status         TreatmentStatus @default(DRAFT)
-  title          String
-  presentedAt    DateTime?
-  validUntil     DateTime?       @db.Date
-  subtotal       Decimal         @db.Decimal(12, 2)
-  discount       Decimal         @default(0) @db.Decimal(12, 2)
-  total          Decimal         @db.Decimal(12, 2)
-  notes          String?
-  priceSnapshot  Json            @default("{}")
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  items          TreatmentItem[]
-  receivables    Receivable[]
+  id               String                   @id @default(uuid()) @db.Uuid
+  organizationId   String                   @db.Uuid
+  clinicId         String                   @db.Uuid
+  patientId        String                   @db.Uuid
+  professionalId   String                   @db.Uuid
+  status           TreatmentStatus          @default(DRAFT)
+  title            String
+  presentedAt      DateTime?
+  presentedVersion Int?
+  validUntil       DateTime?                @db.Date
+  subtotal         Decimal                  @db.Decimal(12, 2)
+  discount         Decimal                  @default(0) @db.Decimal(12, 2)
+  total            Decimal                  @db.Decimal(12, 2)
+  notes            String?
+  priceSnapshot    Json                     @default("{}")
+  version          Int                      @default(1)
+  archivedAt       DateTime?
+  archivedById     String?                  @db.Uuid
+  cancelledAt      DateTime?
+  cancelledById    String?                  @db.Uuid
+  cancelReason     String?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  items            TreatmentItem[]
+  receivables      Receivable[]
+  events           TreatmentPlanEvent[]
+  revisions        TreatmentPlanRevision[]
 
   @@index([organizationId, clinicId, patientId])
+  @@index([organizationId, clinicId, status, archivedAt])
 }
 
 model TreatmentItem {
-  id               String             @id @default(uuid()) @db.Uuid
-  treatmentPlanId  String             @db.Uuid
-  procedureId      String             @db.Uuid
-  professionalId   String             @db.Uuid
+  id               String              @id @default(uuid()) @db.Uuid
+  treatmentPlanId  String              @db.Uuid
+  procedureId      String              @db.Uuid
+  professionalId   String              @db.Uuid
   toothFdi         String?
   face             String?
-  quantity         Int                @default(1)
-  unitPrice        Decimal            @db.Decimal(12, 2)
-  discount         Decimal            @default(0) @db.Decimal(12, 2)
-  total            Decimal            @db.Decimal(12, 2)
-  priority         Int                @default(0)
+  quantity         Int                 @default(1)
+  unitPrice        Decimal             @db.Decimal(12, 2)
+  discount         Decimal             @default(0) @db.Decimal(12, 2)
+  total            Decimal             @db.Decimal(12, 2)
+  priority         Int                 @default(0)
   sortOrder        Int
-  urgent           Boolean            @default(false)
-  plannedSessions  Int                @default(1)
+  urgent           Boolean             @default(false)
+  plannedSessions  Int                 @default(1)
   estimatedMinutes Int?
-  materialCost     Decimal            @default(0) @db.Decimal(12, 2)
-  laboratoryCost   Decimal            @default(0) @db.Decimal(12, 2)
+  materialCost     Decimal             @default(0) @db.Decimal(12, 2)
+  laboratoryCost   Decimal             @default(0) @db.Decimal(12, 2)
   warrantyDays     Int?
-  status           String             @default("PLANNED")
+  status           TreatmentItemStatus @default(PLANNED)
   approvedAt       DateTime?
-  plan             TreatmentPlan      @relation(fields: [treatmentPlanId], references: [id])
-  procedure        Procedure          @relation(fields: [procedureId], references: [id])
+  cancelledAt      DateTime?
+  cancelledById    String?             @db.Uuid
+  cancelReason     String?
+  plan             TreatmentPlan       @relation(fields: [treatmentPlanId], references: [id], onDelete: Cascade)
+  procedure        Procedure           @relation(fields: [procedureId], references: [id])
   sessions         TreatmentSession[]
 
   @@index([treatmentPlanId, sortOrder])
 }
 
 model TreatmentSession {
-  id                        String        @id @default(uuid()) @db.Uuid
-  treatmentItemId           String        @db.Uuid
-  appointmentId             String?       @db.Uuid
-  professionalId            String        @db.Uuid
+  id                        String             @id @default(uuid()) @db.Uuid
+  treatmentItemId           String             @db.Uuid
+  appointmentId             String?            @db.Uuid
+  professionalId            String             @db.Uuid
   executionNotes            String
-  materials                 Json          @default("[]")
+  materials                 Json               @default("[]")
   complications             String?
   patientSignatureHash      String?
   professionalSignatureHash String?
-  completedAt               DateTime      @default(now())
-  item                      TreatmentItem @relation(fields: [treatmentItemId], references: [id])
+  completedAt               DateTime           @default(now())
+  correctionOfId            String?            @db.Uuid
+  idempotencyKey            String?
+  item                      TreatmentItem      @relation(fields: [treatmentItemId], references: [id], onDelete: Cascade)
+  correctionOf              TreatmentSession?  @relation("SessionCorrections", fields: [correctionOfId], references: [id])
+  corrections               TreatmentSession[] @relation("SessionCorrections")
 
+  @@unique([treatmentItemId, idempotencyKey])
   @@index([treatmentItemId, completedAt])
+  @@index([correctionOfId])
+}
+
+model TreatmentPlanEvent {
+  id              String        @id @default(uuid()) @db.Uuid
+  treatmentPlanId String        @db.Uuid
+  type            String
+  actorId         String?       @db.Uuid
+  payload         Json          @default("{}")
+  createdAt       DateTime      @default(now())
+  plan            TreatmentPlan @relation(fields: [treatmentPlanId], references: [id], onDelete: Cascade)
+
+  @@index([treatmentPlanId, createdAt])
+}
+
+model TreatmentPlanRevision {
+  id              String        @id @default(uuid()) @db.Uuid
+  treatmentPlanId String        @db.Uuid
+  version         Int
+  snapshot        Json
+  createdById     String?       @db.Uuid
+  createdAt       DateTime      @default(now())
+  plan            TreatmentPlan @relation(fields: [treatmentPlanId], references: [id], onDelete: Cascade)
+
+  @@unique([treatmentPlanId, version])
+  @@index([treatmentPlanId, createdAt])
 }
 
 model DocumentTemplate {
-  id                String              @id @default(uuid()) @db.Uuid
-  organizationId    String              @db.Uuid
+  id                String                 @id @default(uuid()) @db.Uuid
+  organizationId    String                 @db.Uuid
   type              String
   name              String
   structuredContent Json
   allowedVariables  Json
-  version           Int                 @default(1)
-  signatureRules    Json                @default("{}")
-  active            Boolean             @default(true)
-  createdAt         DateTime            @default(now())
+  version           Int                    @default(1)
+  status            DocumentTemplateStatus @default(DRAFT)
+  signatureRules    Json                   @default("{}")
+  isSystem          Boolean                @default(false)
+  sourceTemplateId  String?                @db.Uuid
+  active            Boolean                @default(true)
+  publishedAt       DateTime?
+  publishedById     String?                @db.Uuid
+  archivedAt        DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
   documents         GeneratedDocument[]
 
   @@unique([organizationId, name, version])
+  @@index([organizationId, status, type])
 }
 
 model GeneratedDocument {
-  id              String              @id @default(uuid()) @db.Uuid
-  organizationId  String              @db.Uuid
-  clinicId        String              @db.Uuid
-  templateId      String              @db.Uuid
+  id              String                     @id @default(uuid()) @db.Uuid
+  organizationId  String                     @db.Uuid
+  clinicId        String                     @db.Uuid
+  templateId      String                     @db.Uuid
   templateVersion Int
-  patientId       String              @db.Uuid
-  treatmentId     String?             @db.Uuid
+  patientId       String                     @db.Uuid
+  professionalId  String?                    @db.Uuid
+  treatmentId     String?                    @db.Uuid
+  folderId        String?                    @db.Uuid
+  generatedById   String?                    @db.Uuid
   frozenContent   Json
-  fileId          String?             @db.Uuid
+  fileId          String?                    @db.Uuid
   contentHash     String
-  validationCode  String              @unique
-  status          DocumentStatus      @default(GENERATED)
-  generatedAt     DateTime            @default(now())
+  validationCode  String                     @unique
+  status          DocumentStatus             @default(GENERATED)
+  generatedAt     DateTime                   @default(now())
   cancelledAt     DateTime?
   cancelReason    String?
-  template        DocumentTemplate    @relation(fields: [templateId], references: [id])
+  cancelledById   String?                    @db.Uuid
+  archivedAt      DateTime?
+  archivedById    String?                    @db.Uuid
+  template        DocumentTemplate           @relation(fields: [templateId], references: [id])
+  folder          PatientDocumentFolder?     @relation(fields: [folderId], references: [id])
   signatures      DocumentSignature[]
+  signatureRequests DocumentSignatureRequest[]
+  events          DocumentEvent[]
 
   @@index([organizationId, patientId, generatedAt])
+  @@index([organizationId, patientId, folderId])
+  @@index([organizationId, status, generatedAt])
 }
 
 model DocumentSignature {
@@ -1254,6 +1345,52 @@ model DocumentSignature {
   document            GeneratedDocument @relation(fields: [generatedDocumentId], references: [id])
 
   @@index([generatedDocumentId, signedAt])
+  @@index([generatedDocumentId, role])
+}
+
+model DocumentSignatureRequest {
+  id                  String            @id @default(uuid()) @db.Uuid
+  generatedDocumentId String            @db.Uuid
+  tokenHash           String            @unique
+  signerRole          String
+  signerName          String
+  expiresAt           DateTime
+  usedAt              DateTime?
+  revokedAt           DateTime?
+  createdById         String?           @db.Uuid
+  createdAt           DateTime          @default(now())
+  document            GeneratedDocument @relation(fields: [generatedDocumentId], references: [id], onDelete: Cascade)
+
+  @@index([generatedDocumentId, expiresAt])
+}
+
+model DocumentEvent {
+  id                  String            @id @default(uuid()) @db.Uuid
+  generatedDocumentId String            @db.Uuid
+  type                String
+  actorId             String?           @db.Uuid
+  payload             Json              @default("{}")
+  createdAt           DateTime          @default(now())
+  document            GeneratedDocument @relation(fields: [generatedDocumentId], references: [id], onDelete: Cascade)
+
+  @@index([generatedDocumentId, createdAt])
+}
+
+model PatientDocumentFolder {
+  id             String              @id @default(uuid()) @db.Uuid
+  organizationId String              @db.Uuid
+  patientId      String              @db.Uuid
+  name           String
+  isSystem       Boolean             @default(false)
+  sortOrder      Int                 @default(0)
+  archivedAt     DateTime?
+  createdAt      DateTime            @default(now())
+  documents      GeneratedDocument[]
+  prescriptions  Prescription[]
+  media          PatientMedia[]
+
+  @@unique([patientId, name])
+  @@index([organizationId, patientId, sortOrder])
 }
 
 model FileObject {
@@ -1279,21 +1416,28 @@ model FileObject {
 }
 
 model PatientMedia {
-  id             String            @id @default(uuid()) @db.Uuid
-  organizationId String            @db.Uuid
-  patientId      String            @db.Uuid
-  fileId         String            @db.Uuid
+  id             String                 @id @default(uuid()) @db.Uuid
+  organizationId String                 @db.Uuid
+  patientId      String                 @db.Uuid
+  fileId         String                 @db.Uuid
   type           String
+  displayName    String?
   toothFdi       String?
-  appointmentId  String?           @db.Uuid
-  treatmentId    String?           @db.Uuid
-  examDate       DateTime?         @db.Date
+  appointmentId  String?                @db.Uuid
+  treatmentId    String?                @db.Uuid
+  examDate       DateTime?              @db.Date
   notes          String?
-  createdAt      DateTime          @default(now())
-  file           FileObject        @relation(fields: [fileId], references: [id])
+  folderId       String?                @db.Uuid
+  archivedAt     DateTime?
+  archivedById   String?                @db.Uuid
+  createdAt      DateTime               @default(now())
+  file           FileObject             @relation(fields: [fileId], references: [id])
+  folder         PatientDocumentFolder? @relation(fields: [folderId], references: [id])
   annotations    ImageAnnotation[]
 
   @@index([organizationId, patientId, createdAt])
+  @@index([organizationId, patientId, folderId])
+  @@index([organizationId, patientId, archivedAt])
 }
 
 model ImageAnnotation {
@@ -1305,7 +1449,8 @@ model ImageAnnotation {
   text           String?
   version        Int          @default(1)
   createdAt      DateTime     @default(now())
-  media          PatientMedia @relation(fields: [patientMediaId], references: [id])
+  updatedAt      DateTime     @updatedAt
+  media          PatientMedia @relation(fields: [patientMediaId], references: [id], onDelete: Cascade)
 
   @@index([patientMediaId, version])
 }
@@ -1427,14 +1572,16 @@ model Payable {
 }
 
 model PayablePayment {
-  id         String   @id @default(uuid()) @db.Uuid
-  payableId  String   @db.Uuid
-  amount     Decimal  @db.Decimal(12, 2)
-  paidAt     DateTime @default(now())
-  method     String
-  notes      String?
-  createdAt  DateTime @default(now())
-  payable    Payable  @relation(fields: [payableId], references: [id], onDelete: Cascade)
+  id             String   @id @default(uuid()) @db.Uuid
+  payableId      String   @db.Uuid
+  amount         Decimal  @db.Decimal(12, 2)
+  paidAt         DateTime @default(now())
+  method         String
+  notes          String?
+  refundedAmount Decimal  @default(0) @db.Decimal(12, 2)
+  status         String   @default("CONFIRMED")
+  createdAt      DateTime @default(now())
+  payable        Payable  @relation(fields: [payableId], references: [id], onDelete: Cascade)
 
   @@index([payableId, paidAt])
 }
@@ -1489,6 +1636,7 @@ model CommissionEvent {
   metadata         Json             @default("{}")
   period           CommissionPeriod? @relation(fields: [periodId], references: [id])
 
+  @@unique([sourceType, sourceId, ruleId])
   @@index([organizationId, clinicId, professionalId, occurredAt])
   @@index([periodId, status])
 }
@@ -1649,21 +1797,48 @@ model AutomationRule {
 }
 
 model Prescription {
-  id               String    @id @default(uuid()) @db.Uuid
-  organizationId   String    @db.Uuid
-  clinicId         String    @db.Uuid
-  patientId        String    @db.Uuid
-  professionalId   String    @db.Uuid
+  id               String                  @id @default(uuid()) @db.Uuid
+  organizationId   String                  @db.Uuid
+  clinicId         String                  @db.Uuid
+  patientId        String                  @db.Uuid
+  professionalId   String                  @db.Uuid
+  folderId         String?                 @db.Uuid
   purpose          String
   items            Json
-  clinicalWarnings Json      @default("[]")
-  ignoredWarnings  Json      @default("[]")
-  status           String    @default("DRAFT")
+  clinicalWarnings Json                    @default("[]")
+  ignoredWarnings  Json                    @default("[]")
+  frozenIdentity   Json?
+  status           PrescriptionStatus      @default(DRAFT)
   aiMetadata       Json?
   contentHash      String?
+  validationCode   String?                 @unique
   reviewedAt       DateTime?
+  reviewedById     String?                 @db.Uuid
   signedAt         DateTime?
-  createdAt        DateTime  @default(now())
+  cancelledAt      DateTime?
+  cancelledById    String?                 @db.Uuid
+  cancelReason     String?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  folder           PatientDocumentFolder?  @relation(fields: [folderId], references: [id])
 
   @@index([organizationId, patientId, createdAt])
+  @@index([organizationId, patientId, status])
+}
+
+model PrescriptionProtocol {
+  id               String    @id @default(uuid()) @db.Uuid
+  organizationId   String    @db.Uuid
+  professionalId   String?   @db.Uuid
+  name             String
+  purpose          String
+  items            Json
+  active           Boolean   @default(true)
+  archivedAt       DateTime?
+  createdById      String?   @db.Uuid
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([organizationId, name, professionalId])
+  @@index([organizationId, active])
 }

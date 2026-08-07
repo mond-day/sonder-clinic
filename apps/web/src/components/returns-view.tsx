@@ -20,12 +20,13 @@ import { useSelection } from './selection-provider';
 import { useWorkspace, type ReturnSummary } from './workspace-provider';
 import { EmptyState, MetricCard, PageHeader, Panel, StatusBadge } from './ui';
 
-type Tab = 'PENDING' | 'CONTACTED' | 'SCHEDULED';
+type Tab = 'PENDING' | 'CONTACTED' | 'SCHEDULED' | 'DISMISSED';
 
 const tabs: Array<{ key: Tab; label: string }> = [
   { key: 'PENDING', label: 'Pendentes' },
   { key: 'CONTACTED', label: 'Contatados' },
   { key: 'SCHEDULED', label: 'Agendados' },
+  { key: 'DISMISSED', label: 'Descartados' },
 ];
 
 const channelLabels: Record<string, string> = {
@@ -146,6 +147,7 @@ export function ReturnsView() {
     if (tab === 'PENDING' && status !== 'PENDING') return false;
     if (tab === 'CONTACTED' && status !== 'CONTACTED') return false;
     if (tab === 'SCHEDULED' && !['SCHEDULED', 'DONE'].includes(status)) return false;
+    if (tab === 'DISMISSED' && status !== 'DISMISSED') return false;
     if (specialty && text(item.specialty, '') !== specialty) return false;
     if (assignee && String(nested(item, 'assignee').id ?? '') !== assignee) return false;
     if (search.trim()) {
@@ -160,6 +162,7 @@ export function ReturnsView() {
     PENDING: alerts.filter((item) => item.status === 'PENDING').length,
     CONTACTED: alerts.filter((item) => item.status === 'CONTACTED').length,
     SCHEDULED: alerts.filter((item) => ['SCHEDULED', 'DONE'].includes(String(item.status))).length,
+    DISMISSED: alerts.filter((item) => item.status === 'DISMISSED').length,
   }), [alerts]);
 
   async function patch(id: string, body: Record<string, unknown>, success: string) {
@@ -430,11 +433,43 @@ export function ReturnsView() {
                           disabled={busy || !patient.id}
                           onClick={() => {
                             setOpenMenuId('');
-                            void patch(String(item.id), { status: 'SCHEDULED' }, 'Retorno marcado como agendado.');
+                            // Agenda cria a consulta; ao voltar, vincule via POST /return-alerts/:id/schedule com appointmentId.
+                            void patch(String(item.id), { status: 'SCHEDULED' }, 'Retorno marcado como agendado. Vincule a consulta depois se necessário.');
                             router.push(`/agenda?patientId=${String(patient.id)}&new=1&returnId=${String(item.id)}`);
                           }}
-                        >Agendar</button>
+                        >Agendar consulta</button>
                       )}
+                      {['PENDING', 'CONTACTED'].includes(status) && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          disabled={busy}
+                          onClick={() => void patch(String(item.id), { status: 'DISMISSED' }, 'Retorno descartado.')}
+                        >Descartar</button>
+                      )}
+                      {status === 'SCHEDULED' && item.appointmentId ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          disabled={busy}
+                          onClick={() => {
+                            void (async () => {
+                              setBusy(true);
+                              try {
+                                await api.post(`/return-alerts/${String(item.id)}/schedule`, {
+                                  appointmentId: String(item.appointmentId),
+                                });
+                                setFormMessage('Vínculo de agendamento confirmado.');
+                                load();
+                              } catch (cause) {
+                                setFormError(cause instanceof ApiError ? cause.message : 'Falha ao confirmar vínculo.');
+                              } finally {
+                                setBusy(false);
+                              }
+                            })();
+                          }}
+                        >Confirmar vínculo agenda</button>
+                      ) : null}
                       {status === 'SCHEDULED' && (
                         <button
                           type="button"

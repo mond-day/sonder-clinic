@@ -13,17 +13,23 @@ const loginSchema = z.object({
   password: z.string().min(8, 'A senha deve ter ao menos 8 caracteres.'),
 });
 
+type LoginMode = 'login' | 'forgot' | 'reset' | 'invite';
+
 function LoginForm() {
   const { login } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const resetToken = searchParams.get('resetToken') ?? '';
+  const inviteToken = searchParams.get('inviteToken') ?? '';
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [mode, setMode] = useState<'login' | 'forgot' | 'reset'>(resetToken ? 'reset' : 'login');
+  const [mode, setMode] = useState<LoginMode>(
+    inviteToken ? 'invite' : resetToken ? 'reset' : 'login',
+  );
   const [smtpConfigured, setSmtpConfigured] = useState<boolean | null>(null);
+  const [inviteInfo, setInviteInfo] = useState<{ name: string; email: string; organizationName: string } | null>(null);
 
   useEffect(() => {
     api.get<{ smtpConfigured: boolean }>('/auth/smtp-status')
@@ -32,8 +38,19 @@ function LoginForm() {
   }, []);
 
   useEffect(() => {
-    if (resetToken) setMode('reset');
-  }, [resetToken]);
+    if (inviteToken) setMode('invite');
+    else if (resetToken) setMode('reset');
+  }, [inviteToken, resetToken]);
+
+  useEffect(() => {
+    if (!inviteToken) return;
+    api.get<{ name: string; email: string; organizationName: string }>(`/auth/invitation?token=${encodeURIComponent(inviteToken)}`)
+      .then((info) => setInviteInfo(info))
+      .catch((cause) => {
+        setInviteInfo(null);
+        setError(cause instanceof ApiError ? cause.message : 'Convite inválido.');
+      });
+  }, [inviteToken]);
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -106,11 +123,47 @@ function LoginForm() {
     }
   }
 
+  async function submitInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    const data = new FormData(event.currentTarget);
+    const password = String(data.get('password') ?? '');
+    const confirm = String(data.get('confirm') ?? '');
+    if (password.length < 8) {
+      setError('A senha deve ter ao menos 8 caracteres.');
+      return;
+    }
+    if (password !== confirm) {
+      setError('As senhas não coincidem.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await api.post<{ email: string }>('/auth/accept-invitation', {
+        token: inviteToken,
+        password,
+      });
+      setMessage(`Conta ativada para ${result.email}. Entre com sua senha.`);
+      setMode('login');
+      router.replace('/login');
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível aceitar o convite.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const onSubmit = mode === 'login'
+    ? submitLogin
+    : mode === 'forgot'
+      ? submitForgot
+      : mode === 'invite'
+        ? submitInvite
+        : submitReset;
+
   return (
-    <form
-      className="login-card"
-      onSubmit={mode === 'login' ? submitLogin : mode === 'forgot' ? submitForgot : submitReset}
-    >
+    <form className="login-card" onSubmit={onSubmit}>
       <div className="brand login-brand"><span className="brand-mark">S</span><div><strong>Sonder</strong><small>Clinic</small></div></div>
       {mode === 'login' ? (
         <>
@@ -194,6 +247,47 @@ function LoginForm() {
           {message && <p className="muted-note" role="status">{message}</p>}
           <button className="button primary full" disabled={submitting || !resetToken}>
             {submitting ? 'Salvando…' : 'Redefinir senha'}
+          </button>
+        </>
+      ) : null}
+      {mode === 'invite' ? (
+        <>
+          <div>
+            <h1>Aceitar convite</h1>
+            <p>
+              {inviteInfo
+                ? `${inviteInfo.name}, defina sua senha para entrar em ${inviteInfo.organizationName}.`
+                : 'Defina sua senha para ativar o acesso.'}
+            </p>
+          </div>
+          {inviteInfo ? (
+            <label>E-mail<input value={inviteInfo.email} readOnly /></label>
+          ) : null}
+          <label>
+            Senha
+            <div className="password-field">
+              <input
+                name="password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="new-password"
+                minLength={8}
+                required
+              />
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                onClick={() => setShowPassword((value) => !value)}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </label>
+          <label>Confirmar senha<input name="confirm" type="password" autoComplete="new-password" minLength={8} required /></label>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          {message && <p className="muted-note" role="status">{message}</p>}
+          <button className="button primary full" disabled={submitting || !inviteToken}>
+            {submitting ? 'Ativando…' : 'Ativar conta'}
           </button>
         </>
       ) : null}

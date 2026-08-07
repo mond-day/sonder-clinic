@@ -42,6 +42,7 @@ function domainFromCode(code: string) {
 
 export function UsersView() {
   const [users, setUsers] = useState<RecordValue[]>([]);
+  const [invitations, setInvitations] = useState<RecordValue[]>([]);
   const [roles, setRoles] = useState<RecordValue[]>([]);
   const [permissions, setPermissions] = useState<RecordValue[]>([]);
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
@@ -54,20 +55,25 @@ export function UsersView() {
   const [inviteMode, setInviteMode] = useState<'invite' | 'create'>('invite');
   const [draftPermissions, setDraftPermissions] = useState<Set<string>>(new Set());
   const [savingRole, setSavingRole] = useState(false);
+  const [smtpConfigured, setSmtpConfigured] = useState<boolean | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [usersRaw, rolesRaw, permissionsRaw] = await Promise.all([
+      const [usersRaw, rolesRaw, permissionsRaw, invitationsRaw, smtp] = await Promise.all([
         api.get('/users'),
         api.get('/roles'),
         api.get('/permissions'),
+        api.get('/users/invitations').catch(() => []),
+        api.get<{ smtpConfigured: boolean }>('/auth/smtp-status').catch(() => ({ smtpConfigured: false })),
       ]);
       const roleList = list(rolesRaw);
       setUsers(list(usersRaw));
+      setInvitations(list(invitationsRaw));
       setRoles(roleList);
       setPermissions(list(permissionsRaw));
+      setSmtpConfigured(smtp.smtpConfigured);
       setSelectedRole((current) => current ?? (roleList[0]?.id ? String(roleList[0].id) : null));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Falha ao carregar usuários.');
@@ -138,10 +144,8 @@ export function UsersView() {
           setFormError(parsed.error.issues[0]?.message ?? 'Revise os campos.');
           return;
         }
-        const result = await api.post<{ inviteToken?: string }>('/users/invitations', parsed.data);
-        setFormMessage(result.inviteToken
-          ? `Convite criado. Token: ${result.inviteToken}`
-          : 'Convite enviado.');
+        await api.post('/users/invitations', parsed.data);
+        setFormMessage('Convite enviado por e-mail.');
       } else {
         const parsed = createUserSchema.safeParse(data);
         if (!parsed.success) {
@@ -216,7 +220,7 @@ export function UsersView() {
         open={inviteOpen}
         title={inviteMode === 'invite' ? 'Convidar usuário' : 'Criar usuário'}
         description={inviteMode === 'invite'
-          ? 'Gera um convite com perfil e token de acesso.'
+          ? 'Envia convite por SMTP com link para definir senha.'
           : 'Cria o usuário ativo com senha inicial.'}
         onClose={() => setInviteOpen(false)}
       >
@@ -236,8 +240,11 @@ export function UsersView() {
           {inviteMode === 'create' ? (
             <label>Senha inicial<input name="password" type="password" minLength={8} required autoComplete="new-password" /></label>
           ) : null}
+          {inviteMode === 'invite' && smtpConfigured === false ? (
+            <p className="form-error span-2" role="alert">SMTP não configurado. Defina SMTP_HOST no servidor para enviar convites.</p>
+          ) : null}
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
-          <button className="button primary" disabled={busy} type="submit">
+          <button className="button primary" disabled={busy || (inviteMode === 'invite' && smtpConfigured === false)} type="submit">
             {busy ? 'Salvando…' : inviteMode === 'invite' ? 'Enviar convite' : 'Criar usuário'}
           </button>
         </form>
@@ -246,11 +253,11 @@ export function UsersView() {
       <div className="metric-grid">
         <MetricCard label="Usuários" value={users.length} />
         <MetricCard label="Ativos" value={users.filter((item) => item.status === 'ACTIVE').length} tone="green" />
+        <MetricCard label="Convites pendentes" value={invitations.filter((item) => item.status === 'PENDING').length} tone="amber" />
         <MetricCard label="Perfis" value={roles.length} />
-        <MetricCard label="Permissões" value={permissions.length} tone="amber" />
       </div>
       <div className="users-layout">
-        <Panel title="Usuários e convites" description="Bloqueie ou reative acessos">
+        <Panel title="Usuários e convites" description="Bloqueie, reative e gerencie convites SMTP">
           {users.length ? (
             <div className="table-wrap">
               <table>
@@ -298,6 +305,81 @@ export function UsersView() {
           ) : (
             <EmptyState title="Nenhum usuário" description="Convide o primeiro colaborador." />
           )}
+          {invitations.length ? (
+            <div className="table-wrap" style={{ marginTop: 16 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Convite</th>
+                    <th>E-mail</th>
+                    <th>Status</th>
+                    <th>Expira</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invitations.map((invite) => (
+                    <tr key={String(invite.id)}>
+                      <td>{text(invite.name)}</td>
+                      <td>{text(invite.email)}</td>
+                      <td>
+                        <StatusBadge tone={invite.status === 'PENDING' ? 'amber' : invite.status === 'ACCEPTED' ? 'green' : 'gray'}>
+                          {text(invite.status)}
+                        </StatusBadge>
+                      </td>
+                      <td>{invite.expiresAt ? new Date(String(invite.expiresAt)).toLocaleString('pt-BR') : '—'}</td>
+                      <td className="row-actions">
+                        {invite.status === 'PENDING' ? (
+                          <>
+                            <button
+                              type="button"
+                              className="button small"
+                              disabled={busy || smtpConfigured === false}
+                              onClick={() => void (async () => {
+                                setBusy(true);
+                                setFormError('');
+                                try {
+                                  await api.post(`/users/invitations/${String(invite.id)}/resend`);
+                                  setFormMessage('Convite reenviado.');
+                                  await load();
+                                } catch (err) {
+                                  setFormError(err instanceof ApiError ? err.message : 'Falha ao reenviar.');
+                                } finally {
+                                  setBusy(false);
+                                }
+                              })()}
+                            >
+                              Reenviar
+                            </button>
+                            <button
+                              type="button"
+                              className="button small danger"
+                              disabled={busy}
+                              onClick={() => void (async () => {
+                                setBusy(true);
+                                setFormError('');
+                                try {
+                                  await api.post(`/users/invitations/${String(invite.id)}/revoke`);
+                                  setFormMessage('Convite revogado.');
+                                  await load();
+                                } catch (err) {
+                                  setFormError(err instanceof ApiError ? err.message : 'Falha ao revogar.');
+                                } finally {
+                                  setBusy(false);
+                                }
+                              })()}
+                            >
+                              Revogar
+                            </button>
+                          </>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </Panel>
         <Panel title="Perfis" description="Selecione um perfil para editar a matriz">
           <div className="role-cards">

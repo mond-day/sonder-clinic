@@ -20,5 +20,23 @@ Assumptions adotadas para não bloquear o desenvolvimento. Histórico detalhado 
 | A19 | Portas: web 3000, api 4000 | Scripts |
 | A20 | OTEL opcional via `@sonder/observability` | `OTEL_ENABLED=false` default |
 | A21 | Módulos NestJS pragmáticos | Manutenção |
+| A22 | Comissões: `CommissionEvent` é fonte de verdade | `CommissionEntry` legado só histórico/seed; sem novas gravações |
+| A23 | Overpayment bloqueado | Sem crédito de paciente implícito; estorno parcial → `PARTIALLY_REFUNDED` |
+| A24 | Outbox multi-réplica | Claim com `SKIP LOCKED` + lease 60s; dead-letter após 5 tentativas |
+| A25 | Tratamentos: enum QA + archive via `archivedAt` | `PARTIALLY_APPROVED` mantido; exclusão física só DRAFT sem vínculo |
+| A26 | Sessões multi-etapa | Item só `COMPLETED` ao atingir `plannedSessions` ou `POST .../complete` |
+| A27 | Estorno comissão idempotente | `PAYMENT_REFUND.sourceId` = `refundId` (não `paymentId`) |
+| A28 | Pastas de documentos | `PatientDocumentFolder` + `folderId` tipado em `GeneratedDocument`/`Prescription`/`PatientMedia` (agrupamento lógico; sem mover storage) |
+| A29 | Identidade em documentos | Montada no servidor em `frozenContent.identity`; client envia só `clinicalContent` |
+| A30 | Assinatura remota de documentos | Token hash + expiração + uso único + revogação (`DocumentSignatureRequest` + rotas públicas) |
+| A31 | UI Documentos unificada | Feature `features/documents` reutilizada na ficha e em `documents-view`; identidade só via `clinicalContent` |
+| A32 | Expense vs Payable | **Payable** é o lançamento operacional (API/UI/worker). `Expense` permanece legado para seed e relatório `expenses` (união Expense+Payable). Novas despesas → Payable + categoria/centro de custo |
+| A33 | Convites de usuário | Exigem SMTP real (`SMTP_HOST`); token só no e-mail; aceite público em `/auth/accept-invitation` |
+| A34 | Integrações sem credencial | Superfície de API existe; `POST /integrations/:id/test-connection` carrega credenciais salvas e falha explicitamente em MOCK/sem config — não declarar GO sem credenciais |
+| A35 | Comunicação (templates/canais) | Templates + opt-in + CRUD MessagingChannel + envio manual. EMAIL=SMTP; WHATSAPP/SMS=stub (FAILED honesto se MOCK/sem Evolution outbound) |
+| A36 | Áudio/transcrição | Explicitamente fora de escopo do backlog QA |
+| A37 | Merge de pacientes | Origem → destino; move vínculos clínicos/financeiros; origem vira ARCHIVED; ClinicalRecord por clínica é consolidado; pastas com mesmo nome são unificadas |
+| A38 | Google Calendar OAuth | Superfície + stub PARTIAL. Sem clientId/secret → falha explícita. Com credenciais → ainda sem consentimento OAuth nem sync bidirecional. **Não declarar GO.** Endpoints: `GET /integrations/google-calendar/oauth-status`, `POST /integrations/:id/oauth/start` |
+| A39 | Retornos `allowedHours` | Formato `{ start, end, weekdays, timezone? }` (default TZ `America/Cuiaba`). `{}` = 24/7. Se **todas** as regras matching estão fora da janela, o outbox adia com `leaseUntil` sem consumir attempts. Se há regras dueNow + deferred, só dueNow rodam e o evento é marcado processado (deferred daquele evento não reexecutam) |
 
-Última atualização: **1.1.6**.
+Última atualização: **1.1.6 + QA P0 + Tratamentos + Documentos + P1/P2 fatias A–J**.

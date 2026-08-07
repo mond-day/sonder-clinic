@@ -1,32 +1,43 @@
 # Status de implementação
 
-Atualizado — versão **1.1.6**.
+Atualizado — versão **1.1.6** + **QA P0** + **Tratamentos** + **Documentos** + **backlog P1/P2 (fatias A–J)**.
 
-## Concluído nesta entrega (1.1.6)
+## Concluído nesta entrega — Backlog P1/P2 fatia J
 
-Residuais que a 1.1.5 ainda deixava abertos no código:
+### Documentos
+- Editor dedicado de solicitação de exame (`ExamRequestEditor`) — tipo `EXAM_REQUEST`, itens, indicação, urgência
 
-- **Recorrências financeiras:** `GET/POST/PATCH /finance-recurrences` + `POST .../:id/generate`; worker materializa títulos devidos; UI Financeiro → Recorrências.
-- **ClamAV operable:** `AV_DRIVER=clamav` + `CLAMAV_HOST`/`CLAMAV_PORT` usa protocolo INSTREAM TCP real; sem host/daemon → `PENDING` (nunca `CLEAN` falso); infectado rejeita upload.
-- **OpenTelemetry real:** pacote `@sonder/observability`; `OTEL_ENABLED=true` inicia SDK (console ou OTLP); default desligado com status explícito em `/health`.
+### Tarefas
+- Participantes / comentários / anexos (API + UI no detalhe; anexos exigem storage)
 
-## Herdado (1.1.5 e anteriores)
+### Comunicação
+- CRUD `MessagingChannel` + envio manual (`POST /communication/send`)
+- EMAIL via SMTP real; WHATSAPP/SMS stub honesto (FAILED sem fingir sucesso)
 
-- Unidades/cadeiras, comissões por competência, AutomationRule → ReturnAlert.
-- Branding/storage sem falso sucesso; payables/cashflow na UI.
-- PatientMedia, assinatura A1 real, password reset SMTP, users/roles, integrações gated.
+### Retornos / worker
+- `allowedHours` aplicado no worker (`America/Cuiaba`); deferral com `leaseUntil` quando todas as regras estão fora da janela
+- UI de regra de automação grava `start`/`end`/`weekdays`
 
-## Fora do escopo de “código residual” (produto)
+### Integrações
+- Superfície OAuth Google Calendar (`GET .../oauth-status`, `POST .../oauth/start`) — stub PARTIAL honesto (A38)
 
-| Item | Estado honesto |
-|------|----------------|
-| Odontograma 3D | Conceito/protótipo — fora de contrato HTTP |
-| Secrets / HTTPS / Postgres gerenciado / SMTP / MinIO | Infra operacional — ver `PRODUCTION_READINESS.md` |
-| ClamAV daemon na stack | Adapter pronto; serviço externo opcional |
-| Collector OTEL | SDK pronto; endpoint externo opcional |
-| LGPD processos DPO | Textos no app; processo jurídico externo |
-| E2E completo de todos os residuals | Happy path no CI; casos novos manuais/recomendados |
+## Preservado (não refeito)
+
+- Fatias A–I, QA P0, Tratamentos, Documentos workspace, checklist de tarefas, templates/opt-in
+
+## Pendente / parcial deliberado
+
+| Item | Estado |
+|------|--------|
+| Google Calendar OAuth + sync bidirecional | **PARTIAL** stub (A38) — não GO |
+| WhatsApp outbound real (Evolution send) | Stub — delivery FAILED explícito |
+| Tarefas: recorrência / histórico de atividade | Pendente (mínimo útil entregue) |
+| Retornos: duplicar regra / testar regra / frequência avançada | Parcial (`allowedHours` OK) |
+| Odontograma 3D / áudio-transcrição | Fora de escopo |
+| ImageAnnotation API | Pendente |
 
 ## Docs
 
 Índice em `docs/README.md`. Specs gigantes só em `docs/archive/`.
+
+**Esta fatia J encerra o backlog residual P1/P2 viável do QA** (exceto itens explicitamente fora de escopo ou PARTIAL documentados).

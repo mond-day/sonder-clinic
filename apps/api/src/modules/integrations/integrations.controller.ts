@@ -31,10 +31,28 @@ export class IntegrationsController {
     return this.integrations.list(request.auth.organizationId);
   }
 
+  @Get('google-calendar/oauth-status')
+  @RequirePermissions('integration.view')
+  googleCalendarOauthStatus() {
+    return this.integrations.googleCalendarOauthStatus();
+  }
+
+  @Post(':id/oauth/start')
+  @RequirePermissions('integration.manage')
+  startOauth(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    return this.integrations.startGoogleCalendarOauth(request.auth.organizationId, id);
+  }
+
   @Post(':provider/test')
   @RequirePermissions('integration.manage')
   test(@Param('provider') provider: string) {
     return this.integrations.test(provider.toUpperCase() as Provider);
+  }
+
+  @Post(':id/test-connection')
+  @RequirePermissions('integration.manage')
+  testConnection(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    return this.integrations.testConnection(request.auth.organizationId, id);
   }
 
   @Post()

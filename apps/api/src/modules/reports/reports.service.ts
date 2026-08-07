@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { prisma } from '@sonder/database';
+import ExcelJS from 'exceljs';
 import { buildReportPdf } from '../../common/pdf';
 
 export const REPORT_CATALOG = [
@@ -23,8 +24,11 @@ export const REPORT_CATALOG = [
 type Period = { from: Date; to: Date };
 
 function parsePeriod(from?: string, to?: string): Period {
+  if (from && Number.isNaN(Date.parse(from))) throw new BadRequestException('Data inicial inválida.');
+  if (to && Number.isNaN(Date.parse(to))) throw new BadRequestException('Data final inválida.');
   const end = to ? new Date(to) : new Date();
   const start = from ? new Date(from) : new Date(end.getTime() - 30 * 86400_000);
+  if (start > end) throw new BadRequestException('Período inválido: data inicial após a final.');
   return { from: start, to: end };
 }
 
@@ -41,6 +45,37 @@ function toCsv(rows: Array<Record<string, unknown>>) {
   ].join('\n');
 }
 
+async function toXlsx(rows: Array<Record<string, unknown>>, sheetName: string): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Sonder Clinic';
+  workbook.created = new Date();
+  const sheet = workbook.addWorksheet(sheetName.slice(0, 31) || 'Relatório');
+  if (!rows.length) {
+    sheet.addRow(['sem_dados']);
+  } else {
+    const headers = Object.keys(rows[0]!);
+    sheet.addRow(headers);
+    sheet.getRow(1).font = { bold: true };
+    for (const row of rows) {
+      sheet.addRow(headers.map((header) => {
+        const value = row[header];
+        if (value == null) return '';
+        if (typeof value === 'object') return JSON.stringify(value);
+        return value as ExcelJS.CellValue;
+      }));
+    }
+    sheet.columns.forEach((column) => {
+      let max = 10;
+      column.eachCell?.({ includeEmpty: true }, (cell) => {
+        max = Math.max(max, String(cell.value ?? '').length);
+      });
+      column.width = Math.min(max + 2, 48);
+    });
+  }
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
+}
+
 @Injectable()
 export class ReportsService {
   catalog() {
@@ -50,6 +85,9 @@ export class ReportsService {
   async run(organizationId: string, reportId: string, query: {
     clinicId?: string; from?: string; to?: string; format?: 'json' | 'csv' | 'xlsx' | 'pdf';
   }) {
+    if (!REPORT_CATALOG.some((item) => item.id === reportId)) {
+      throw new NotFoundException('Relatório não encontrado.');
+    }
     const period = parsePeriod(query.from, query.to);
     const clinicFilter = query.clinicId ? { clinicId: query.clinicId } : {};
     let rows: Array<Record<string, unknown>> = [];
@@ -413,17 +451,26 @@ export class ReportsService {
         break;
       }
       default:
-        rows = [];
+        throw new NotFoundException('Relatório não encontrado.');
     }
 
     const format = query.format ?? 'json';
-    if (format === 'csv' || format === 'xlsx') {
-      // XLSX textual compatível (CSV) — sem simular sucesso de biblioteca ausente.
+    if (format === 'csv') {
       return {
-        format: format === 'xlsx' ? 'csv' : 'csv',
+        format: 'csv',
         filename: `${reportId}-${period.from.toISOString().slice(0, 10)}.csv`,
         contentType: 'text/csv; charset=utf-8',
         content: toCsv(rows),
+        meta,
+      };
+    }
+    if (format === 'xlsx') {
+      const content = await toXlsx(rows, reportId);
+      return {
+        format: 'xlsx',
+        filename: `${reportId}-${period.from.toISOString().slice(0, 10)}.xlsx`,
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        content,
         meta,
       };
     }

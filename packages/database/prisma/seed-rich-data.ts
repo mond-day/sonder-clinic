@@ -758,7 +758,6 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
   for (const [index, item] of templateData.entries()) {
     const template = await prisma.documentTemplate.upsert({
       where: { organizationId_name_version: { organizationId, name: item[1], version: 1 } },
-      update: {},
       create: {
         id: seedId(`document-template:${index}`),
         organizationId,
@@ -770,8 +769,16 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
             ? ['Identificação do profissional (nome e CRO)', 'Identificação do paciente', 'Data', 'Corpo clínico', 'Assinatura']
             : ['Identificação', 'Condições', 'Assinaturas'],
         }),
-        allowedVariables: json(['paciente.nome', 'paciente.cpf', 'profissional.nome', 'profissional.cro', 'clinica.nome', 'data', 'corpo']),
-        signatureRules: json({ paciente: item[0] !== 'RECEITUARIO', profissional: true }),
+        allowedVariables: json(['corpo?', 'dias?', 'observacoes?', 'prescricao?']),
+        signatureRules: json({ requiredRoles: item[0] === 'RECEITUARIO' ? ['PROFESSIONAL'] : ['PROFESSIONAL', 'PATIENT'], minSignatures: item[0] === 'RECEITUARIO' ? 1 : 2 }),
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
+        active: true,
+      },
+      update: {
+        status: 'PUBLISHED',
+        active: true,
+        publishedAt: new Date(),
       },
     });
     templates.push(template);

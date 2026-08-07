@@ -482,6 +482,158 @@ export class SettingsService {
     });
   }
 
+  listClinics(organizationId: string, includeInactive = false) {
+    return prisma.clinic.findMany({
+      where: { organizationId, ...(includeInactive ? {} : { status: 'ACTIVE' }) },
+      orderBy: { tradeName: 'asc' },
+      select: {
+        id: true,
+        legalName: true,
+        tradeName: true,
+        taxId: true,
+        email: true,
+        phone: true,
+        status: true,
+        _count: { select: { units: true } },
+      },
+    });
+  }
+
+  async createClinic(
+    organizationId: string,
+    actorId: string,
+    input: { legalName: string; tradeName: string; taxId?: string; email?: string; phone?: string },
+  ) {
+    return prisma.$transaction(async (tx) => {
+      const clinic = await tx.clinic.create({
+        data: {
+          organizationId,
+          legalName: input.legalName.trim(),
+          tradeName: input.tradeName.trim(),
+          taxId: input.taxId?.trim(),
+          email: input.email?.trim(),
+          phone: input.phone?.trim(),
+          status: 'ACTIVE',
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          actorId,
+          action: 'clinic.created',
+          entity: 'Clinic',
+          entityId: clinic.id,
+          clinicId: clinic.id,
+          changes: { tradeName: clinic.tradeName },
+          correlationId: randomUUID(),
+        },
+      });
+      return clinic;
+    });
+  }
+
+  async updateClinic(
+    organizationId: string,
+    actorId: string,
+    id: string,
+    input: {
+      legalName?: string;
+      tradeName?: string;
+      taxId?: string | null;
+      email?: string | null;
+      phone?: string | null;
+      status?: 'ACTIVE' | 'INACTIVE';
+    },
+  ) {
+    const existing = await prisma.clinic.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Clínica não encontrada.');
+    if (input.status === 'INACTIVE') {
+      const activeCount = await prisma.clinic.count({
+        where: { organizationId, status: 'ACTIVE', id: { not: id } },
+      });
+      if (activeCount === 0) {
+        throw new BadRequestException('Não é possível inativar a última clínica ativa da organização.');
+      }
+    }
+    return prisma.$transaction(async (tx) => {
+      const clinic = await tx.clinic.update({
+        where: { id },
+        data: {
+          legalName: input.legalName?.trim(),
+          tradeName: input.tradeName?.trim(),
+          taxId: input.taxId === undefined ? undefined : input.taxId,
+          email: input.email === undefined ? undefined : input.email,
+          phone: input.phone === undefined ? undefined : input.phone,
+          status: input.status,
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          actorId,
+          action: 'clinic.updated',
+          entity: 'Clinic',
+          entityId: id,
+          clinicId: id,
+          changes: { fields: Object.keys(input) },
+          correlationId: randomUUID(),
+        },
+      });
+      return clinic;
+    });
+  }
+
+  listDeadLetterOutbox(limit = 50) {
+    return prisma.outboxEvent.findMany({
+      where: { deadLetterAt: { not: null } },
+      orderBy: { deadLetterAt: 'desc' },
+      take: Math.min(Math.max(limit, 1), 200),
+    });
+  }
+
+  async retryDeadLetterOutbox(id: string, actorId: string) {
+    const event = await prisma.outboxEvent.findFirst({ where: { id, deadLetterAt: { not: null } } });
+    if (!event) throw new NotFoundException('Evento dead-letter não encontrado.');
+    const updated = await prisma.outboxEvent.update({
+      where: { id },
+      data: {
+        deadLetterAt: null,
+        attempts: 0,
+        lastError: null,
+        lockedBy: null,
+        leaseUntil: null,
+        processingAt: null,
+        processedAt: null,
+      },
+    });
+    await prisma.auditEvent.create({
+      data: {
+        actorId,
+        action: 'outbox.dead_letter.retry',
+        entity: 'OutboxEvent',
+        entityId: id,
+        changes: { eventType: event.eventType },
+        correlationId: randomUUID(),
+      },
+    });
+    return updated;
+  }
+
+  async discardDeadLetterOutbox(id: string, actorId: string) {
+    const event = await prisma.outboxEvent.findFirst({ where: { id, deadLetterAt: { not: null } } });
+    if (!event) throw new NotFoundException('Evento dead-letter não encontrado.');
+    await prisma.auditEvent.create({
+      data: {
+        actorId,
+        action: 'outbox.dead_letter.discard',
+        entity: 'OutboxEvent',
+        entityId: id,
+        changes: { eventType: event.eventType, payload: event.payload },
+        correlationId: randomUUID(),
+      },
+    });
+    await prisma.outboxEvent.delete({ where: { id } });
+    return { success: true as const };
+  }
+
   private async assertClinic(organizationId: string, clinicId: string) {
     const clinic = await prisma.clinic.findFirst({ where: { id: clinicId, organizationId }, select: { id: true } });
     if (!clinic) throw new NotFoundException('Clínica não encontrada.');

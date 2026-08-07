@@ -144,8 +144,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
     const handle = window.setTimeout(() => {
       setSearching(true);
-      api.get<RecordValue[]>(`/patients?clinicId=${clinicId}&search=${encodeURIComponent(query.trim())}`)
-        .then((items) => setResults(list(items).slice(0, 8)))
+      api.get<{
+        patients: RecordValue[];
+        appointments: RecordValue[];
+        treatments: RecordValue[];
+        labCases: RecordValue[];
+        tasks: RecordValue[];
+      }>(`/search?clinicId=${clinicId}&q=${encodeURIComponent(query.trim())}`)
+        .then((payload) => {
+          const patients = list(payload.patients).map((item) => ({ ...item, _kind: 'patient' }));
+          const appointments = list(payload.appointments).map((item) => ({
+            ...item,
+            _kind: 'appointment',
+            fullName: text((item.patient as RecordValue | undefined)?.fullName) || 'Consulta',
+            primaryPhone: item.startAt ? new Date(String(item.startAt)).toLocaleString('pt-BR') : 'Consulta',
+          }));
+          const treatments = list(payload.treatments).map((item) => ({
+            ...item,
+            _kind: 'treatment',
+            fullName: text(item.title),
+            primaryPhone: text(item.status),
+          }));
+          const labCases = list(payload.labCases).map((item) => ({
+            ...item,
+            _kind: 'lab',
+            fullName: `${text(item.code)} · ${text(item.description)}`,
+            primaryPhone: text(item.status),
+          }));
+          const tasks = list(payload.tasks).map((item) => ({
+            ...item,
+            _kind: 'task',
+            fullName: text(item.title),
+            primaryPhone: text(item.status),
+          }));
+          setResults([...patients, ...appointments, ...treatments, ...labCases, ...tasks].slice(0, 12));
+        })
         .catch(() => setResults([]))
         .finally(() => setSearching(false));
     }, 250);
@@ -272,30 +305,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 setSearchOpen(true);
               }}
               onFocus={() => setSearchOpen(true)}
-              placeholder="Pesquisar paciente, CPF ou telefone"
-              aria-label="Pesquisa global de pacientes"
+              placeholder="Pesquisar pacientes, agenda, tratamentos…"
+              aria-label="Pesquisa global"
             />
             <span className="search-key">⌘ K</span>
             {searchOpen && query.trim().length >= 2 && (
               <div className="search-results" role="listbox">
                 {searching && <button type="button" disabled>Buscando…</button>}
                 {!searching && results.length === 0 && (
-                  <button type="button" disabled>Nenhum paciente encontrado</button>
+                  <button type="button" disabled>Nenhum resultado</button>
                 )}
-                {results.map((patient) => (
+                {results.map((item) => (
                   <button
-                    key={String(patient.id)}
+                    key={`${String(item._kind)}-${String(item.id)}`}
                     type="button"
                     onClick={() => {
                       setSearchOpen(false);
                       setQuery('');
-                      router.push(`/pacientes/${String(patient.id)}`);
+                      const kind = String(item._kind ?? 'patient');
+                      if (kind === 'appointment') router.push('/agenda');
+                      else if (kind === 'treatment') router.push(`/pacientes/${String(item.patientId ?? '')}`);
+                      else if (kind === 'lab') router.push('/laboratorio');
+                      else if (kind === 'task') router.push('/tarefas');
+                      else router.push(`/pacientes/${String(item.id)}`);
                     }}
                   >
-                    <span className="avatar">{initials(patient.fullName)}</span>
+                    <span className="avatar">{initials(item.fullName)}</span>
                     <div>
-                      <strong>{text(patient.fullName)}</strong>
-                      <span>{text(patient.primaryPhone)}</span>
+                      <strong>{text(item.fullName)}</strong>
+                      <span>{text(item.primaryPhone)}</span>
                     </div>
                   </button>
                 ))}

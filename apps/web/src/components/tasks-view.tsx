@@ -280,6 +280,261 @@ export function TasksView() {
                   <div className="info-item"><small>Paciente</small><strong>{text(nested(selectedTask, 'patient').fullName, 'Sem paciente')}</strong></div>
                   <div className="info-item span-2"><small>Descrição</small><strong>{text(selectedTask.description, 'Sem descrição')}</strong></div>
                 </div>
+                <div className="form-section" style={{ marginTop: 12 }}>
+                  <header style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                    <strong>Checklist</strong>
+                    <button
+                      type="button"
+                      className="button small"
+                      disabled={busy}
+                      onClick={() => {
+                        const title = window.prompt('Novo item do checklist');
+                        if (!title?.trim()) return;
+                        void (async () => {
+                          setBusy(true);
+                          try {
+                            await api.post(`/tasks/${String(selectedTask.id)}/checklist`, { title: title.trim() });
+                            load();
+                            const refreshed = await api.get<RecordValue[]>(`/tasks?clinicId=${clinicId}`);
+                            const next = list(refreshed).find((item) => String(item.id) === String(selectedTask.id));
+                            if (next) setSelectedTask(next);
+                          } catch (cause) {
+                            setFormError(cause instanceof ApiError ? cause.message : 'Falha no checklist.');
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      + Item
+                    </button>
+                  </header>
+                  {list(selectedTask.checklist).length === 0 ? (
+                    <p className="muted-note">Nenhum item ainda.</p>
+                  ) : (
+                    <div className="settings-list">
+                      {list(selectedTask.checklist).map((item) => (
+                        <div className="settings-row" key={String(item.id)}>
+                          <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(item.completed)}
+                              onChange={() => {
+                                void (async () => {
+                                  try {
+                                    await api.patch(`/tasks/${String(selectedTask.id)}/checklist/${String(item.id)}`, {
+                                      completed: !item.completed,
+                                    });
+                                    load();
+                                    const refreshed = await api.get<RecordValue[]>(`/tasks?clinicId=${clinicId}`);
+                                    const next = list(refreshed).find((row) => String(row.id) === String(selectedTask.id));
+                                    if (next) setSelectedTask(next);
+                                  } catch (cause) {
+                                    setFormError(cause instanceof ApiError ? cause.message : 'Falha ao atualizar item.');
+                                  }
+                                })();
+                              }}
+                            />
+                            <span style={{ textDecoration: item.completed ? 'line-through' : undefined }}>{text(item.title)}</span>
+                          </label>
+                          <button
+                            type="button"
+                            className="button small"
+                            onClick={() => {
+                              void (async () => {
+                                try {
+                                  await api.delete(`/tasks/${String(selectedTask.id)}/checklist/${String(item.id)}`);
+                                  load();
+                                  const refreshed = await api.get<RecordValue[]>(`/tasks?clinicId=${clinicId}`);
+                                  const next = list(refreshed).find((row) => String(row.id) === String(selectedTask.id));
+                                  if (next) setSelectedTask(next);
+                                } catch (cause) {
+                                  setFormError(cause instanceof ApiError ? cause.message : 'Falha ao remover item.');
+                                }
+                              })();
+                            }}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-section" style={{ marginTop: 12 }}>
+                  <header style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                    <strong>Participantes</strong>
+                    <button
+                      type="button"
+                      className="button small"
+                      disabled={busy}
+                      onClick={() => {
+                        const options = professionals
+                          .map((p) => `${p.name} (${p.userId})`)
+                          .join('\n');
+                        const userId = window.prompt(`ID do usuário participante:\n${options.slice(0, 400)}`);
+                        if (!userId?.trim()) return;
+                        void (async () => {
+                          setBusy(true);
+                          try {
+                            const next = await api.post<RecordValue>(`/tasks/${String(selectedTask.id)}/participants`, {
+                              userId: userId.trim(),
+                            });
+                            setSelectedTask(next);
+                            load();
+                          } catch (cause) {
+                            setFormError(cause instanceof ApiError ? cause.message : 'Falha ao adicionar participante.');
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      + Participante
+                    </button>
+                  </header>
+                  {list(selectedTask.participants).length === 0 ? (
+                    <p className="muted-note">Sem participantes extras.</p>
+                  ) : (
+                    <div className="settings-list">
+                      {list(selectedTask.participants).map((row) => (
+                        <div className="settings-row" key={String(row.userId)}>
+                          <span>{text(nested(row, 'user').name, String(row.userId))}</span>
+                          <button
+                            type="button"
+                            className="button small"
+                            onClick={() => {
+                              void (async () => {
+                                try {
+                                  const next = await api.delete<RecordValue>(
+                                    `/tasks/${String(selectedTask.id)}/participants/${String(row.userId)}`,
+                                  );
+                                  setSelectedTask(next);
+                                  load();
+                                } catch (cause) {
+                                  setFormError(cause instanceof ApiError ? cause.message : 'Falha ao remover.');
+                                }
+                              })();
+                            }}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-section" style={{ marginTop: 12 }}>
+                  <header style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                    <strong>Comentários</strong>
+                    <button
+                      type="button"
+                      className="button small"
+                      disabled={busy}
+                      onClick={() => {
+                        const content = window.prompt('Comentário');
+                        if (!content?.trim()) return;
+                        void (async () => {
+                          setBusy(true);
+                          try {
+                            const next = await api.post<RecordValue>(`/tasks/${String(selectedTask.id)}/comments`, {
+                              content: content.trim(),
+                            });
+                            setSelectedTask(next);
+                            load();
+                          } catch (cause) {
+                            setFormError(cause instanceof ApiError ? cause.message : 'Falha ao comentar.');
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      + Comentário
+                    </button>
+                  </header>
+                  {list(selectedTask.comments).length === 0 ? (
+                    <p className="muted-note">Nenhum comentário.</p>
+                  ) : (
+                    <div className="settings-list">
+                      {list(selectedTask.comments).map((row) => (
+                        <div className="settings-row" key={String(row.id)}>
+                          <div>
+                            <strong>{text(nested(row, 'author').name, 'Usuário')}</strong>
+                            <span>{text(row.content)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-section" style={{ marginTop: 12 }}>
+                  <header style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                    <strong>Anexos</strong>
+                    <label className="button small" style={{ cursor: 'pointer', margin: 0 }}>
+                      + Arquivo
+                      <input
+                        type="file"
+                        hidden
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          event.target.value = '';
+                          if (!file) return;
+                          void (async () => {
+                            setBusy(true);
+                            try {
+                              const form = new FormData();
+                              form.set('file', file);
+                              const next = await api.postForm<RecordValue>(
+                                `/tasks/${String(selectedTask.id)}/attachments`,
+                                form,
+                              );
+                              setSelectedTask(next);
+                              load();
+                            } catch (cause) {
+                              setFormError(cause instanceof ApiError ? cause.message : 'Falha no anexo.');
+                            } finally {
+                              setBusy(false);
+                            }
+                          })();
+                        }}
+                      />
+                    </label>
+                  </header>
+                  {list(selectedTask.attachments).length === 0 ? (
+                    <p className="muted-note">Nenhum anexo. Requer storage configurado.</p>
+                  ) : (
+                    <div className="settings-list">
+                      {list(selectedTask.attachments).map((row) => (
+                        <div className="settings-row" key={String(row.id)}>
+                          <span>{text(nested(row, 'file').originalName, 'Arquivo')}</span>
+                          <button
+                            type="button"
+                            className="button small"
+                            onClick={() => {
+                              void (async () => {
+                                try {
+                                  const next = await api.delete<RecordValue>(
+                                    `/tasks/${String(selectedTask.id)}/attachments/${String(row.id)}`,
+                                  );
+                                  setSelectedTask(next);
+                                  load();
+                                } catch (cause) {
+                                  setFormError(cause instanceof ApiError ? cause.message : 'Falha ao remover anexo.');
+                                }
+                              })();
+                            }}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <>

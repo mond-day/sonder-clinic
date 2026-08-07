@@ -2,14 +2,26 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { prisma } from '@sonder/database';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
+import {
+  addPatientGuardian,
+  createPatientAlert,
+  listCommunicationPreferences,
+  mergePatients,
+  unlinkPatientGuardian,
+  updatePatientAlert,
+  updatePatientGuardian,
+  upsertCommunicationPreference,
+} from './patients-guardians-merge.utils';
 
 const patientDataSchema = z.object({
   fullName: z.string().trim().min(3),
   preferredName: z.string().trim().optional(),
   cpf: z.string().regex(/^\d{11}$/).optional(),
+  passportNumber: z.string().trim().min(5).max(40).optional(),
   birthDate: z.string().date().optional(),
   email: z.string().email().optional(),
   primaryPhone: z.string().trim().min(10),
+  secondaryPhone: z.string().trim().min(10).optional(),
   isMinor: z.boolean().optional(),
 });
 
@@ -17,35 +29,54 @@ export type CreatePatientInput = {
   fullName: string;
   preferredName?: string;
   cpf?: string;
+  passportNumber?: string;
   birthDate?: string;
   email?: string;
   primaryPhone: string;
+  secondaryPhone?: string;
   isMinor?: boolean;
   clinicId: string;
 };
 
 @Injectable()
 export class PatientsService {
-  async list(organizationId: string, search?: string, clinicId?: string) {
-    return prisma.patient.findMany({
+  async list(
+    organizationId: string,
+    search?: string,
+    clinicId?: string,
+    options?: { cursor?: string; take?: number; includeArchived?: boolean },
+  ) {
+    const paginated = options?.cursor !== undefined || options?.take !== undefined;
+    const take = Math.min(Math.max(options?.take ?? (paginated ? 50 : 100), 1), 100);
+    const items = await prisma.patient.findMany({
       where: {
         organizationId,
-        status: { not: 'ARCHIVED' },
+        status: options?.includeArchived ? undefined : { not: 'ARCHIVED' },
         clinics: clinicId ? { some: { clinicId, status: 'ACTIVE' } } : undefined,
+        ...(options?.cursor ? { id: { gt: options.cursor } } : {}),
         ...(search
           ? {
               OR: [
                 { fullName: { contains: search, mode: 'insensitive' as const } },
                 { cpf: { contains: search } },
                 { primaryPhone: { contains: search } },
+                { secondaryPhone: { contains: search } },
+                { passportNumber: { contains: search, mode: 'insensitive' as const } },
               ],
             }
           : {}),
       },
       include: { alerts: { where: { active: true } }, clinics: true },
-      orderBy: { fullName: 'asc' },
-      take: 100,
+      orderBy: paginated ? [{ id: 'asc' }] : [{ fullName: 'asc' }],
+      take: paginated ? take + 1 : take,
     });
+    if (!paginated) return items;
+    const hasMore = items.length > take;
+    const page = hasMore ? items.slice(0, take) : items;
+    return {
+      items: page,
+      nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
+    };
   }
 
   async find(organizationId: string, id: string) {
@@ -63,15 +94,23 @@ export class PatientsService {
       const duplicate = await prisma.patient.findFirst({ where: { organizationId, cpf: input.cpf } });
       if (duplicate) throw new ConflictException('Já existe um paciente com este CPF.');
     }
+    if (input.passportNumber) {
+      const duplicatePassport = await prisma.patient.findFirst({
+        where: { organizationId, passportNumber: input.passportNumber },
+      });
+      if (duplicatePassport) throw new ConflictException('Já existe um paciente com este passaporte.');
+    }
     return prisma.patient.create({
       data: {
         organizationId,
         fullName: input.fullName,
         preferredName: input.preferredName,
         cpf: input.cpf,
+        passportNumber: input.passportNumber,
         birthDate: input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : undefined,
         email: input.email,
         primaryPhone: input.primaryPhone,
+        secondaryPhone: input.secondaryPhone,
         isMinor: input.isMinor ?? false,
         clinics: { create: { clinicId: input.clinicId } },
       },
@@ -87,14 +126,24 @@ export class PatientsService {
       });
       if (duplicate) throw new ConflictException('Já existe um paciente com este CPF.');
     }
+    if (data.passportNumber) {
+      const duplicatePassport = await prisma.patient.findFirst({
+        where: { organizationId, passportNumber: data.passportNumber, id: { not: id } },
+      });
+      if (duplicatePassport) throw new ConflictException('Já existe um paciente com este passaporte.');
+    }
     return prisma.patient.update({
       where: { id },
       data: {
-        ...data,
-        birthDate: data.birthDate ? new Date(`${data.birthDate}T00:00:00.000Z`) : null,
+        fullName: data.fullName,
         preferredName: data.preferredName || null,
         cpf: data.cpf || null,
+        passportNumber: data.passportNumber || null,
+        birthDate: data.birthDate ? new Date(`${data.birthDate}T00:00:00.000Z`) : null,
         email: data.email || null,
+        primaryPhone: data.primaryPhone,
+        secondaryPhone: data.secondaryPhone || null,
+        isMinor: data.isMinor,
       },
     });
   }
@@ -102,5 +151,161 @@ export class PatientsService {
   async archive(organizationId: string, id: string) {
     await this.find(organizationId, id);
     return prisma.patient.update({ where: { id }, data: { status: 'ARCHIVED' } });
+  }
+
+  async restore(organizationId: string, id: string) {
+    const patient = await this.find(organizationId, id);
+    if (patient.status !== 'ARCHIVED') throw new ConflictException('Paciente não está arquivado.');
+    return prisma.patient.update({ where: { id }, data: { status: 'ACTIVE' } });
+  }
+
+  async linkClinic(organizationId: string, patientId: string, clinicId: string) {
+    await this.find(organizationId, patientId);
+    const clinic = await prisma.clinic.findFirst({ where: { id: clinicId, organizationId } });
+    if (!clinic) throw new NotFoundException('Clínica não encontrada.');
+    await prisma.patientClinic.upsert({
+      where: { patientId_clinicId: { patientId, clinicId } },
+      create: { patientId, clinicId, status: 'ACTIVE' },
+      update: { status: 'ACTIVE' },
+    });
+    return this.find(organizationId, patientId);
+  }
+
+  addGuardian(organizationId: string, patientId: string, actorId: string, input: Parameters<typeof addPatientGuardian>[3]) {
+    return addPatientGuardian(organizationId, patientId, actorId, input);
+  }
+
+  updateGuardian(
+    organizationId: string,
+    patientId: string,
+    guardianId: string,
+    actorId: string,
+    input: Parameters<typeof updatePatientGuardian>[4],
+  ) {
+    return updatePatientGuardian(organizationId, patientId, guardianId, actorId, input);
+  }
+
+  unlinkGuardian(organizationId: string, patientId: string, guardianId: string, actorId: string) {
+    return unlinkPatientGuardian(organizationId, patientId, guardianId, actorId);
+  }
+
+  createAlert(organizationId: string, patientId: string, actorId: string, input: Parameters<typeof createPatientAlert>[3]) {
+    return createPatientAlert(organizationId, patientId, actorId, input);
+  }
+
+  updateAlert(
+    organizationId: string,
+    patientId: string,
+    alertId: string,
+    actorId: string,
+    input: Parameters<typeof updatePatientAlert>[4],
+  ) {
+    return updatePatientAlert(organizationId, patientId, alertId, actorId, input);
+  }
+
+  merge(organizationId: string, actorId: string, targetPatientId: string, sourcePatientId: string) {
+    return mergePatients(organizationId, actorId, targetPatientId, sourcePatientId);
+  }
+
+  listPreferences(organizationId: string, patientId: string) {
+    return listCommunicationPreferences(organizationId, patientId);
+  }
+
+  upsertPreference(
+    organizationId: string,
+    patientId: string,
+    input: Parameters<typeof upsertCommunicationPreference>[2],
+  ) {
+    return upsertCommunicationPreference(organizationId, patientId, input);
+  }
+
+  async globalSearch(organizationId: string, query: string, clinicId?: string, permissions: string[] = []) {
+    const q = query.trim();
+    if (q.length < 2) return { patients: [], appointments: [], treatments: [], labCases: [], tasks: [] };
+    const can = (code: string) => permissions.includes(code) || permissions.includes('organization.manage');
+    const [patients, appointments, treatments, labCases, tasks] = await Promise.all([
+      can('patient.view')
+        ? prisma.patient.findMany({
+            where: {
+              organizationId,
+              status: { not: 'ARCHIVED' },
+              clinics: clinicId ? { some: { clinicId } } : undefined,
+              OR: [
+                { fullName: { contains: q, mode: 'insensitive' } },
+                { cpf: { contains: q } },
+                { primaryPhone: { contains: q } },
+              ],
+            },
+            select: { id: true, fullName: true, cpf: true, primaryPhone: true, status: true },
+            take: 8,
+            orderBy: { fullName: 'asc' },
+          })
+        : Promise.resolve([]),
+      can('appointment.view')
+        ? prisma.appointment.findMany({
+            where: {
+              organizationId,
+              clinicId,
+              OR: [
+                { notes: { contains: q, mode: 'insensitive' } },
+                { patient: { fullName: { contains: q, mode: 'insensitive' } } },
+              ],
+            },
+            select: {
+              id: true,
+              status: true,
+              startAt: true,
+              patient: { select: { id: true, fullName: true } },
+            },
+            take: 5,
+            orderBy: { startAt: 'desc' },
+          })
+        : Promise.resolve([]),
+      can('treatment.view')
+        ? prisma.treatmentPlan.findMany({
+            where: {
+              organizationId,
+              clinicId,
+              archivedAt: null,
+              title: { contains: q, mode: 'insensitive' },
+            },
+            select: { id: true, title: true, status: true, patientId: true },
+            take: 5,
+            orderBy: { updatedAt: 'desc' },
+          })
+        : Promise.resolve([]),
+      can('lab_case.view')
+        ? prisma.labCase.findMany({
+            where: {
+              organizationId,
+              clinicId,
+              OR: [
+                { code: { contains: q, mode: 'insensitive' } },
+                { description: { contains: q, mode: 'insensitive' } },
+                { laboratoryName: { contains: q, mode: 'insensitive' } },
+              ],
+            },
+            select: { id: true, code: true, description: true, status: true },
+            take: 5,
+            orderBy: { createdAt: 'desc' },
+          })
+        : Promise.resolve([]),
+      can('task.view')
+        ? prisma.task.findMany({
+            where: {
+              organizationId,
+              clinicId,
+              OR: [
+                { title: { contains: q, mode: 'insensitive' } },
+                { description: { contains: q, mode: 'insensitive' } },
+              ],
+            },
+            select: { id: true, title: true, status: true },
+            take: 5,
+            orderBy: { updatedAt: 'desc' },
+          })
+        : Promise.resolve([]),
+    ]);
+    return { patients, appointments, treatments, labCases, tasks };
   }
 }

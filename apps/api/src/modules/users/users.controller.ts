@@ -34,6 +34,23 @@ class UpdateRoleDto {
 class AssignRoleDto {
   @IsUUID() roleId!: string;
 }
+class UpsertProfessionalDto {
+  @IsUUID() userId!: string;
+  @IsOptional() @IsString() @MinLength(2) name?: string;
+  @IsOptional() @IsString() cpf?: string;
+  @IsOptional() @IsString() croNumber?: string;
+  @IsOptional() @IsString() croState?: string;
+  @IsOptional() @IsString() professionalType?: string;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
+}
+class UpdateProfessionalDto {
+  @IsOptional() @IsString() @MinLength(2) name?: string;
+  @IsOptional() @IsString() cpf?: string | null;
+  @IsOptional() @IsString() croNumber?: string | null;
+  @IsOptional() @IsString() croState?: string | null;
+  @IsOptional() @IsString() professionalType?: string;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
+}
 
 @ApiTags('users')
 @Controller()
@@ -45,6 +62,30 @@ export class UsersController {
   @RequirePermissions('user.view')
   list(@Req() req: AuthenticatedRequest) {
     return this.users.list(req.auth.organizationId);
+  }
+
+  @Get('users/invitations')
+  @RequirePermissions('user.view')
+  listInvitations(@Req() req: AuthenticatedRequest) {
+    return this.users.listInvitations(req.auth.organizationId);
+  }
+
+  @Post('users/invitations')
+  @RequirePermissions('user.manage')
+  invite(@Req() req: AuthenticatedRequest, @Body() body: InviteDto) {
+    return this.users.invite(req.auth.organizationId, req.auth.userId, body);
+  }
+
+  @Post('users/invitations/:id/resend')
+  @RequirePermissions('user.manage')
+  resendInvitation(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.users.resendInvitation(req.auth.organizationId, id);
+  }
+
+  @Post('users/invitations/:id/revoke')
+  @RequirePermissions('user.manage')
+  revokeInvitation(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.users.revokeInvitation(req.auth.organizationId, id);
   }
 
   @Get('users/:id')
@@ -63,12 +104,6 @@ export class UsersController {
   @RequirePermissions('user.manage')
   update(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateUserDto) {
     return this.users.update(req.auth.organizationId, id, body);
-  }
-
-  @Post('users/invitations')
-  @RequirePermissions('user.manage')
-  invite(@Req() req: AuthenticatedRequest, @Body() body: InviteDto) {
-    return this.users.invite(req.auth.organizationId, req.auth.userId, body);
   }
 
   @Post('users/:id/block')
@@ -97,6 +132,24 @@ export class UsersController {
     @Param('roleId') roleId: string,
   ) {
     return this.users.removeRole(req.auth.organizationId, id, roleId);
+  }
+
+  @Get('professionals')
+  @RequirePermissions('user.view', 'clinic.view')
+  listProfessionals(@Req() req: AuthenticatedRequest) {
+    return this.users.listProfessionals(req.auth.organizationId);
+  }
+
+  @Post('professionals')
+  @RequirePermissions('user.manage')
+  upsertProfessional(@Req() req: AuthenticatedRequest, @Body() body: UpsertProfessionalDto) {
+    return this.users.upsertProfessional(req.auth.organizationId, body);
+  }
+
+  @Patch('professionals/:id')
+  @RequirePermissions('user.manage')
+  updateProfessional(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateProfessionalDto) {
+    return this.users.updateProfessional(req.auth.organizationId, id, body);
   }
 
   @Get('roles')

@@ -1,5 +1,7 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
+import { createAntivirusScanner, createStorageAdapter } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
 
@@ -48,9 +50,10 @@ const createLabCaseSchema = z.object({
   clinicId: z.string().uuid(),
   patientId: z.string().uuid(),
   professionalId: z.string().uuid().optional(),
+  laboratoryId: z.string().uuid().optional(),
   description: z.string().trim().min(3),
   toothFdi: z.string().trim().optional(),
-  laboratoryName: z.string().trim().min(2),
+  laboratoryName: z.string().trim().min(2).optional(),
   specialty: z.string().trim().optional(),
   dueAt: z.string().datetime().optional(),
   cost: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
@@ -101,6 +104,9 @@ const addDays = (date: Date, days: number) => {
 
 @Injectable()
 export class WorkspaceService {
+  private readonly storage = createStorageAdapter();
+  private readonly antivirus = createAntivirusScanner();
+
   private readonly returnAlertInclude = {
     patient: { select: { id: true, fullName: true, primaryPhone: true, cpf: true } },
     professional: { select: { id: true, name: true } },
@@ -108,6 +114,10 @@ export class WorkspaceService {
 
   private readonly taskInclude = {
     patient: { select: { id: true, fullName: true } },
+    checklist: { orderBy: { sortOrder: 'asc' as const } },
+    participants: true,
+    comments: { orderBy: { createdAt: 'asc' as const } },
+    attachments: { orderBy: { createdAt: 'desc' as const } },
   } satisfies Prisma.TaskInclude;
 
   private readonly labCaseInclude = {
@@ -242,7 +252,8 @@ export class WorkspaceService {
       orderBy: { dueAt: 'asc' },
       take: 300,
     });
-    return this.withAssignees(items);
+    const withAssignees = await this.withAssignees(items);
+    return this.enrichTaskRelations(withAssignees);
   }
 
   async createTask(organizationId: string, createdById: string, input: CreateTask) {
@@ -252,7 +263,10 @@ export class WorkspaceService {
       data: { ...data, organizationId, createdById, dueAt: data.dueAt ? new Date(data.dueAt) : undefined },
       include: this.taskInclude,
     });
-    return (await this.withAssignees([item]))[0];
+    const [withAssignee] = await this.withAssignees([item]);
+    if (!withAssignee) throw new NotFoundException('Tarefa não encontrada.');
+    const [enriched] = await this.enrichTaskRelations([withAssignee]);
+    return enriched;
   }
 
   async updateTask(organizationId: string, id: string, input: UpdateTask) {
@@ -270,7 +284,241 @@ export class WorkspaceService {
       },
       include: this.taskInclude,
     });
-    return (await this.withAssignees([item]))[0];
+    const [withAssignee] = await this.withAssignees([item]);
+    if (!withAssignee) throw new NotFoundException('Tarefa não encontrada.');
+    const [enriched] = await this.enrichTaskRelations([withAssignee]);
+    return enriched;
+  }
+
+  async addTaskChecklistItem(organizationId: string, taskId: string, title: string) {
+    const task = await prisma.task.findFirst({ where: { id: taskId, organizationId } });
+    if (!task) throw new NotFoundException('Tarefa não encontrada.');
+    const trimmed = title.trim();
+    if (trimmed.length < 1) throw new BadRequestException('Informe o item do checklist.');
+    const maxOrder = await prisma.taskChecklistItem.aggregate({
+      where: { taskId },
+      _max: { sortOrder: true },
+    });
+    return prisma.taskChecklistItem.create({
+      data: {
+        taskId,
+        title: trimmed,
+        sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
+      },
+    });
+  }
+
+  async updateTaskChecklistItem(
+    organizationId: string,
+    taskId: string,
+    itemId: string,
+    input: { title?: string; completed?: boolean },
+    actorId?: string,
+  ) {
+    const item = await prisma.taskChecklistItem.findFirst({
+      where: { id: itemId, taskId, task: { organizationId } },
+    });
+    if (!item) throw new NotFoundException('Item do checklist não encontrado.');
+    return prisma.taskChecklistItem.update({
+      where: { id: itemId },
+      data: {
+        title: input.title?.trim(),
+        completed: input.completed,
+        completedAt: input.completed === true ? new Date() : input.completed === false ? null : undefined,
+        completedById: input.completed === true ? actorId : input.completed === false ? null : undefined,
+      },
+    });
+  }
+
+  async deleteTaskChecklistItem(organizationId: string, taskId: string, itemId: string) {
+    const item = await prisma.taskChecklistItem.findFirst({
+      where: { id: itemId, taskId, task: { organizationId } },
+    });
+    if (!item) throw new NotFoundException('Item do checklist não encontrado.');
+    await prisma.taskChecklistItem.delete({ where: { id: itemId } });
+    return { success: true as const };
+  }
+
+  async addTaskParticipant(organizationId: string, taskId: string, userId: string) {
+    parseWithZod(z.string().uuid(), userId);
+    const task = await prisma.task.findFirst({ where: { id: taskId, organizationId } });
+    if (!task) throw new NotFoundException('Tarefa não encontrada.');
+    await this.assertUser(organizationId, userId);
+    try {
+      await prisma.taskParticipant.create({ data: { taskId, userId } });
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'P2002') {
+        throw new ConflictException('Usuário já é participante.');
+      }
+      throw error;
+    }
+    return this.getTask(organizationId, taskId);
+  }
+
+  async removeTaskParticipant(organizationId: string, taskId: string, userId: string) {
+    const task = await prisma.task.findFirst({ where: { id: taskId, organizationId } });
+    if (!task) throw new NotFoundException('Tarefa não encontrada.');
+    await prisma.taskParticipant.deleteMany({ where: { taskId, userId } });
+    return this.getTask(organizationId, taskId);
+  }
+
+  async addTaskComment(organizationId: string, taskId: string, authorId: string, content: string) {
+    const task = await prisma.task.findFirst({ where: { id: taskId, organizationId } });
+    if (!task) throw new NotFoundException('Tarefa não encontrada.');
+    const trimmed = content.trim();
+    if (trimmed.length < 1) throw new BadRequestException('Informe o comentário.');
+    await prisma.taskComment.create({
+      data: { taskId, authorId, content: trimmed },
+    });
+    return this.getTask(organizationId, taskId);
+  }
+
+  async addTaskAttachment(
+    organizationId: string,
+    taskId: string,
+    actorId: string,
+    file: { originalname: string; size: number; buffer: Buffer; mimetype: string },
+  ) {
+    const task = await prisma.task.findFirst({ where: { id: taskId, organizationId } });
+    if (!task) throw new NotFoundException('Tarefa não encontrada.');
+    if (!this.storage.enabled) {
+      throw new BadRequestException(
+        this.storage.disabledReason
+          ?? 'Storage desabilitado — configure STORAGE_DRIVER=local ou MinIO/S3 com credenciais.',
+      );
+    }
+    if (!file?.buffer?.length) throw new BadRequestException('Envie um arquivo.');
+    if (file.size > 10 * 1024 * 1024) throw new BadRequestException('Anexo deve ter no máximo 10 MB.');
+    const extension = file.originalname.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '';
+    const scan = await this.antivirus.scan(file.buffer);
+    if (scan.infected) {
+      throw new BadRequestException(
+        `Arquivo rejeitado pelo antivírus${scan.detail ? `: ${scan.detail}` : '.'}`,
+      );
+    }
+    const antivirusStatus = scan.clean ? 'CLEAN' : 'PENDING';
+    const checksum = createHash('sha256').update(file.buffer).digest('hex');
+    let stored;
+    try {
+      stored = await this.storage.putObject({
+        organizationId,
+        clinicId: task.clinicId,
+        filename: file.originalname,
+        contentType: file.mimetype || 'application/octet-stream',
+        body: file.buffer,
+        keyPrefix: 'task-attachments',
+        metadata: { kind: 'task-attachment', taskId },
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Falha ao gravar no storage.';
+      throw new BadRequestException(detail);
+    }
+    try {
+      await prisma.$transaction(async (tx) => {
+        const fileObject = await tx.fileObject.create({
+          data: {
+            organizationId,
+            bucket: stored.bucket,
+            objectKey: stored.objectKey,
+            originalName: file.originalname,
+            mimeType: file.mimetype || 'application/octet-stream',
+            extension: extension || null,
+            sizeBytes: BigInt(file.size),
+            checksum,
+            status: 'AVAILABLE',
+            antivirusStatus,
+            createdById: actorId,
+            metadata: json({ kind: 'task-attachment', taskId }),
+          },
+        });
+        await tx.taskAttachment.create({
+          data: {
+            taskId,
+            fileId: fileObject.id,
+            createdById: actorId,
+          },
+        });
+      });
+    } catch (error) {
+      await this.storage.deleteObject(stored.objectKey).catch(() => undefined);
+      throw error;
+    }
+    return this.getTask(organizationId, taskId);
+  }
+
+  async removeTaskAttachment(organizationId: string, taskId: string, attachmentId: string) {
+    const attachment = await prisma.taskAttachment.findFirst({
+      where: { id: attachmentId, taskId, task: { organizationId } },
+    });
+    if (!attachment) throw new NotFoundException('Anexo não encontrado.');
+    await prisma.taskAttachment.delete({ where: { id: attachmentId } });
+    return this.getTask(organizationId, taskId);
+  }
+
+  private async getTask(organizationId: string, id: string) {
+    const item = await prisma.task.findFirst({
+      where: { id, organizationId },
+      include: this.taskInclude,
+    });
+    if (!item) throw new NotFoundException('Tarefa não encontrada.');
+    const [withAssignee] = await this.withAssignees([item]);
+    if (!withAssignee) throw new NotFoundException('Tarefa não encontrada.');
+    const enriched = await this.enrichTaskRelations([withAssignee]);
+    return enriched[0];
+  }
+
+  private async enrichTaskRelations<T extends {
+    participants?: Array<{ userId: string }>;
+    comments?: Array<{ authorId: string }>;
+    attachments?: Array<{ fileId: string; createdById: string }>;
+  }>(items: T[]) {
+    const userIds = new Set<string>();
+    const fileIds = new Set<string>();
+    for (const item of items) {
+      for (const p of item.participants ?? []) userIds.add(p.userId);
+      for (const c of item.comments ?? []) userIds.add(c.authorId);
+      for (const a of item.attachments ?? []) {
+        userIds.add(a.createdById);
+        fileIds.add(a.fileId);
+      }
+    }
+    const [users, files] = await Promise.all([
+      userIds.size
+        ? prisma.user.findMany({
+            where: { id: { in: [...userIds] } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      fileIds.size
+        ? prisma.fileObject.findMany({
+            where: { id: { in: [...fileIds] } },
+            select: { id: true, originalName: true, mimeType: true, sizeBytes: true, antivirusStatus: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const userById = new Map(users.map((u) => [u.id, u]));
+    const fileById = new Map(files.map((f) => [f.id, f]));
+    return items.map((item) => ({
+      ...item,
+      participants: (item.participants ?? []).map((p) => ({
+        ...p,
+        user: userById.get(p.userId) ?? null,
+      })),
+      comments: (item.comments ?? []).map((c) => ({
+        ...c,
+        author: userById.get(c.authorId) ?? null,
+      })),
+      attachments: (item.attachments ?? []).map((a) => ({
+        ...a,
+        file: fileById.get(a.fileId)
+          ? {
+              ...fileById.get(a.fileId)!,
+              sizeBytes: Number(fileById.get(a.fileId)!.sizeBytes),
+            }
+          : null,
+        createdBy: userById.get(a.createdById) ?? null,
+      })),
+    }));
   }
 
   labCases(organizationId: string, query: { clinicId?: string; status?: string; specialty?: string }) {
@@ -285,16 +533,34 @@ export class WorkspaceService {
   async createLabCase(organizationId: string, userId: string, input: CreateLabCase) {
     const data = parseWithZod(createLabCaseSchema, input);
     await this.assertWorkspaceResources(organizationId, data);
+    let laboratoryName = data.laboratoryName?.trim();
+    let laboratoryId = data.laboratoryId;
+    if (laboratoryId) {
+      const laboratory = await prisma.laboratory.findFirst({
+        where: { id: laboratoryId, organizationId, status: 'ACTIVE' },
+      });
+      if (!laboratory) throw new NotFoundException('Laboratório não encontrado.');
+      laboratoryName = laboratory.name;
+    }
+    if (!laboratoryName) throw new BadRequestException('Informe laboratoryId ou laboratoryName.');
     return prisma.$transaction(async (tx) => {
       const sequence = await tx.labCase.count({ where: { organizationId } }) + 1;
       const code = `LAB-${String(sequence).padStart(3, '0')}`;
       return tx.labCase.create({
         data: {
-          ...data,
           organizationId,
+          clinicId: data.clinicId,
+          patientId: data.patientId,
+          professionalId: data.professionalId,
+          laboratoryId,
+          description: data.description,
+          toothFdi: data.toothFdi,
+          laboratoryName,
+          specialty: data.specialty,
           code,
           dueAt: data.dueAt ? new Date(data.dueAt) : undefined,
           cost: data.cost ? new Prisma.Decimal(data.cost) : undefined,
+          notes: data.notes,
           events: { create: { status: 'REQUESTED', createdById: userId, notes: 'Caso criado.' } },
         },
         include: this.labCaseInclude,
@@ -304,6 +570,66 @@ export class WorkspaceService {
         throw new ConflictException('Não foi possível gerar o código do caso. Tente novamente.');
       }
       throw error;
+    });
+  }
+
+  listLaboratories(organizationId: string, clinicId?: string) {
+    return prisma.laboratory.findMany({
+      where: {
+        organizationId,
+        status: 'ACTIVE',
+        ...(clinicId ? { OR: [{ clinicId }, { clinicId: null }] } : {}),
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async createLaboratory(organizationId: string, input: {
+    name: string;
+    clinicId?: string;
+    taxId?: string;
+    phone?: string;
+    email?: string;
+    defaultLeadDays?: number;
+    notes?: string;
+  }) {
+    if (input.clinicId) await this.assertClinic(organizationId, input.clinicId);
+    return prisma.laboratory.create({
+      data: {
+        organizationId,
+        clinicId: input.clinicId,
+        name: input.name.trim(),
+        taxId: input.taxId,
+        phone: input.phone,
+        email: input.email,
+        defaultLeadDays: input.defaultLeadDays,
+        notes: input.notes,
+      },
+    });
+  }
+
+  async updateLaboratory(organizationId: string, id: string, input: {
+    name?: string;
+    taxId?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    defaultLeadDays?: number | null;
+    notes?: string | null;
+    status?: 'ACTIVE' | 'INACTIVE';
+  }) {
+    const existing = await prisma.laboratory.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Laboratório não encontrado.');
+    return prisma.laboratory.update({
+      where: { id },
+      data: {
+        name: input.name?.trim(),
+        taxId: input.taxId === undefined ? undefined : input.taxId,
+        phone: input.phone === undefined ? undefined : input.phone,
+        email: input.email === undefined ? undefined : input.email,
+        defaultLeadDays: input.defaultLeadDays === undefined ? undefined : input.defaultLeadDays,
+        notes: input.notes === undefined ? undefined : input.notes,
+        status: input.status,
+      },
     });
   }
 

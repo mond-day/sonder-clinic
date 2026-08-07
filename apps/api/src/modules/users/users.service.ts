@@ -1,11 +1,16 @@
 import {
   BadRequestException, ConflictException, Injectable, NotFoundException,
 } from '@nestjs/common';
-import { createHash, randomBytes } from 'node:crypto';
 import * as argon2 from 'argon2';
 import { prisma } from '@sonder/database';
-
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+import { assertSmtpConfigured, sendMail } from '../../common/mail';
+import {
+  buildInviteEmail,
+  buildInviteUrl,
+  generateInviteToken,
+  hashInviteToken,
+  inviteExpiresAt,
+} from './users-invitations.utils';
 
 @Injectable()
 export class UsersService {
@@ -15,7 +20,7 @@ export class UsersService {
       select: {
         id: true, name: true, email: true, status: true, lastLoginAt: true, createdAt: true,
         roles: { include: { role: { select: { id: true, name: true, code: true } } } },
-        professional: { select: { id: true, croNumber: true, croState: true } },
+        professional: { select: { id: true, croNumber: true, croState: true, professionalType: true, status: true } },
       },
       orderBy: { name: 'asc' },
     });
@@ -69,29 +74,187 @@ export class UsersService {
     });
   }
 
+  listInvitations(organizationId: string) {
+    return prisma.userInvitation.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        roleId: true,
+        status: true,
+        expiresAt: true,
+        acceptedAt: true,
+        createdAt: true,
+        invitedById: true,
+      },
+    });
+  }
+
   async invite(organizationId: string, invitedById: string, input: {
     name: string; email: string; roleId: string; expiresInHours?: number;
   }) {
+    assertSmtpConfigured();
+    const email = input.email.toLowerCase().trim();
     const role = await prisma.role.findFirst({ where: { id: input.roleId, organizationId } });
     if (!role) throw new NotFoundException('Perfil não encontrado.');
-    const token = randomBytes(24).toString('hex');
+    const existingUser = await prisma.user.findFirst({ where: { organizationId, email } });
+    if (existingUser) throw new ConflictException('Já existe um usuário com este e-mail.');
+    const pending = await prisma.userInvitation.findFirst({
+      where: { organizationId, email, status: 'PENDING', expiresAt: { gt: new Date() } },
+    });
+    if (pending) throw new ConflictException('Já existe um convite pendente para este e-mail.');
+
+    const token = generateInviteToken();
+    const expiresAt = inviteExpiresAt(input.expiresInHours ?? 72);
+    const organization = await prisma.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { tradeName: true },
+    });
     const invitation = await prisma.userInvitation.create({
       data: {
         organizationId,
-        email: input.email.toLowerCase(),
-        name: input.name,
+        email,
+        name: input.name.trim(),
         roleId: input.roleId,
-        tokenHash: hashToken(token),
+        tokenHash: hashInviteToken(token),
         invitedById,
-        expiresAt: new Date(Date.now() + (input.expiresInHours ?? 72) * 3600_000),
+        expiresAt,
       },
     });
+    const inviteUrl = buildInviteUrl(process.env.WEB_URL ?? 'http://localhost:3000', token);
+    const mail = buildInviteEmail({
+      name: invitation.name,
+      organizationName: organization.tradeName,
+      inviteUrl,
+      expiresAt,
+    });
+    await sendMail({ to: invitation.email, subject: mail.subject, text: mail.text });
     return {
       id: invitation.id,
       email: invitation.email,
+      name: invitation.name,
       expiresAt: invitation.expiresAt,
-      inviteToken: token,
+      emailed: true as const,
     };
+  }
+
+  async resendInvitation(organizationId: string, id: string) {
+    assertSmtpConfigured();
+    const invitation = await prisma.userInvitation.findFirst({ where: { id, organizationId } });
+    if (!invitation) throw new NotFoundException('Convite não encontrado.');
+    if (invitation.status !== 'PENDING') {
+      throw new ConflictException('Somente convites pendentes podem ser reenviados.');
+    }
+    if (invitation.expiresAt <= new Date()) {
+      await prisma.userInvitation.update({ where: { id }, data: { status: 'EXPIRED' } });
+      throw new ConflictException('Convite expirado. Crie um novo convite.');
+    }
+    const token = generateInviteToken();
+    const expiresAt = inviteExpiresAt(72);
+    await prisma.userInvitation.update({
+      where: { id },
+      data: { tokenHash: hashInviteToken(token), expiresAt, status: 'PENDING' },
+    });
+    const organization = await prisma.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { tradeName: true },
+    });
+    const inviteUrl = buildInviteUrl(process.env.WEB_URL ?? 'http://localhost:3000', token);
+    const mail = buildInviteEmail({
+      name: invitation.name,
+      organizationName: organization.tradeName,
+      inviteUrl,
+      expiresAt,
+    });
+    await sendMail({ to: invitation.email, subject: mail.subject, text: mail.text });
+    return { id, email: invitation.email, expiresAt, emailed: true as const };
+  }
+
+  async revokeInvitation(organizationId: string, id: string) {
+    const invitation = await prisma.userInvitation.findFirst({ where: { id, organizationId } });
+    if (!invitation) throw new NotFoundException('Convite não encontrado.');
+    if (invitation.status !== 'PENDING') {
+      throw new ConflictException('Somente convites pendentes podem ser revogados.');
+    }
+    return prisma.userInvitation.update({
+      where: { id },
+      data: { status: 'REVOKED' },
+      select: { id: true, email: true, status: true },
+    });
+  }
+
+  listProfessionals(organizationId: string) {
+    return prisma.professional.findMany({
+      where: { user: { organizationId } },
+      include: {
+        user: { select: { id: true, email: true, name: true, status: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async upsertProfessional(organizationId: string, input: {
+    userId: string;
+    name?: string;
+    cpf?: string;
+    croNumber?: string;
+    croState?: string;
+    professionalType?: string;
+    status?: 'ACTIVE' | 'INACTIVE';
+  }) {
+    const user = await prisma.user.findFirst({
+      where: { id: input.userId, organizationId },
+      include: { professional: true },
+    });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+    const data = {
+      name: input.name?.trim() || user.name,
+      cpf: input.cpf?.trim() || null,
+      croNumber: input.croNumber?.trim() || null,
+      croState: input.croState?.trim()?.toUpperCase() || null,
+      professionalType: input.professionalType?.trim() || 'DENTIST',
+      status: input.status ?? 'ACTIVE',
+    } as const;
+    if (user.professional) {
+      return prisma.professional.update({
+        where: { id: user.professional.id },
+        data,
+        include: { user: { select: { id: true, email: true, name: true, status: true } } },
+      });
+    }
+    return prisma.professional.create({
+      data: { userId: user.id, ...data },
+      include: { user: { select: { id: true, email: true, name: true, status: true } } },
+    });
+  }
+
+  async updateProfessional(organizationId: string, id: string, input: {
+    name?: string;
+    cpf?: string | null;
+    croNumber?: string | null;
+    croState?: string | null;
+    professionalType?: string;
+    status?: 'ACTIVE' | 'INACTIVE';
+  }) {
+    const professional = await prisma.professional.findFirst({
+      where: { id, user: { organizationId } },
+    });
+    if (!professional) throw new NotFoundException('Profissional não encontrado.');
+    return prisma.professional.update({
+      where: { id },
+      data: {
+        name: input.name?.trim(),
+        cpf: input.cpf === undefined ? undefined : (input.cpf?.trim() || null),
+        croNumber: input.croNumber === undefined ? undefined : (input.croNumber?.trim() || null),
+        croState: input.croState === undefined ? undefined : (input.croState?.trim()?.toUpperCase() || null),
+        professionalType: input.professionalType?.trim(),
+        status: input.status,
+      },
+      include: { user: { select: { id: true, email: true, name: true, status: true } } },
+    });
   }
 
   async block(organizationId: string, id: string) {

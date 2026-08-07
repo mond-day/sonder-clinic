@@ -25,6 +25,16 @@ import { api, ApiError } from '@/lib/api';
 import { formatDnSummary } from '@/lib/dn-parse';
 import { currency, dateOnly, initials, list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { AnamnesisTemplateEditor } from '@/features/anamnesis/template-editor';
+import {
+  ClinicsAdminPanel,
+  CommunicationTemplatesPanel,
+  FinanceCatalogAdminPanel,
+  LaboratoriesAdminPanel,
+  MessagingChannelsPanel,
+  OdontogramConditionsAdminPanel,
+  OutboxDeadLetterPanel,
+  PriceTablesAdminPanel,
+} from '@/features/settings/settings-catalog-panels';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
 import { useWorkspace } from './workspace-provider';
@@ -100,6 +110,9 @@ export function SettingsView() {
   const [automationName, setAutomationName] = useState('');
   const [automationReason, setAutomationReason] = useState('Retorno pós-consulta');
   const [automationDays, setAutomationDays] = useState('7');
+  const [automationStart, setAutomationStart] = useState('08:00');
+  const [automationEnd, setAutomationEnd] = useState('20:00');
+  const [automationWeekdaysOnly, setAutomationWeekdaysOnly] = useState(true);
   const [formError, setFormError] = useState('');
   const [formBusy, setFormBusy] = useState(false);
   const [certificateEditing, setCertificateEditing] = useState(false);
@@ -194,6 +207,12 @@ export function SettingsView() {
           daysAfter: Number(automationDays) || 7,
           preferredChannel: 'WHATSAPP',
         },
+        allowedHours: {
+          start: automationStart || '08:00',
+          end: automationEnd || '20:00',
+          weekdays: automationWeekdaysOnly ? [1, 2, 3, 4, 5] : [0, 1, 2, 3, 4, 5, 6],
+          timezone: 'America/Cuiaba',
+        },
         active: true,
       });
       closeConfigModal();
@@ -255,6 +274,9 @@ export function SettingsView() {
     setAutomationName('');
     setAutomationReason('Retorno pós-consulta');
     setAutomationDays('7');
+    setAutomationStart('08:00');
+    setAutomationEnd('20:00');
+    setAutomationWeekdaysOnly(true);
   }
 
   function openIntegrationConfig(provider?: string) {
@@ -323,6 +345,35 @@ export function SettingsView() {
       load();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível inativar a integração.');
+    }
+  }
+
+  async function testIntegrationConnection(id: string) {
+    setIntegrationMenuId(null);
+    try {
+      const result = await api.post<{ success?: boolean; message?: string }>(`/integrations/${id}/test-connection`, {});
+      setError(result.success
+        ? ''
+        : (result.message ?? 'Teste da conexão sem sucesso (stub/mock honesto).'));
+      if (result.success) load();
+      else if (result.message) {
+        /* surface honest failure in the notice area */
+      }
+      window.alert(result.message ?? (result.success ? 'Conexão OK.' : 'Falha no teste.'));
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível testar a integração.');
+    }
+  }
+
+  async function startGoogleOauth(id: string) {
+    setIntegrationMenuId(null);
+    try {
+      await api.post(`/integrations/${id}/oauth/start`, {});
+      window.alert('OAuth iniciado (inesperado — fluxo ainda é stub).');
+    } catch (cause) {
+      const message = cause instanceof ApiError ? cause.message : 'OAuth Google Calendar indisponível.';
+      setError(message);
+      window.alert(message);
     }
   }
 
@@ -416,11 +467,20 @@ export function SettingsView() {
           <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : 'Criar cadeira'}</button>
         </form>
       </Modal>
-      <Modal open={configModal === 'automation'} title="Regra de retorno automático" description="Dispara quando a consulta é marcada como concluída." onClose={closeConfigModal}>
+      <Modal open={configModal === 'automation'} title="Regra de retorno automático" description="Dispara quando a consulta é marcada como concluída. O worker respeita allowedHours (America/Cuiaba)." onClose={closeConfigModal}>
         <form className="mutation-form" onSubmit={submitAutomation}>
           <label className="span-2">Nome da regra<input value={automationName} onChange={(e) => setAutomationName(e.target.value)} minLength={3} required autoFocus /></label>
           <label className="span-2">Motivo do retorno<input value={automationReason} onChange={(e) => setAutomationReason(e.target.value)} minLength={3} required /></label>
           <label>Dias após conclusão<input type="number" min={0} max={365} value={automationDays} onChange={(e) => setAutomationDays(e.target.value)} required /></label>
+          <label>Início (allowedHours)<input type="time" value={automationStart} onChange={(e) => setAutomationStart(e.target.value)} /></label>
+          <label>Fim (allowedHours)<input type="time" value={automationEnd} onChange={(e) => setAutomationEnd(e.target.value)} /></label>
+          <label className="span-2">
+            Somente dias úteis
+            <select value={automationWeekdaysOnly ? 'yes' : 'no'} onChange={(e) => setAutomationWeekdaysOnly(e.target.value === 'yes')}>
+              <option value="yes">Seg–sex</option>
+              <option value="no">Todos os dias</option>
+            </select>
+          </label>
           {formError ? <p className="state-message error span-2" role="alert">{formError}</p> : null}
           <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : 'Criar regra'}</button>
         </form>
@@ -516,6 +576,9 @@ export function SettingsView() {
               title={activeLabel}
               description="Estrutura física da clínica (unidades e cadeiras) e profissionais disponíveis na agenda."
             >
+              <ClinicsAdminPanel clinics={clinics} onClinicsChanged={() => void refreshSelection()} />
+              <LaboratoriesAdminPanel clinicId={clinicId} />
+              <OutboxDeadLetterPanel />
               {loading && <div className="state-message">Carregando estrutura…</div>}
               {!loading && (clinic?.units.length ?? 0) === 0 && (
                 <EmptyState
@@ -647,6 +710,8 @@ export function SettingsView() {
                 {procedures.length} procedimentos · {specialties.length} especialidades.
                 Novos itens usam <code>POST /procedures</code> e passam a valer para toda a organização.
               </p>
+              <PriceTablesAdminPanel clinicId={clinicId} procedures={procedures} />
+              <OdontogramConditionsAdminPanel />
             </Panel>
           )}
 
@@ -780,6 +845,7 @@ export function SettingsView() {
                   <Link className="button small" href="/financeiro">Abrir financeiro</Link>
                 </div>
               </div>
+              <FinanceCatalogAdminPanel />
             </Panel>
           )}
 
@@ -841,6 +907,8 @@ export function SettingsView() {
               <p className="muted-note" style={{ padding: '0 14px 14px' }}>
                 Esta seção mostra entregas já enfileiradas/enviadas. A conexão do canal (Evolution/Chatwoot) fica em Integrações.
               </p>
+              <CommunicationTemplatesPanel />
+              <MessagingChannelsPanel clinicId={clinicId} />
             </Panel>
           )}
 
@@ -849,6 +917,9 @@ export function SettingsView() {
               title={activeLabel}
               description="Provedores com formulário específico (Nibo, pagamentos, WhatsApp, agenda e IA)."
             >
+              <p className="muted-note" style={{ padding: '0 14px' }}>
+                Google Calendar permanece PARTIAL (A38): sem OAuth/sync bidirecional. Sem credenciais o teste falha de forma explícita — não declarar GO.
+              </p>
               {loading && <div className="state-message">Carregando integrações…</div>}
               {!loading && integrations.length === 0 && (
                 <EmptyState title="Nenhuma integração" description="Configure um provedor para sincronizar dados ou enviar mensagens." />
@@ -903,6 +974,22 @@ export function SettingsView() {
                               </button>
                               {integrationMenuId === rowId ? (
                                 <div className="row-menu-popover" role="menu">
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => void testIntegrationConnection(String(item.id))}
+                                  >
+                                    Testar conexão
+                                  </button>
+                                  {text(item.provider) === 'GOOGLE_CALENDAR' ? (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => void startGoogleOauth(String(item.id))}
+                                    >
+                                      Iniciar OAuth (stub)
+                                    </button>
+                                  ) : null}
                                   <button
                                     type="button"
                                     role="menuitem"

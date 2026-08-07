@@ -64,6 +64,23 @@ class UpdateChairDto {
   @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
 }
 
+class CreateClinicDto {
+  @IsString() @MinLength(2) legalName!: string;
+  @IsString() @MinLength(2) tradeName!: string;
+  @IsOptional() @IsString() taxId?: string;
+  @IsOptional() @IsString() email?: string;
+  @IsOptional() @IsString() phone?: string;
+}
+
+class UpdateClinicDto {
+  @IsOptional() @IsString() @MinLength(2) legalName?: string;
+  @IsOptional() @IsString() @MinLength(2) tradeName?: string;
+  @IsOptional() @IsString() taxId?: string | null;
+  @IsOptional() @IsString() email?: string | null;
+  @IsOptional() @IsString() phone?: string | null;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
+}
+
 @ApiTags('settings')
 @Controller('settings')
 @UseGuards(AuthGuard, PermissionsGuard)
@@ -205,5 +222,41 @@ export class SettingsController {
   @RequirePermissions('unit.manage')
   updateChair(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateChairDto) {
     return this.settings.updateChair(req.auth.organizationId, req.auth.userId, id, body);
+  }
+
+  @Get('clinics')
+  @RequirePermissions('clinic.view')
+  clinics(@Req() req: AuthenticatedRequest, @Query('includeInactive') includeInactive?: string) {
+    return this.settings.listClinics(req.auth.organizationId, includeInactive === 'true');
+  }
+
+  @Post('clinics')
+  @RequirePermissions('clinic.manage')
+  createClinic(@Req() req: AuthenticatedRequest, @Body() body: CreateClinicDto) {
+    return this.settings.createClinic(req.auth.organizationId, req.auth.userId, body);
+  }
+
+  @Patch('clinics/:id')
+  @RequirePermissions('clinic.manage')
+  updateClinic(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateClinicDto) {
+    return this.settings.updateClinic(req.auth.organizationId, req.auth.userId, id, body);
+  }
+
+  @Get('outbox/dead-letter')
+  @RequirePermissions('organization.manage', 'audit.view')
+  deadLetter(@Query('limit') limit?: string) {
+    return this.settings.listDeadLetterOutbox(limit ? Number(limit) : 50);
+  }
+
+  @Post('outbox/dead-letter/:id/retry')
+  @RequirePermissions('organization.manage')
+  retryDeadLetter(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.settings.retryDeadLetterOutbox(id, req.auth.userId);
+  }
+
+  @Post('outbox/dead-letter/:id/discard')
+  @RequirePermissions('organization.manage')
+  discardDeadLetter(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.settings.discardDeadLetterOutbox(id, req.auth.userId);
   }
 }
