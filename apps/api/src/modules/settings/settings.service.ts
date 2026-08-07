@@ -1,17 +1,22 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, prisma } from '@sonder/database';
+import { createStorageAdapter } from '@sonder/storage';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
 
 const json = (value: unknown) => value as Prisma.InputJsonValue;
+const brandingAssetUrl = z.string().trim().min(1).max(2048).optional();
 const brandingSchema = z.object({
   name: z.string().trim().min(2),
   subtitle: z.string(),
   primaryColor: z.string().regex(/^#[0-9a-f]{6}$/i),
-  logoUrl: z.string().url().optional(),
-  faviconUrl: z.string().url().optional(),
+  logoUrl: brandingAssetUrl,
+  faviconUrl: brandingAssetUrl,
 });
+const MAX_BRANDING_BYTES = 2 * 1024 * 1024;
+const ALLOWED_BRANDING_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon']);
+
 const legalSchema = z.object({
   type: z.enum(['PRIVACY', 'TERMS', 'CONSENT']),
   title: z.string().trim().min(2),
@@ -43,6 +48,7 @@ export type LegalDocument = {
 
 @Injectable()
 export class SettingsService {
+  private readonly storage = createStorageAdapter();
   operationalContext(organizationId: string) {
     return Promise.all([
       prisma.clinic.findMany({
@@ -220,6 +226,83 @@ export class SettingsService {
       });
       return tag;
     });
+  }
+
+  async uploadBrandingAsset(
+    organizationId: string,
+    actorId: string,
+    clinicId: string,
+    kind: 'logo' | 'favicon',
+    file: { originalname: string; size: number; buffer: Buffer; mimetype: string },
+  ) {
+    await this.assertClinic(organizationId, clinicId);
+    if (!this.storage.enabled) {
+      throw new BadRequestException(
+        this.storage.disabledReason
+          ?? 'Storage desabilitado — configure STORAGE_DRIVER=local ou MinIO/S3 com credenciais.',
+      );
+    }
+    if (!file?.buffer?.length) throw new BadRequestException('Envie um arquivo de imagem.');
+    if (file.size > MAX_BRANDING_BYTES) throw new BadRequestException('A imagem deve ter no máximo 2 MB.');
+    const mime = file.mimetype || 'application/octet-stream';
+    if (!ALLOWED_BRANDING_TYPES.has(mime)) {
+      throw new BadRequestException('Envie PNG, JPEG, WEBP, SVG ou ICO.');
+    }
+    const extension = file.originalname.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '';
+    const stored = await this.storage.putObject({
+      organizationId,
+      clinicId,
+      filename: `${kind}${extension || '.png'}`,
+      contentType: mime,
+      body: file.buffer,
+      keyPrefix: 'branding',
+      metadata: { kind: `branding-${kind}`, clinicId },
+    });
+    const checksum = createHash('sha256').update(file.buffer).digest('hex');
+    const fileObject = await prisma.fileObject.create({
+      data: {
+        organizationId,
+        bucket: stored.bucket,
+        objectKey: stored.objectKey,
+        originalName: file.originalname,
+        mimeType: mime,
+        extension: extension || null,
+        sizeBytes: BigInt(file.size),
+        checksum,
+        status: 'AVAILABLE',
+        antivirusStatus: 'PENDING',
+        createdById: actorId,
+        metadata: json({ kind: `branding-${kind}`, clinicId }),
+      },
+    });
+    await prisma.auditEvent.create({
+      data: {
+        actorId,
+        action: 'branding.asset.uploaded',
+        entity: 'FileObject',
+        entityId: fileObject.id,
+        clinicId,
+        changes: { kind, mime },
+        correlationId: randomUUID(),
+      },
+    });
+    return {
+      fileId: fileObject.id,
+      url: `/api/v1/settings/branding/assets/${fileObject.id}`,
+      kind,
+    };
+  }
+
+  async getBrandingAsset(organizationId: string, fileId: string) {
+    const file = await prisma.fileObject.findFirst({
+      where: { id: fileId, organizationId },
+    });
+    const kind = String((file?.metadata as { kind?: string } | null)?.kind ?? '');
+    if (!file || !kind.startsWith('branding-')) {
+      throw new NotFoundException('Asset de identidade não encontrado.');
+    }
+    const body = await this.storage.getObject(file.objectKey);
+    return { body, mimeType: file.mimeType, originalName: file.originalName };
   }
 
   private async assertClinic(organizationId: string, clinicId: string) {

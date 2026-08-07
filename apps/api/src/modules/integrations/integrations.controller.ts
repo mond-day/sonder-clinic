@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsIn, IsObject, IsOptional, IsUUID } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
@@ -13,6 +13,10 @@ class SaveIntegrationDto {
   @IsOptional() @IsUUID() scopeId?: string;
   @IsObject() credentials!: Record<string, string>;
   @IsOptional() @IsObject() configuration?: Record<string, unknown>;
+}
+
+class PatchIntegrationDto {
+  @IsIn(['ACTIVE', 'DISABLED']) status!: 'ACTIVE' | 'DISABLED';
 }
 
 @ApiTags('integrations')
@@ -37,6 +41,12 @@ export class IntegrationsController {
   @RequirePermissions('integration.manage')
   save(@Req() request: AuthenticatedRequest, @Body() input: SaveIntegrationDto) {
     return this.integrations.save(request.auth.organizationId, request.auth.userId, input);
+  }
+
+  @Patch(':id')
+  @RequirePermissions('integration.manage')
+  patch(@Req() request: AuthenticatedRequest, @Param('id') id: string, @Body() body: PatchIntegrationDto) {
+    return this.integrations.setStatus(request.auth.organizationId, request.auth.userId, id, body.status);
   }
 
   @Delete(':id/credentials')

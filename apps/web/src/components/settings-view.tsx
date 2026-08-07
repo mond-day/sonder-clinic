@@ -6,10 +6,14 @@ import {
   Building2,
   CircleDollarSign,
   ClipboardList,
+  Eye,
   FileText,
   MessageSquare,
+  MoreHorizontal,
   Palette,
+  Pencil,
   Plug,
+  Power,
   RefreshCcw,
   RefreshCw,
   ShieldCheck,
@@ -18,6 +22,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import { formatDnSummary } from '@/lib/dn-parse';
 import { currency, dateOnly, initials, list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { AnamnesisTemplateEditor } from '@/features/anamnesis/template-editor';
 import { ModuleActions } from './module-actions';
@@ -40,6 +45,8 @@ type SectionKey =
   | 'certificate'
   | 'legal';
 
+type ConfigModal = 'branding' | 'integration' | 'tags' | 'certificate' | 'procedure' | null;
+
 const sections: Array<{
   key: SectionKey;
   label: string;
@@ -48,12 +55,12 @@ const sections: Array<{
 }> = [
   { key: 'overview', label: 'Visão geral', description: 'Todas as áreas de configuração da clínica.', icon: ShieldCheck },
   { key: 'anamnesis', label: 'Anamnese (modelos)', description: 'Editor visual drag-and-drop de seções e perguntas.', icon: ClipboardList },
-  { key: 'units', label: 'Unidades, consultórios e equipe', description: 'Estrutura, cadeiras e profissionais ativos.', icon: Building2 },
-  { key: 'procedures', label: 'Procedimentos e especialidades', description: 'Tabela de valores e gatilhos de laboratório.', icon: Stethoscope },
-  { key: 'returns', label: 'Retornos automáticos', description: 'Regras por procedimento e especialidade.', icon: RefreshCcw },
-  { key: 'finance', label: 'Financeiro e comissões', description: 'Contas, categorias, taxas e regras.', icon: CircleDollarSign },
-  { key: 'communication', label: 'WhatsApp e comunicações', description: 'Conexões, templates e confirmações.', icon: MessageSquare },
-  { key: 'integrations', label: 'Integrações e API', description: 'Webhooks, chaves e logs.', icon: Plug },
+  { key: 'units', label: 'Unidades, consultórios e equipe', description: 'Estrutura física, cadeiras e profissionais ativos.', icon: Building2 },
+  { key: 'procedures', label: 'Procedimentos e especialidades', description: 'Catálogo clínico que alimenta agenda e planos.', icon: Stethoscope },
+  { key: 'returns', label: 'Retornos automáticos', description: 'Fila de contato e regras de retorno pós-atendimento.', icon: RefreshCcw },
+  { key: 'finance', label: 'Financeiro e comissões', description: 'Contas, categorias, taxas e regras de repasse.', icon: CircleDollarSign },
+  { key: 'communication', label: 'WhatsApp e comunicações', description: 'Entregas, confirmações e lembretes enviados.', icon: MessageSquare },
+  { key: 'integrations', label: 'Integrações e API', description: 'Provedores externos, credenciais e status.', icon: Plug },
   { key: 'branding', label: 'Identidade visual', description: 'Nome, cores e logotipo do tenant.', icon: Palette },
   { key: 'tags', label: 'Etiquetas da agenda', description: 'Cores e nomes para organizar agendamentos.', icon: Tag },
   { key: 'certificate', label: 'Certificado digital A1', description: 'Status seguro para receitas e atestados.', icon: KeyRound },
@@ -85,7 +92,11 @@ export function SettingsView() {
   const [legal, setLegal] = useState<RecordValue[]>([]);
   const [agendaTags, setAgendaTags] = useState<RecordValue[]>([]);
   const [certificate, setCertificate] = useState<RecordValue | null>(null);
-  const [configModal, setConfigModal] = useState<'branding' | 'integration' | 'tags' | 'certificate' | null>(null);
+  const [configModal, setConfigModal] = useState<ConfigModal>(null);
+  const [certificateEditing, setCertificateEditing] = useState(false);
+  const [viewingIntegration, setViewingIntegration] = useState<RecordValue | null>(null);
+  const [integrationProviderPrefill, setIntegrationProviderPrefill] = useState<string | undefined>();
+  const [integrationMenuId, setIntegrationMenuId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -142,16 +153,63 @@ export function SettingsView() {
 
   const overviewCards = sections.filter((item) => item.key !== 'overview');
   const activeLabel = sections.find((item) => item.key === section)?.label ?? 'Configurações';
+  const certificateSubject = formatDnSummary(certificate?.subject);
+  const certificateIssuer = formatDnSummary(certificate?.issuer);
+
+  function openCertificateModal() {
+    setCertificateEditing(!certificate?.configured);
+    setConfigModal('certificate');
+  }
+
+  function closeConfigModal() {
+    setConfigModal(null);
+    setCertificateEditing(false);
+    setIntegrationProviderPrefill(undefined);
+  }
+
+  function openIntegrationConfig(provider?: string) {
+    setIntegrationProviderPrefill(provider);
+    setConfigModal('integration');
+    setIntegrationMenuId(null);
+  }
 
   async function createTag(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
       await api.post('/settings/agenda-tags', { clinicId, name: String(data.get('name')), color: String(data.get('color')) });
-      setConfigModal(null);
+      closeConfigModal();
       load();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível criar a etiqueta.');
+    }
+  }
+
+  async function inactivateTag(id: string) {
+    try {
+      await api.patch(`/settings/agenda-tags/${id}`, { active: false });
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível inativar a etiqueta.');
+    }
+  }
+
+  async function createProcedure(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      await api.post('/procedures', {
+        internalCode: String(data.get('internalCode')),
+        tussCode: String(data.get('tussCode') || '') || undefined,
+        name: String(data.get('name')),
+        specialty: String(data.get('specialty') || '') || undefined,
+        defaultDuration: Number(data.get('defaultDuration')),
+        defaultSessions: Number(data.get('defaultSessions') || 1),
+      });
+      closeConfigModal();
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o procedimento.');
     }
   }
 
@@ -161,10 +219,20 @@ export function SettingsView() {
     data.set('clinicId', clinicId);
     try {
       await api.postForm('/settings/certificate', data);
-      setConfigModal(null);
+      closeConfigModal();
       load();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível validar e armazenar o certificado.');
+    }
+  }
+
+  async function disableIntegration(id: string) {
+    try {
+      await api.patch(`/integrations/${id}`, { status: 'DISABLED' });
+      setIntegrationMenuId(null);
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível inativar a integração.');
     }
   }
 
@@ -180,34 +248,112 @@ export function SettingsView() {
         }
       />
       {error && <div className="secure-notice form-error" role="alert">{error}</div>}
-      <Modal open={configModal === 'branding'} title="Identidade visual" description="Alterações auditadas e aplicadas à clínica." onClose={() => setConfigModal(null)}>
-        <ModuleActions module="integracoes" configurationKind="branding" clinicId={clinicId} clinics={clinics} professionals={professionals} patients={[]} selectedPatientId="" onPatientChange={() => undefined} onSaved={() => { load(); setConfigModal(null); }} />
+      <Modal open={configModal === 'branding'} title="Identidade visual" description="Alterações auditadas e aplicadas à clínica. O logotipo é enviado por este formulário." onClose={closeConfigModal}>
+        <ModuleActions module="integracoes" configurationKind="branding" clinicId={clinicId} clinics={clinics} professionals={professionals} patients={[]} selectedPatientId="" onPatientChange={() => undefined} onSaved={() => { load(); closeConfigModal(); }} />
       </Modal>
-      <Modal open={configModal === 'integration'} title="Configurar integração" description="Nibo e demais provedores usam credenciais criptografadas e mascaradas." onClose={() => setConfigModal(null)}>
-        <ModuleActions module="integracoes" configurationKind="integration" clinicId={clinicId} clinics={clinics} professionals={professionals} patients={[]} selectedPatientId="" onPatientChange={() => undefined} onSaved={() => { load(); setConfigModal(null); }} />
+      <Modal open={configModal === 'integration'} title="Configurar integração" description="Cada provedor tem campos próprios. Credenciais ficam criptografadas e mascaradas na leitura." onClose={closeConfigModal}>
+        <ModuleActions
+          key={integrationProviderPrefill ?? 'new'}
+          module="integracoes"
+          configurationKind="integration"
+          clinicId={clinicId}
+          clinics={clinics}
+          professionals={professionals}
+          patients={[]}
+          selectedPatientId=""
+          onPatientChange={() => undefined}
+          initialIntegrationProvider={integrationProviderPrefill}
+          onSaved={() => { load(); closeConfigModal(); }}
+        />
       </Modal>
-      <Modal open={configModal === 'tags'} title="Nova etiqueta da agenda" description="A categoria clínica permanece separada das etiquetas operacionais." onClose={() => setConfigModal(null)} size="small">
+      <Modal open={Boolean(viewingIntegration)} title="Resumo da integração" description="Visão somente leitura da conexão selecionada." onClose={() => setViewingIntegration(null)} size="small">
+        {viewingIntegration ? (
+          <div className="info-grid">
+            <div className="info-item"><small>Provedor</small><strong>{text(viewingIntegration.provider)}</strong></div>
+            <div className="info-item"><small>Status</small><strong>{presentationLabel(viewingIntegration.status)}</strong></div>
+            <div className="info-item"><small>Escopo</small><strong>{text(viewingIntegration.scopeType ?? viewingIntegration.source, '—')}</strong></div>
+            <div className="info-item"><small>Modo</small><strong>{text(viewingIntegration.mode, 'persistido')}</strong></div>
+            <div className="info-item"><small>Credenciais</small><strong>{viewingIntegration.credentials && typeof viewingIntegration.credentials === 'object' && (viewingIntegration.credentials as RecordValue).configured ? 'Configuradas' : 'Não configuradas'}</strong></div>
+            <div className="info-item"><small>Última sincronização</small><strong>{viewingIntegration.lastSyncAt ? dateOnly(viewingIntegration.lastSyncAt) : '—'}</strong></div>
+            {viewingIntegration.configuration && typeof viewingIntegration.configuration === 'object' ? (
+              <div className="info-item span-2">
+                <small>Configuração</small>
+                <strong>{Object.keys(viewingIntegration.configuration as object).length
+                  ? Object.entries(viewingIntegration.configuration as Record<string, unknown>).map(([key, value]) => `${key}: ${text(value)}`).join(' · ')
+                  : 'Sem parâmetros adicionais'}</strong>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Modal>
+      <Modal open={configModal === 'tags'} title="Nova etiqueta da agenda" description="A categoria clínica permanece separada das etiquetas operacionais." onClose={closeConfigModal} size="small">
         <form className="mutation-form" onSubmit={createTag}>
           <label>Nome<input name="name" minLength={2} maxLength={40} required autoFocus /></label>
           <label>Cor<input name="color" type="color" defaultValue="#159a96" required /></label>
           <button className="button primary">Criar etiqueta</button>
         </form>
       </Modal>
-      <Modal open={configModal === 'certificate'} title="Certificado digital A1" description="O arquivo e a senha nunca são expostos ou disponibilizados para download." onClose={() => setConfigModal(null)} size="small">
-        <div className="info-grid">
-          <div className="info-item"><small>Certificado</small><strong>{certificate?.configured ? 'Configurado' : 'Não configurado'}</strong></div>
-          <div className="info-item"><small>Senha</small><strong>{certificate?.passwordConfigured ? 'Configurada' : 'Não configurada'}</strong></div>
-          {certificate?.subject ? <div className="info-item"><small>Titular</small><strong>{text(certificate.subject)}</strong></div> : null}
-          {certificate?.issuer ? <div className="info-item"><small>Emissor</small><strong>{text(certificate.issuer)}</strong></div> : null}
-          {certificate?.serialNumber ? <div className="info-item"><small>Número de série</small><strong>{text(certificate.serialNumber)}</strong></div> : null}
-          {certificate?.validTo ? <div className="info-item"><small>Validade</small><strong>{dateOnly(certificate.validTo)}</strong></div> : null}
-        </div>
-        <form className="mutation-form" onSubmit={uploadCertificate}>
-          <label className="span-2">Arquivo PKCS#12<input name="file" type="file" accept=".pfx,.p12,application/x-pkcs12" required /></label>
-          <label className="span-2">Senha do certificado<input name="password" type="password" autoComplete="new-password" required /></label>
-          <button className="button primary">Validar e armazenar</button>
+      <Modal open={configModal === 'procedure'} title="Novo procedimento" description="Cadastro no catálogo clínico da organização (POST /procedures)." onClose={closeConfigModal}>
+        <form className="mutation-form" onSubmit={createProcedure}>
+          <label>Código interno<input name="internalCode" minLength={1} required autoFocus /></label>
+          <label>Código TUSS<input name="tussCode" placeholder="Opcional" /></label>
+          <label className="span-2">Nome<input name="name" minLength={2} required /></label>
+          <label>Especialidade<input name="specialty" placeholder="Ex.: Ortodontia" /></label>
+          <label>Duração (min)<input name="defaultDuration" type="number" min={1} defaultValue={30} required /></label>
+          <label>Sessões padrão<input name="defaultSessions" type="number" min={1} defaultValue={1} /></label>
+          <button className="button primary">Criar procedimento</button>
         </form>
-        <div className="secure-notice" style={{ margin: 14 }}>Máximo de 5 MB. O arquivo fica em storage privado e a senha é criptografada com AES-256-GCM.</div>
+      </Modal>
+      <Modal
+        open={configModal === 'certificate'}
+        title="Certificado digital A1"
+        description="O arquivo e a senha nunca são expostos ou disponibilizados para download."
+        onClose={closeConfigModal}
+        size="small"
+      >
+        {!certificateEditing ? (
+          <>
+            <div className="info-grid">
+              <div className="info-item"><small>Certificado</small><strong>{certificate?.configured ? 'Configurado' : 'Não configurado'}</strong></div>
+              <div className="info-item"><small>Senha</small><strong>{certificate?.passwordConfigured ? 'Configurada' : 'Não configurada'}</strong></div>
+              {certificate?.subject ? (
+                <div className="info-item span-2">
+                  <small>Titular</small>
+                  <strong>{certificateSubject.title}</strong>
+                  {certificateSubject.detail ? <span>{certificateSubject.detail}</span> : null}
+                </div>
+              ) : null}
+              {certificate?.issuer ? (
+                <div className="info-item span-2">
+                  <small>Emissor</small>
+                  <strong>{certificateIssuer.title}</strong>
+                  {certificateIssuer.detail ? <span>{certificateIssuer.detail}</span> : null}
+                </div>
+              ) : null}
+              {certificate?.serialNumber ? <div className="info-item"><small>Número de série</small><strong>{text(certificate.serialNumber)}</strong></div> : null}
+              {certificate?.validTo ? <div className="info-item"><small>Validade</small><strong>{dateOnly(certificate.validTo)}</strong></div> : null}
+            </div>
+            <div className="modal-footer">
+              <button className="button primary" type="button" onClick={() => setCertificateEditing(true)}>
+                Substituir certificado
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <form className="mutation-form" onSubmit={uploadCertificate}>
+              <label className="span-2">Arquivo PKCS#12<input name="file" type="file" accept=".pfx,.p12,application/x-pkcs12" required /></label>
+              <label className="span-2">Senha do certificado<input name="password" type="password" autoComplete="new-password" required /></label>
+              <button className="button primary">Validar e armazenar</button>
+            </form>
+            {certificate?.configured ? (
+              <div className="modal-footer">
+                <button className="button soft" type="button" onClick={() => setCertificateEditing(false)}>Voltar à visualização</button>
+              </div>
+            ) : null}
+            <div className="secure-notice" style={{ margin: 14 }}>Máximo de 5 MB. O arquivo fica em storage privado e a senha é criptografada com AES-256-GCM.</div>
+          </>
+        )}
       </Modal>
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Seções de configuração">
@@ -247,11 +393,14 @@ export function SettingsView() {
           {section === 'units' && (
             <Panel
               title={activeLabel}
-              description={`${clinics.length} ${clinics.length === 1 ? 'clínica' : 'clínicas'} · ${clinic?.units.length ?? 0} unidades · ${chairCount} cadeiras`}
+              description="Estrutura física da clínica (unidades e cadeiras) e profissionais disponíveis na agenda."
             >
               {loading && <div className="state-message">Carregando estrutura…</div>}
               {!loading && (clinic?.units.length ?? 0) === 0 && (
-                <EmptyState title="Nenhuma unidade ativa" description="Cadastre unidades para habilitar a agenda por cadeira." />
+                <EmptyState
+                  title="Nenhuma unidade cadastrada"
+                  description="Sem unidades, a agenda não consegue alocar cadeiras. A estrutura atual vem do contexto da clínica."
+                />
               )}
               {(clinic?.units.length ?? 0) > 0 && (
                 <div className="settings-list">
@@ -270,10 +419,10 @@ export function SettingsView() {
                 </div>
               )}
               <p className="muted-note" style={{ padding: '0 14px 14px' }}>
-                Criação e edição de unidades/cadeiras ainda não têm endpoint dedicado; a estrutura vem de
-                {' '}<code>GET /settings/context</code>.
+                {clinics.length} {clinics.length === 1 ? 'clínica' : 'clínicas'} · {clinic?.units.length ?? 0} unidades · {chairCount} cadeiras.
+                Criação dedicada de unidades/cadeiras ainda usa o contexto administrativo; a listagem vem de <code>GET /settings/context</code>.
               </p>
-              {professionals.length > 0 && (
+              {professionals.length > 0 ? (
                 <div className="table-wrap">
                   <table className="data-table">
                     <thead>
@@ -301,23 +450,37 @@ export function SettingsView() {
                     </tbody>
                   </table>
                 </div>
+              ) : (
+                <EmptyState title="Nenhum profissional listado" description="Profissionais aparecem aqui a partir do contexto da clínica." />
               )}
-              <p className="muted-note" style={{ padding: '0 14px 14px' }}>
-                A tela &quot;Equipe e permissões&quot; do protótipo depende de endpoints de usuários e papéis
-                (<code>/users</code>, <code>/roles</code>) que a API ainda não expõe. Aqui listamos apenas os
-                profissionais reais de <code>GET /settings/context</code>, sem inventar papéis ou permissões.
-              </p>
+              <div className="settings-list">
+                <div className="settings-row">
+                  <div>
+                    <strong>Usuários e permissões</strong>
+                    <span>Convites, papéis e bloqueios são gerenciados na área de usuários</span>
+                  </div>
+                  <Link className="button small" href="/usuarios">Abrir usuários</Link>
+                </div>
+              </div>
             </Panel>
           )}
 
           {section === 'procedures' && (
             <Panel
               title={activeLabel}
-              description={`${procedures.length} procedimentos · ${specialties.length} especialidades`}
+              description="Catálogo usado em planos de tratamento, duração na agenda e especialidades."
+              actions={(
+                <button className="button primary small" type="button" onClick={() => setConfigModal('procedure')}>
+                  Novo procedimento
+                </button>
+              )}
             >
               {loading && <div className="state-message">Carregando procedimentos…</div>}
               {!loading && procedures.length === 0 && (
-                <EmptyState title="Nenhum procedimento cadastrado" description="A tabela alimenta planos de tratamento e agenda." />
+                <EmptyState
+                  title="Nenhum procedimento cadastrado"
+                  description="Cadastre o catálogo clínico para preencher planos, orçamentos e slots da agenda."
+                />
               )}
               {procedures.length > 0 && (
                 <div className="table-wrap">
@@ -351,19 +514,23 @@ export function SettingsView() {
                   </table>
                 </div>
               )}
+              <p className="muted-note" style={{ padding: '0 14px 14px' }}>
+                {procedures.length} procedimentos · {specialties.length} especialidades.
+                Novos itens usam <code>POST /procedures</code> e passam a valer para toda a organização.
+              </p>
             </Panel>
           )}
 
           {section === 'returns' && (
             <Panel
               title={activeLabel}
-              description="Situação atual da central de retornos desta clínica"
+              description="Central de retornos: alertas manuais hoje; automação por procedimento ainda em evolução."
             >
               <div className="settings-list">
                 <div className="settings-row">
                   <div>
                     <strong>Retornos vencidos</strong>
-                    <span>Alertas com prazo anterior a hoje</span>
+                    <span>Alertas com prazo anterior a hoje — prioridade de contato</span>
                   </div>
                   <StatusBadge tone={returnSummary?.overdue ? 'red' : 'green'}>{returnSummary?.overdue ?? 0}</StatusBadge>
                 </div>
@@ -384,15 +551,14 @@ export function SettingsView() {
                 <div className="settings-row">
                   <div>
                     <strong>Fila de contato</strong>
-                    <span>Abrir a central para tratar os alertas</span>
+                    <span>Tratar alertas na central de retornos</span>
                   </div>
                   <Link className="button small primary" href="/retornos">Abrir central</Link>
                 </div>
               </div>
               <p className="muted-note" style={{ padding: '0 14px 14px' }}>
-                A geração automática por procedimento depende de um endpoint de regras
-                (<code>AutomationRule</code>) ainda não exposto. Hoje os alertas são criados manualmente
-                em <code>POST /return-alerts</code> ou pelo seed.
+                Hoje os alertas são <strong>manuais</strong> (<code>POST /return-alerts</code>) ou vindos do seed.
+                A geração <strong>automática</strong> por procedimento/especialidade ainda não tem endpoint de regras exposto nesta tela.
               </p>
             </Panel>
           )}
@@ -400,11 +566,14 @@ export function SettingsView() {
           {section === 'finance' && (
             <Panel
               title={activeLabel}
-              description={`${rules.length} ${rules.length === 1 ? 'regra de comissão' : 'regras de comissão'} vigentes`}
+              description="Regras de comissão da organização e atalho para contas e conciliação no módulo financeiro."
             >
               {loading && <div className="state-message">Carregando regras…</div>}
               {!loading && rules.length === 0 && (
-                <EmptyState title="Nenhuma regra de comissão" description="Configure regras para calcular repasses por profissional." />
+                <EmptyState
+                  title="Nenhuma regra de comissão"
+                  description="Defina bases e percentuais para calcular repasses por profissional."
+                />
               )}
               {rules.length > 0 && (
                 <div className="table-wrap">
@@ -441,8 +610,15 @@ export function SettingsView() {
               <div className="settings-list">
                 <div className="settings-row">
                   <div>
-                    <strong>Contas, categorias e conciliação</strong>
-                    <span>Gerencie títulos, recebimentos e comissões no módulo financeiro</span>
+                    <strong>Comissões</strong>
+                    <span>Detalhe e gestão das regras no módulo financeiro</span>
+                  </div>
+                  <Link className="button small primary" href="/financeiro?tab=commissions">Abrir comissões</Link>
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <strong>Contas e conciliação</strong>
+                    <span>Títulos a receber, pagamentos e visão geral financeira</span>
                   </div>
                   <Link className="button small" href="/financeiro">Abrir financeiro</Link>
                 </div>
@@ -453,11 +629,14 @@ export function SettingsView() {
           {section === 'communication' && (
             <Panel
               title={activeLabel}
-              description={`${deliveries.length} entregas registradas`}
+              description="Histórico de entregas WhatsApp e demais canais (confirmações, lembretes e retornos)."
             >
               {loading && <div className="state-message">Carregando entregas…</div>}
               {!loading && deliveries.length === 0 && (
-                <EmptyState title="Nenhuma entrega registrada" description="Conecte um canal para enviar confirmações e lembretes." />
+                <EmptyState
+                  title="Nenhuma entrega registrada"
+                  description="Quando a clínica enviar confirmações ou lembretes via WhatsApp, o status aparece aqui."
+                />
               )}
               {deliverySummary.length > 0 && (
                 <div className="settings-list">
@@ -502,42 +681,98 @@ export function SettingsView() {
                   </table>
                 </div>
               )}
+              <p className="muted-note" style={{ padding: '0 14px 14px' }}>
+                Esta seção mostra entregas já enfileiradas/enviadas. A conexão do canal (Evolution/Chatwoot) fica em Integrações.
+              </p>
             </Panel>
           )}
 
           {section === 'integrations' && (
             <Panel
               title={activeLabel}
-              description={`${integrations.length} conexões e provedores disponíveis`}
+              description="Provedores com formulário específico (Nibo, pagamentos, WhatsApp, agenda e IA)."
             >
               {loading && <div className="state-message">Carregando integrações…</div>}
               {!loading && integrations.length === 0 && (
-                <EmptyState title="Nenhuma integração" description="Cadastre credenciais para habilitar provedores." />
+                <EmptyState title="Nenhuma integração" description="Configure um provedor para sincronizar dados ou enviar mensagens." />
               )}
               {integrations.length > 0 && (
                 <div className="settings-list">
-                  {integrations.map((item, index) => (
-                    <div className="settings-row" key={`${text(item.provider)}-${index}`}>
-                      <div>
-                        <strong>{text(item.provider)}</strong>
-                        <span>
-                          {text(item.scopeType ?? item.source)} · modo {text(item.mode, 'persistido')}
-                          {item.lastSyncAt ? ` · última sincronização ${dateOnly(item.lastSyncAt)}` : ''}
-                        </span>
+                  {integrations.map((item, index) => {
+                    const rowId = text(item.id, `${text(item.provider)}-${index}`);
+                    const hasId = Boolean(item.id);
+                    return (
+                      <div className="settings-row" key={rowId}>
+                        <div>
+                          <strong>{text(item.provider)}</strong>
+                          <span>
+                            {text(item.scopeType ?? item.source)} · modo {text(item.mode, 'persistido')}
+                            {item.lastSyncAt ? ` · última sincronização ${dateOnly(item.lastSyncAt)}` : ''}
+                          </span>
+                        </div>
+                        <div className="row-actions">
+                          <StatusBadge tone={item.status === 'ACTIVE' ? 'green' : item.status === 'ERROR' ? 'red' : 'gray'}>
+                            {presentationLabel(item.status)}
+                          </StatusBadge>
+                          <button
+                            type="button"
+                            className="icon-button"
+                            title="Visualizar"
+                            aria-label={`Visualizar ${text(item.provider)}`}
+                            onClick={() => setViewingIntegration(item)}
+                          >
+                            <Eye size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-button"
+                            title="Editar"
+                            aria-label={`Editar ${text(item.provider)}`}
+                            onClick={() => openIntegrationConfig(text(item.provider))}
+                          >
+                            <Pencil size={15} />
+                          </button>
+                          {hasId ? (
+                            <div className="row-menu">
+                              <button
+                                type="button"
+                                className="icon-button"
+                                title="Mais ações"
+                                aria-label="Mais ações"
+                                aria-expanded={integrationMenuId === rowId}
+                                onClick={() => setIntegrationMenuId((current) => (current === rowId ? null : rowId))}
+                              >
+                                <MoreHorizontal size={15} />
+                              </button>
+                              {integrationMenuId === rowId ? (
+                                <div className="row-menu-popover" role="menu">
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => void disableIntegration(String(item.id))}
+                                  >
+                                    Inativar
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
-                      <StatusBadge tone={item.status === 'ACTIVE' ? 'green' : item.status === 'ERROR' ? 'red' : 'gray'}>
-                        {presentationLabel(item.status)}
-                      </StatusBadge>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
-              <div className="modal-footer"><button className="button primary" type="button" onClick={() => setConfigModal('integration')}>Configurar integração</button></div>
+              <div className="modal-footer">
+                <button className="button primary" type="button" onClick={() => openIntegrationConfig()}>
+                  Configurar integração
+                </button>
+              </div>
             </Panel>
           )}
 
           {section === 'branding' && (
-            <Panel title={activeLabel} description="Valores atuais aplicados ao tenant">
+            <Panel title={activeLabel} description="Identidade aplicada ao tenant. Upload de logotipo e cores pelo modal de edição.">
               {loading && <div className="state-message">Carregando identidade…</div>}
               {branding && (
                 <div className="info-grid">
@@ -558,27 +793,73 @@ export function SettingsView() {
                   </div>
                   <div className="info-item"><small>Domínio</small><strong>{text(branding.domain)}</strong></div>
                   <div className="info-item"><small>Origem</small><strong>{branding.source === 'tenant' ? 'Configurado na clínica' : 'Variáveis de ambiente'}</strong></div>
-                  <div className="info-item"><small>Logotipo</small><strong>{text(branding.logoUrl, 'Não definido')}</strong></div>
+                  <div className="info-item">
+                    <small>Logotipo</small>
+                    {branding.logoUrl ? (
+                      <strong>
+                        <img src={text(branding.logoUrl)} alt="" height={40} style={{ display: 'block', marginTop: 4, objectFit: 'contain' }} />
+                      </strong>
+                    ) : (
+                      <strong>Não definido</strong>
+                    )}
+                  </div>
                 </div>
               )}
+              <p className="muted-note" style={{ padding: '0 14px' }}>
+                Para alterar nome, cores ou enviar o logotipo, use o modal de edição.
+              </p>
               <div className="modal-footer"><button className="button primary" type="button" onClick={() => setConfigModal('branding')}>Editar identidade visual</button></div>
             </Panel>
           )}
 
           {section === 'tags' && (
-            <Panel title={activeLabel} description="Etiquetas operacionais configuráveis por clínica">
-              <div className="settings-list">
-                {agendaTags.map((tag) => <div className="settings-row" key={String(tag.id)}><div><strong><span style={{ color: text(tag.color) }}>●</span> {text(tag.name)}</strong><span>{text(tag.color)}</span></div><StatusBadge tone="green">Ativa</StatusBadge></div>)}
-                {!agendaTags.length ? <EmptyState title="Nenhuma etiqueta configurada" /> : null}
-              </div>
+            <Panel title={activeLabel} description="Etiquetas operacionais da agenda, com cor para leitura rápida.">
+              {agendaTags.length > 0 ? (
+                <div className="tags-grid">
+                  {agendaTags.map((tag) => (
+                    <div className="tag-card" key={String(tag.id)}>
+                      <span style={{ color: text(tag.color) }} aria-hidden>●</span>
+                      <div>
+                        <strong>{text(tag.name)}</strong>
+                        <span>{text(tag.color)}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title="Inativar etiqueta"
+                        aria-label={`Inativar ${text(tag.name)}`}
+                        onClick={() => void inactivateTag(String(tag.id))}
+                      >
+                        <Power size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState title="Nenhuma etiqueta configurada" description="Crie etiquetas coloridas para marcar compromissos na agenda." />
+              )}
               <div className="modal-footer"><button className="button primary" type="button" onClick={() => setConfigModal('tags')}>Nova etiqueta</button></div>
             </Panel>
           )}
 
           {section === 'certificate' && (
-            <Panel title={activeLabel} description="Status mascarado, sem download público">
-              <div className="settings-list"><div className="settings-row"><div><strong>{certificate?.configured ? 'Certificado configurado' : 'Certificado não configurado'}</strong><span>Armazenamento: {text(certificate?.storage, 'secret/path privado')}</span></div><StatusBadge tone={certificate?.configured ? 'green' : 'amber'}>{certificate?.configured ? 'Ativo' : 'Configurar'}</StatusBadge></div></div>
-              <div className="modal-footer"><button className="button primary" type="button" onClick={() => setConfigModal('certificate')}>Ver configuração segura</button></div>
+            <Panel title={activeLabel} description="Status mascarado, sem download público do arquivo PKCS#12.">
+              <div className="settings-list">
+                <div className="settings-row">
+                  <div>
+                    <strong>{certificate?.configured ? 'Certificado configurado' : 'Certificado não configurado'}</strong>
+                    <span>Armazenamento: {text(certificate?.storage, 'secret/path privado')}</span>
+                  </div>
+                  <StatusBadge tone={certificate?.configured ? 'green' : 'amber'}>
+                    {certificate?.configured ? 'Ativo' : 'Configurar'}
+                  </StatusBadge>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="button primary" type="button" onClick={openCertificateModal}>
+                  {certificate?.configured ? 'Ver configuração segura' : 'Configurar certificado'}
+                </button>
+              </div>
             </Panel>
           )}
 

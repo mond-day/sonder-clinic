@@ -149,6 +149,31 @@ export class IntegrationsService {
     return { success: true };
   }
 
+  async setStatus(organizationId: string, actorId: string, id: string, status: 'ACTIVE' | 'DISABLED') {
+    const connection = await prisma.integrationConnection.findFirst({
+      where: { id, clinic: { organizationId } },
+    });
+    if (!connection) throw new NotFoundException('Integração não encontrada.');
+    if (status === 'ACTIVE' && !connection.encryptedCredentials) {
+      throw new BadRequestException('Configure as credenciais antes de reativar a integração.');
+    }
+    await prisma.$transaction([
+      prisma.integrationConnection.update({ where: { id }, data: { status } }),
+      prisma.auditEvent.create({
+        data: {
+          actorId,
+          action: status === 'ACTIVE' ? 'integration.activated' : 'integration.disabled',
+          entity: 'IntegrationConnection',
+          entityId: id,
+          clinicId: connection.clinicId,
+          changes: { provider: connection.provider, status },
+          correlationId: randomUUID(),
+        },
+      }),
+    ]);
+    return { id, status };
+  }
+
   private hasCredentials(provider: Provider): boolean {
     const required: Record<Provider, string[]> = {
       NIBO: ['NIBO_API_TOKEN', 'NIBO_BASE_URL'],

@@ -1,7 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsHexColor, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { SettingsService } from './settings.service';
@@ -59,6 +60,37 @@ export class SettingsController {
   updateBranding(@Req() req: AuthenticatedRequest, @Body() body: BrandingDto) {
     const { clinicId, ...branding } = body;
     return this.settings.updateBranding(req.auth.organizationId, req.auth.userId, clinicId, branding);
+  }
+
+  @Post('branding/assets')
+  @RequirePermissions('clinic.manage')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024, files: 1 } }))
+  uploadBrandingAsset(
+    @Req() req: AuthenticatedRequest,
+    @UploadedFile() file: { originalname: string; size: number; buffer: Buffer; mimetype: string },
+    @Body('clinicId') clinicId: string,
+    @Body('kind') kind: 'logo' | 'favicon' = 'logo',
+  ) {
+    return this.settings.uploadBrandingAsset(
+      req.auth.organizationId,
+      req.auth.userId,
+      clinicId,
+      kind === 'favicon' ? 'favicon' : 'logo',
+      file,
+    );
+  }
+
+  @Get('branding/assets/:fileId')
+  @RequirePermissions('clinic.view')
+  async brandingAsset(
+    @Req() req: AuthenticatedRequest,
+    @Param('fileId') fileId: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const asset = await this.settings.getBrandingAsset(req.auth.organizationId, fileId);
+    res.setHeader('Content-Type', asset.mimeType);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    return new StreamableFile(asset.body);
   }
 
   @Get('legal')

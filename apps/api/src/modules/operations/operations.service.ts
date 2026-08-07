@@ -92,16 +92,29 @@ export class OperationsService {
     title?: string; notes?: string; discount?: string;
     items?: Array<{ id: string; unitPrice?: string; quantity?: number; status?: string }>;
   }) {
-    const plan = await prisma.treatmentPlan.findFirst({ where: { id, organizationId }, include: { items: true } });
+    const plan = await prisma.treatmentPlan.findFirst({
+      where: { id, organizationId },
+      include: { items: { include: { procedure: { select: { name: true } } } } },
+    });
     if (!plan) throw new NotFoundException('Plano de tratamento não encontrado.');
     if (['COMPLETED', 'CANCELLED'].includes(plan.status)) {
       throw new ConflictException('Plano concluído ou cancelado não pode ser editado.');
     }
+    const newlyCompleted: Array<{ id: string; professionalId: string; procedureName: string; toothFdi: string | null }> = [];
     return prisma.$transaction(async (tx) => {
       if (input.items?.length) {
         for (const item of input.items) {
           const existing = plan.items.find((row) => row.id === item.id);
           if (!existing) throw new ConflictException('Item não pertence ao plano.');
+          const nextStatus = item.status;
+          if (nextStatus === 'COMPLETED' && existing.status !== 'COMPLETED') {
+            newlyCompleted.push({
+              id: existing.id,
+              professionalId: existing.professionalId,
+              procedureName: existing.procedure.name,
+              toothFdi: existing.toothFdi,
+            });
+          }
           await tx.treatmentItem.update({
             where: { id: item.id },
             data: {
@@ -112,13 +125,17 @@ export class OperationsService {
           });
         }
       }
-      const refreshed = await tx.treatmentItem.findMany({ where: { treatmentPlanId: id } });
+      const refreshed = await tx.treatmentItem.findMany({
+        where: { treatmentPlanId: id },
+        include: { procedure: { select: { name: true } } },
+      });
       const subtotal = refreshed.reduce(
         (sum, item) => sum.add(item.unitPrice.mul(item.quantity)),
         new Prisma.Decimal(0),
       );
       const discount = money(input.discount ?? String(plan.discount));
-      return tx.treatmentPlan.update({
+      const allCompleted = refreshed.length > 0 && refreshed.every((item) => item.status === 'COMPLETED');
+      const updated = await tx.treatmentPlan.update({
         where: { id },
         data: {
           title: input.title ?? plan.title,
@@ -126,18 +143,114 @@ export class OperationsService {
           discount,
           subtotal,
           total: subtotal.sub(discount),
+          ...(allCompleted ? { status: 'COMPLETED' as const } : {}),
         },
         include: { items: true },
       });
+      for (const item of newlyCompleted) {
+        await this.createAutoEvolution(tx, {
+          organizationId,
+          clinicId: plan.clinicId,
+          patientId: plan.patientId,
+          professionalId: item.professionalId,
+          treatmentId: plan.id,
+          treatmentItemId: item.id,
+          renderedText: [
+            `Procedimento finalizado: ${item.procedureName}.`,
+            item.toothFdi ? `Dente FDI ${item.toothFdi}.` : null,
+            `Plano: ${plan.title}.`,
+            'Registro automático ao marcar o item como concluído.',
+          ].filter(Boolean).join(' '),
+        });
+      }
+      return updated;
     });
   }
 
-  addSession(organizationId: string, itemId: string, input: {
+  async addSession(organizationId: string, itemId: string, input: {
     professionalId: string; appointmentId?: string; executionNotes: string; materials?: unknown[];
     complications?: string; patientSignatureHash?: string; professionalSignatureHash?: string;
   }) {
-    return prisma.treatmentSession.create({
-      data: { treatmentItemId: itemId, ...input, materials: json(input.materials ?? []) },
+    const item = await prisma.treatmentItem.findFirst({
+      where: { id: itemId, plan: { organizationId } },
+      include: {
+        procedure: { select: { name: true } },
+        plan: { select: { id: true, clinicId: true, patientId: true, title: true } },
+      },
+    });
+    if (!item) throw new NotFoundException('Item de tratamento não encontrado.');
+    return prisma.$transaction(async (tx) => {
+      const session = await tx.treatmentSession.create({
+        data: { treatmentItemId: itemId, ...input, materials: json(input.materials ?? []) },
+      });
+      await tx.treatmentItem.update({ where: { id: itemId }, data: { status: 'COMPLETED' } });
+      const siblings = await tx.treatmentItem.findMany({ where: { treatmentPlanId: item.plan.id } });
+      if (siblings.every((row) => row.id === itemId || row.status === 'COMPLETED')) {
+        await tx.treatmentPlan.update({ where: { id: item.plan.id }, data: { status: 'COMPLETED' } });
+      }
+      await this.createAutoEvolution(tx, {
+        organizationId,
+        clinicId: item.plan.clinicId,
+        patientId: item.plan.patientId,
+        professionalId: input.professionalId,
+        treatmentId: item.plan.id,
+        treatmentItemId: item.id,
+        treatmentSessionId: session.id,
+        appointmentId: input.appointmentId,
+        toothFdi: item.toothFdi ?? undefined,
+        renderedText: [
+          `Sessão concluída: ${item.procedure.name}.`,
+          item.toothFdi ? `Dente FDI ${item.toothFdi}.` : null,
+          input.executionNotes.trim(),
+          input.complications ? `Complicações: ${input.complications}` : null,
+          `Plano: ${item.plan.title}.`,
+        ].filter(Boolean).join(' '),
+      });
+      return session;
+    });
+  }
+
+  private async createAutoEvolution(
+    tx: Prisma.TransactionClient,
+    input: {
+      organizationId: string;
+      clinicId: string;
+      patientId: string;
+      professionalId: string;
+      treatmentId: string;
+      treatmentItemId: string;
+      treatmentSessionId?: string;
+      appointmentId?: string;
+      toothFdi?: string;
+      renderedText: string;
+    },
+  ) {
+    const record = await tx.clinicalRecord.upsert({
+      where: { clinicId_patientId: { clinicId: input.clinicId, patientId: input.patientId } },
+      create: {
+        organizationId: input.organizationId,
+        clinicId: input.clinicId,
+        patientId: input.patientId,
+      },
+      update: {},
+    });
+    return tx.clinicalEntry.create({
+      data: {
+        clinicalRecordId: record.id,
+        professionalId: input.professionalId,
+        appointmentId: input.appointmentId,
+        treatmentId: input.treatmentId,
+        treatmentItemId: input.treatmentItemId,
+        treatmentSessionId: input.treatmentSessionId,
+        toothFdi: input.toothFdi,
+        type: 'EVOLUTION',
+        renderedText: input.renderedText,
+        structuredData: json({ schemaVersion: 1, source: 'auto-treatment-completion' }),
+        clinicalDate: new Date(),
+        status: 'SIGNED',
+        signedAt: new Date(),
+        contentHash: hash({ text: input.renderedText, at: new Date().toISOString() }),
+      },
     });
   }
 

@@ -427,8 +427,12 @@ export function ReturnsView() {
                         <button
                           type="button"
                           role="menuitem"
-                          disabled={busy}
-                          onClick={() => void patch(String(item.id), { status: 'SCHEDULED' }, 'Retorno marcado como agendado.')}
+                          disabled={busy || !patient.id}
+                          onClick={() => {
+                            setOpenMenuId('');
+                            void patch(String(item.id), { status: 'SCHEDULED' }, 'Retorno marcado como agendado.');
+                            router.push(`/agenda?patientId=${String(patient.id)}&new=1&returnId=${String(item.id)}`);
+                          }}
                         >Agendar</button>
                       )}
                       {status === 'SCHEDULED' && (

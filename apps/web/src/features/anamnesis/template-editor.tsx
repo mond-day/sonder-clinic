@@ -1,9 +1,11 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { Eye, MoreHorizontal, Pencil } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, Panel, StatusBadge } from '@/components/ui';
+import { Modal } from '@/components/modal';
 import {
   CONDITION_OPERATIONS,
   emptyAlertRule,
@@ -235,6 +237,8 @@ export function AnamnesisTemplateEditor() {
   const [dragQuestionId, setDragQuestionId] = useState<string | null>(null);
   const [dragSectionId, setDragSectionId] = useState<string | null>(null);
   const [rulesOpenId, setRulesOpenId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -334,11 +338,28 @@ export function AnamnesisTemplateEditor() {
         validityMonths: Number(data.get('validityMonths') || 6),
       });
       setMessage('Modelo rascunho criado.');
+      setCreateOpen(false);
       selectTemplate(created);
       await load();
       event.currentTarget.reset();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o modelo.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runTemplateAction(templateId: string, action: 'duplicate' | 'archive', success: string) {
+    setBusy(true);
+    setError('');
+    setMenuOpenId(null);
+    try {
+      const updated = await api.post<Template>(`/anamnesis/templates/${templateId}/${action}`);
+      setMessage(success);
+      selectTemplate(updated);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Ação não concluída.');
     } finally {
       setBusy(false);
     }
@@ -422,47 +443,122 @@ export function AnamnesisTemplateEditor() {
 
   return (
     <div className="anamnesis-editor">
+      <Modal
+        open={createOpen}
+        title="Novo modelo de anamnese"
+        description="Cria um rascunho editável com seções e perguntas iniciais."
+        onClose={() => setCreateOpen(false)}
+        size="small"
+      >
+        <form className="mutation-form" onSubmit={createTemplate}>
+          <label>Nome<input name="name" minLength={2} required placeholder="Modelo personalizado" autoFocus /></label>
+          <label>Público
+            <select name="audience" defaultValue="CUSTOM">
+              {AUDIENCES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
+          </label>
+          <label>Validade (meses)<input name="validityMonths" type="number" min={1} max={36} defaultValue={6} /></label>
+          <label className="span-2">Descrição<input name="description" placeholder="Opcional" /></label>
+          <button className="button primary" disabled={busy}>Criar rascunho</button>
+        </form>
+      </Modal>
       <Panel
         title="Modelos de anamnese"
         description="Editor visual com seções, perguntas, regras de visibilidade/alerta/risco, reordenação e publicação."
         actions={(
-          <button type="button" className="button soft small" disabled={busy || loading} onClick={() => void load()}>
-            Atualizar
-          </button>
+          <>
+            <button type="button" className="button primary small" disabled={busy} onClick={() => setCreateOpen(true)}>
+              Novo modelo
+            </button>
+            <button type="button" className="button soft small" disabled={busy || loading} onClick={() => void load()}>
+              Atualizar
+            </button>
+          </>
         )}
       >
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         {message ? <p className="muted-note">{message}</p> : null}
         <div className="anamnesis-editor-layout">
           <aside className="anamnesis-template-list">
-            <form className="mutation-form compact" onSubmit={createTemplate}>
-              <label>Nome<input name="name" minLength={2} required placeholder="Modelo personalizado" /></label>
-              <label>Público
-                <select name="audience" defaultValue="CUSTOM">
-                  {AUDIENCES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                </select>
-              </label>
-              <label>Validade (meses)<input name="validityMonths" type="number" min={1} max={36} defaultValue={6} /></label>
-              <label className="span-2">Descrição<input name="description" placeholder="Opcional" /></label>
-              <button className="button primary" disabled={busy}>＋ Novo rascunho</button>
-            </form>
             {loading ? <div className="state-message">Carregando modelos…</div> : null}
             {!loading && templates.length === 0 ? <EmptyState title="Nenhum modelo" description="Crie o primeiro rascunho." /> : null}
             <div className="template-stack">
               {templates.map((template) => (
-                <button
+                <article
                   key={template.id}
-                  type="button"
                   className={`template-card ${selectedId === template.id ? 'active' : ''}`}
-                  onClick={() => selectTemplate(template)}
                 >
-                  <strong>{text(template.name)}</strong>
-                  <span>{AUDIENCES.find((item) => item.value === template.audience)?.label ?? template.audience} · v{template.version}</span>
-                  <div className="template-meta">
-                    <StatusBadge tone={statusTone(template.status)}>{presentationLabel(template.status)}</StatusBadge>
-                    <span className="badge">{template.schemaJson?.sections?.length ?? 0} seções</span>
+                  <button
+                    type="button"
+                    className="template-card-main"
+                    onClick={() => selectTemplate(template)}
+                  >
+                    <strong>{text(template.name)}</strong>
+                    <span>{AUDIENCES.find((item) => item.value === template.audience)?.label ?? template.audience} · v{template.version}</span>
+                    <div className="template-meta">
+                      <StatusBadge tone={statusTone(template.status)}>{presentationLabel(template.status)}</StatusBadge>
+                      <span className="badge">{template.schemaJson?.sections?.length ?? 0} seções</span>
+                    </div>
+                  </button>
+                  <div className="template-card-actions">
+                    <button
+                      type="button"
+                      className="icon-button"
+                      title="Visualizar"
+                      aria-label={`Visualizar ${text(template.name)}`}
+                      onClick={() => selectTemplate(template)}
+                    >
+                      <Eye size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      title="Editar"
+                      aria-label={`Editar ${text(template.name)}`}
+                      onClick={() => selectTemplate(template)}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <div className="row-menu">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title="Mais ações"
+                        aria-label="Mais ações"
+                        aria-expanded={menuOpenId === template.id}
+                        onClick={() => setMenuOpenId((current) => (current === template.id ? null : template.id))}
+                      >
+                        <MoreHorizontal size={14} />
+                      </button>
+                      {menuOpenId === template.id ? (
+                        <div className="row-menu-popover" role="menu">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={busy}
+                            onClick={() => void runTemplateAction(template.id, 'duplicate', 'Cópia criada.')}
+                          >
+                            Duplicar
+                          </button>
+                          {template.status !== 'ARCHIVED' ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              disabled={busy}
+                              onClick={() => void runTemplateAction(template.id, 'archive', 'Modelo arquivado.')}
+                            >
+                              Arquivar
+                            </button>
+                          ) : (
+                            <button type="button" role="menuitem" disabled>
+                              Inativo
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                </button>
+                </article>
               ))}
             </div>
           </aside>

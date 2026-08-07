@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, MoreHorizontal, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import {
@@ -14,6 +14,7 @@ import {
   type RecordValue,
 } from '@/lib/format';
 import { ModuleActions } from './module-actions';
+import { Modal } from './modal';
 import { useSelection } from './selection-provider';
 import { EmptyState, PageHeader, Panel, StatusBadge } from './ui';
 
@@ -59,6 +60,7 @@ function nextActionLabel(appointment: RecordValue | null, pendingReturn: RecordV
 }
 
 export function PatientsBrowser() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const editId = searchParams.get('edit') ?? '';
   const { clinicId, clinics, professionals } = useSelection();
@@ -73,7 +75,15 @@ export function PatientsBrowser() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(Boolean(editId));
+  const [editingPatientId, setEditingPatientId] = useState(editId);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (editId) {
+      setEditingPatientId(editId);
+      setFormOpen(true);
+    }
+  }, [editId]);
 
   const load = useCallback(() => {
     if (!clinicId) return;
@@ -114,6 +124,20 @@ export function PatientsBrowser() {
     const handle = window.setTimeout(load, query ? 250 : 0);
     return () => window.clearTimeout(handle);
   }, [load, query]);
+
+  function closePatientModal() {
+    setFormOpen(false);
+    setEditingPatientId('');
+    if (editId) router.replace('/pacientes');
+  }
+
+  function openPatientModal(patientId = '') {
+    setEditingPatientId(patientId);
+    setFormOpen(true);
+    setMenuOpenId(null);
+    if (patientId) router.replace(`/pacientes?edit=${patientId}`);
+    else if (editId) router.replace('/pacientes');
+  }
 
   const enriched = useMemo<Enriched[]>(() => {
     const now = Date.now();
@@ -165,6 +189,8 @@ export function PatientsBrowser() {
     return true;
   }), [enriched, filter]);
 
+  const modalTitle = editingPatientId ? 'Editar paciente' : 'Novo paciente';
+
   return (
     <>
       <PageHeader
@@ -178,8 +204,7 @@ export function PatientsBrowser() {
             <button
               className="button primary"
               type="button"
-              aria-expanded={formOpen}
-              onClick={() => setFormOpen((value) => !value)}
+              onClick={() => openPatientModal()}
             >
               <Plus size={15} />Novo paciente
             </button>
@@ -187,18 +212,24 @@ export function PatientsBrowser() {
         }
       />
       {error && <div className="secure-notice form-error" role="alert">{error}</div>}
-      {formOpen && (
+      <Modal
+        open={formOpen}
+        title={modalTitle}
+        description={editingPatientId ? 'Atualize o cadastro sem sair da lista.' : 'Cadastre o paciente com validação antes do envio.'}
+        onClose={closePatientModal}
+        size="large"
+      >
         <ModuleActions
           module="pacientes"
           clinicId={clinicId}
           clinics={clinics}
           professionals={professionals}
           patients={patients}
-          selectedPatientId={editId}
+          selectedPatientId={editingPatientId}
           onPatientChange={() => undefined}
-          onSaved={load}
+          onSaved={() => { load(); closePatientModal(); }}
         />
-      )}
+      </Modal>
       <Panel
         title="Pesquisa de pacientes"
         description={`${visible.length} ${visible.length === 1 ? 'paciente' : 'pacientes'} · dados combinados de agenda, tratamentos, retornos e financeiro`}
@@ -270,14 +301,15 @@ export function PatientsBrowser() {
                         )}
                       </td>
                       <td className="row-actions">
-                        <Link
+                        <button
+                          type="button"
                           className="icon-button"
-                          href={`/pacientes?edit=${patientId}`}
                           aria-label={`Editar ${text(patient.fullName)}`}
                           title="Editar"
+                          onClick={() => openPatientModal(patientId)}
                         >
                           <Pencil size={15} />
-                        </Link>
+                        </button>
                         <Link
                           className="icon-button"
                           href={`/pacientes/${patientId}`}
@@ -301,7 +333,7 @@ export function PatientsBrowser() {
                             <div className="row-menu-popover" role="menu">
                               <Link role="menuitem" href={`/pacientes/${patientId}?tab=financeiro`}>Financeiro</Link>
                               <Link role="menuitem" href={`/pacientes/${patientId}?tab=documentos`}>Documentos</Link>
-                              <Link role="menuitem" href={`/agenda`}>Agendar</Link>
+                              <Link role="menuitem" href={`/agenda?patientId=${patientId}&new=1`}>Agendar</Link>
                             </div>
                           ) : null}
                         </div>

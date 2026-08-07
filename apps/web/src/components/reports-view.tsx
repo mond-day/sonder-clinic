@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { list, text, type RecordValue } from '@/lib/format';
 import { useSelection } from './selection-provider';
@@ -12,6 +12,34 @@ type CatalogItem = {
   domain: string;
   permission: string;
 };
+
+const PERIODS = [
+  { id: 'today', label: 'Hoje' },
+  { id: '7d', label: '7 dias' },
+  { id: '30d', label: '30 dias' },
+  { id: '90d', label: '90 dias' },
+  { id: 'year', label: 'Ano' },
+] as const;
+
+const DOMAIN_LABELS: Record<string, string> = {
+  clinical: 'Clínico',
+  financial: 'Financeiro',
+  operational: 'Operacional',
+  operations: 'Operacional',
+  admin: 'Administrativo',
+};
+
+function domainLabel(domain: string) {
+  return DOMAIN_LABELS[domain.toLowerCase()] ?? domain;
+}
+
+function domainTone(domain: string): 'amber' | 'green' | 'blue' | 'gray' {
+  const key = domain.toLowerCase();
+  if (key === 'financial') return 'amber';
+  if (key === 'clinical') return 'green';
+  if (key === 'operational' || key === 'operations') return 'blue';
+  return 'gray';
+}
 
 export function ReportsView() {
   const { clinicId } = useSelection();
@@ -34,15 +62,33 @@ export function ReportsView() {
     return { from: from.toISOString(), to: to.toISOString() };
   }, [period]);
 
+  const catalogByDomain = useMemo(() => {
+    const groups = new Map<string, CatalogItem[]>();
+    for (const item of catalog) {
+      const key = item.domain || 'other';
+      const bucket = groups.get(key) ?? [];
+      bucket.push(item);
+      groups.set(key, bucket);
+    }
+    return [...groups.entries()];
+  }, [catalog]);
+
+  const selectedReport = catalog.find((item) => item.id === selected);
+
   useEffect(() => {
     setLoading(true);
     api.get<CatalogItem[]>('/reports/catalog')
-      .then((data) => setCatalog(Array.isArray(data) ? data : list(data) as CatalogItem[]))
+      .then((data) => {
+        const items = Array.isArray(data) ? data : list(data) as CatalogItem[];
+        setCatalog(items);
+        setSelected((current) => (items.some((item) => item.id === current) ? current : (items[0]?.id ?? current)));
+      })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Falha ao carregar catálogo.'))
       .finally(() => setLoading(false));
   }, []);
 
-  async function run(format: 'json' | 'csv' | 'pdf' = 'json') {
+  const run = useCallback(async (format: 'json' | 'csv' | 'pdf' = 'json') => {
+    if (!clinicId || !selected) return;
     setRunning(true);
     setError(null);
     try {
@@ -73,7 +119,15 @@ export function ReportsView() {
     } finally {
       setRunning(false);
     }
-  }
+  }, [bounds, clinicId, selected]);
+
+  useEffect(() => {
+    if (!clinicId || !selected || loading) return;
+    const timer = window.setTimeout(() => {
+      void run('json');
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [clinicId, selected, period, loading, run]);
 
   if (loading) return <Skeleton rows={5} />;
 
@@ -83,47 +137,66 @@ export function ReportsView() {
         eyebrow="Administração"
         title="Relatórios"
         description="Catálogo clínico, financeiro e operacional com exportação CSV/XLSX/PDF."
-        actions={(
-          <>
-            <button type="button" className="button soft" disabled={running} onClick={() => void run('csv')}>Exportar CSV/XLSX</button>
-            <button type="button" className="button soft" disabled={running} onClick={() => void run('pdf')}>Exportar PDF</button>
-            <button type="button" className="button primary" disabled={running} onClick={() => void run('json')}>Atualizar</button>
-          </>
-        )}
       />
       <div className="metric-grid">
         <MetricCard label="Relatórios" value={catalog.length} />
-        <MetricCard label="Selecionado" value={catalog.find((item) => item.id === selected)?.name ?? '—'} />
+        <MetricCard label="Selecionado" value={selectedReport?.name ?? '—'} />
         <MetricCard label="Linhas" value={rows.length} />
-        <MetricCard label="Período" value={period} />
+        <MetricCard label="Período" value={PERIODS.find((item) => item.id === period)?.label ?? period} />
       </div>
       {error ? <ErrorState description={error} onRetry={() => void run()} /> : null}
       <div className="reports-layout">
-        <Panel title="Central de relatórios">
-          <div className="chip-row">
-            {['today', '7d', '30d', '90d', 'year'].map((item) => (
-              <button key={item} type="button" className={`chip ${period === item ? 'active' : ''}`} onClick={() => setPeriod(item)}>
-                {item}
+        <Panel title="Catálogo" description="Escolha o relatório e o período">
+          <div className="chip-row" role="group" aria-label="Período">
+            {PERIODS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`chip ${period === item.id ? 'active' : ''}`}
+                onClick={() => setPeriod(item.id)}
+              >
+                {item.label}
               </button>
             ))}
           </div>
           <div className="report-catalog">
-            {catalog.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`report-card ${selected === item.id ? 'active' : ''}`}
-                onClick={() => setSelected(item.id)}
-              >
-                <strong>{item.name}</strong>
-                <StatusBadge tone={item.domain === 'financial' ? 'amber' : item.domain === 'clinical' ? 'green' : 'blue'}>
-                  {item.domain}
-                </StatusBadge>
-              </button>
+            {catalogByDomain.map(([domain, items]) => (
+              <div key={domain} className="report-domain-group">
+                <small className="report-domain-label">{domainLabel(domain)}</small>
+                {items.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`report-card ${selected === item.id ? 'active' : ''}`}
+                    onClick={() => setSelected(item.id)}
+                  >
+                    <strong>{item.name}</strong>
+                    <StatusBadge tone={domainTone(item.domain)}>
+                      {domainLabel(item.domain)}
+                    </StatusBadge>
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
         </Panel>
-        <Panel title={`Exemplo: ${catalog.find((item) => item.id === selected)?.name ?? selected}`}>
+        <Panel
+          title={selectedReport?.name ?? 'Pré-visualização'}
+          description={running ? 'Atualizando…' : `${rows.length} linha(s) no período`}
+          actions={(
+            <div className="heading-actions" style={{ marginLeft: 0 }}>
+              <button type="button" className="button soft small" disabled={running} onClick={() => void run('csv')}>
+                Exportar CSV
+              </button>
+              <button type="button" className="button soft small" disabled={running} onClick={() => void run('pdf')}>
+                Exportar PDF
+              </button>
+              <button type="button" className="button primary small" disabled={running} onClick={() => void run('json')}>
+                Atualizar
+              </button>
+            </div>
+          )}
+        >
           {rows.length ? (
             <div className="table-wrap">
               <table>
@@ -142,7 +215,10 @@ export function ReportsView() {
               </table>
             </div>
           ) : (
-            <EmptyState title="Sem dados no período" description="Ajuste o período ou execute outro relatório do catálogo." />
+            <EmptyState
+              title={running ? 'Carregando prévia…' : 'Sem dados no período'}
+              description="Ajuste o período ou escolha outro relatório do catálogo."
+            />
           )}
         </Panel>
       </div>

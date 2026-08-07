@@ -148,7 +148,20 @@ export function ModuleView({ module }: { module: string }) {
     );
   }
   if (key === 'documentos') return <DocumentsView />;
-  if (key === 'financeiro') return <FinanceView />;
+  if (key === 'financeiro') {
+    return (
+      <Suspense fallback={<div className="state-message">Carregando financeiro…</div>}>
+        <FinanceView />
+      </Suspense>
+    );
+  }
+  if (key === 'comissoes') {
+    return (
+      <Suspense fallback={<div className="state-message">Carregando comissões…</div>}>
+        <FinanceView initialTab="commissions" />
+      </Suspense>
+    );
+  }
   if (key === 'retornos') return <ReturnsView />;
   if (key === 'tarefas') return <TasksView />;
   if (key === 'laboratorio') return <LabView />;

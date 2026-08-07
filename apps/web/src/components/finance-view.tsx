@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import {
@@ -32,10 +33,16 @@ const tabs: Array<{ id: FinanceTab; label: string; available: boolean }> = [
   { id: 'cashflow', label: 'Fluxo de caixa', available: false },
 ];
 
-export function FinanceView() {
+const financeTabIds = new Set<string>(tabs.map((item) => item.id));
+
+export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
+  const searchParams = useSearchParams();
+  const tabFromQuery = searchParams.get('tab') ?? '';
+  const resolvedInitial: FinanceTab = initialTab
+    ?? (financeTabIds.has(tabFromQuery) ? tabFromQuery as FinanceTab : 'overview');
   const { user } = useAuth();
   const { clinicId, clinics, professionals } = useSelection();
-  const [tab, setTab] = useState<FinanceTab>('overview');
+  const [tab, setTab] = useState<FinanceTab>(resolvedInitial);
   const [receivables, setReceivables] = useState<RecordValue[]>([]);
   const [rules, setRules] = useState<RecordValue[]>([]);
   const [patients, setPatients] = useState<RecordValue[]>([]);
@@ -44,8 +51,13 @@ export function FinanceView() {
   const [selectedReceivable, setSelectedReceivable] = useState<RecordValue | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
+  const [patientQuery, setPatientQuery] = useState('');
   const canFinance = hasPermission(user?.permissions, 'financial.view');
   const canCommission = hasPermission(user?.permissions, 'commission.view_all', 'organization.manage');
+
+  useEffect(() => {
+    setTab(resolvedInitial);
+  }, [resolvedInitial]);
 
   const load = useCallback(() => {
     if (!clinicId) return;
@@ -86,6 +98,34 @@ export function FinanceView() {
   const overdueTotal = overdue.reduce((sum, item) => sum + Number(item.netAmount ?? 0), 0);
   const paidTotal = paid.reduce((sum, item) => sum + Number(item.netAmount ?? 0), 0);
 
+  const filteredReceivables = useMemo(() => {
+    const query = patientQuery.trim().toLocaleLowerCase('pt-BR');
+    return receivables.filter((item) => {
+      if (statusFilter && item.status !== statusFilter) return false;
+      if (!query) return true;
+      const patientName = text(nested(item, 'patient').fullName, '').toLocaleLowerCase('pt-BR');
+      const description = text(item.description).toLocaleLowerCase('pt-BR');
+      return patientName.includes(query) || description.includes(query);
+    });
+  }, [patientQuery, receivables, statusFilter]);
+
+  const activeRules = useMemo(
+    () => rules.filter((item) => {
+      const validTo = item.validTo ? new Date(String(item.validTo)) : null;
+      return !validTo || validTo.getTime() >= Date.now();
+    }),
+    [rules],
+  );
+  const averagePercent = useMemo(() => {
+    const percentRules = rules.filter((item) => {
+      const type = String(item.calculationType ?? '').toUpperCase();
+      return type.includes('PERCENT') || type === 'PERCENTAGE';
+    });
+    if (!percentRules.length) return null;
+    const sum = percentRules.reduce((total, item) => total + Number(item.value ?? 0), 0);
+    return sum / percentRules.length;
+  }, [rules]);
+
   if (!canFinance && tab !== 'commissions') {
     return (
       <>
@@ -99,7 +139,7 @@ export function FinanceView() {
     <>
       <PageHeader
         title="Gestão financeira"
-        description="Entradas, comissões e módulos previstos — dados reais onde a API existe."
+        description="Acompanhe títulos a receber, pagamentos e regras de comissão com dados reais da clínica."
         actions={
           <>
             <button className="button secondary" type="button" onClick={load} disabled={loading}>
@@ -190,17 +230,57 @@ export function FinanceView() {
             onPatientChange={() => undefined}
             onSaved={load}
           />
-          <Panel title="Contas a receber" description="Fonte: GET /receivables" actions={<button className="button small" type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((value) => { window.localStorage.setItem('sonder.finance.filtersOpen', String(!value)); return !value; })}><SlidersHorizontal size={14} />Filtros</button>}>
+          <Panel
+            title="Contas a receber"
+            description="Títulos em aberto, pagos e vencidos"
+            actions={
+              <button
+                className="button small"
+                type="button"
+                aria-expanded={filtersOpen}
+                onClick={() => setFiltersOpen((value) => {
+                  window.localStorage.setItem('sonder.finance.filtersOpen', String(!value));
+                  return !value;
+                })}
+              >
+                <SlidersHorizontal size={14} />Filtros avançados
+              </button>
+            }
+          >
             <div className="summary-strip">
               <div><small>Em aberto</small><strong>{currency(openTotal)}</strong></div>
               <div><small>Em atraso</small><strong style={{ color: 'var(--danger)' }}>{currency(overdueTotal)}</strong></div>
               <div><small>Pagos</small><strong>{currency(paidTotal)}</strong></div>
               <div><small>Total de títulos</small><strong>{receivables.length}</strong></div>
             </div>
-            {filtersOpen ? <div className="filters"><select className="filter-select" aria-label="Filtrar contas por status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todos os status</option><option value="OPEN">Em aberto</option><option value="PARTIALLY_PAID">Parcialmente pago</option><option value="PAID">Pago</option><option value="OVERDUE">Vencido</option></select></div> : null}
+            <div className="filters">
+              <select
+                className="filter-select"
+                aria-label="Filtrar contas por status"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+              >
+                <option value="">Todos os status</option>
+                <option value="OPEN">Em aberto</option>
+                <option value="PARTIALLY_PAID">Parcialmente pago</option>
+                <option value="PAID">Pago</option>
+                <option value="OVERDUE">Vencido</option>
+              </select>
+            </div>
+            {filtersOpen ? (
+              <div className="filters">
+                <input
+                  className="filter-input"
+                  placeholder="Buscar paciente ou descrição…"
+                  value={patientQuery}
+                  onChange={(event) => setPatientQuery(event.target.value)}
+                  aria-label="Buscar por paciente ou descrição"
+                />
+              </div>
+            ) : null}
             {loading ? <div className="state-message">Carregando…</div> : null}
-            {!loading && receivables.length === 0 ? <EmptyState title="Nenhum título" description="Crie o primeiro título acima." /> : null}
-            {receivables.length > 0 && (
+            {!loading && filteredReceivables.length === 0 ? <EmptyState title="Nenhum título" description={receivables.length ? 'Nenhum resultado para os filtros.' : 'Crie o primeiro título acima.'} /> : null}
+            {filteredReceivables.length > 0 && (
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
@@ -213,7 +293,7 @@ export function FinanceView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {receivables.filter((item) => !statusFilter || item.status === statusFilter).map((item) => (
+                    {filteredReceivables.map((item) => (
                       <tr key={String(item.id)} onClick={() => setSelectedReceivable(item)} style={{ cursor: 'pointer' }}>
                         <td>{text(item.description)}</td>
                         <td>{dateOnly(item.dueDate)}</td>
@@ -235,31 +315,85 @@ export function FinanceView() {
       )}
 
       {tab === 'commissions' && (
-        <Panel title="Regras de comissão" description="GET /commission-rules — fechamento detalhado aguarda API de eventos">
-          {!canCommission ? (
-            <div className="state-message error" role="alert">Sem permissão commission.view_all.</div>
-          ) : rules.length === 0 ? (
-            <EmptyState title="Nenhuma regra" />
-          ) : (
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr><th>Base</th><th>Cálculo</th><th>Valor</th><th>Vigência</th></tr>
-                </thead>
-                <tbody>
-                  {rules.map((item) => (
-                    <tr key={String(item.id)}>
-                      <td>{presentationLabel(item.basis)}</td>
-                      <td>{presentationLabel(item.calculationType)}</td>
-                      <td>{text(item.value)}</td>
-                      <td>{dateOnly(item.validFrom)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Panel>
+        <>
+          <Panel
+            title="Comissões e repasses"
+            description="Regras definem como calcular repasses. Períodos de vigência e valores gerados (eventos) aparecem aqui quando disponíveis."
+          >
+            {!canCommission ? (
+              <div className="state-message error" role="alert">Sem permissão commission.view_all.</div>
+            ) : (
+              <>
+                <section className="stats">
+                  <MetricCard label="Regras ativas" value={activeRules.length} meta={`${rules.length} no total`} />
+                  <MetricCard
+                    label="% média"
+                    value={averagePercent == null ? '—' : `${averagePercent.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`}
+                    meta="Regras percentuais"
+                  />
+                  <MetricCard label="Bases cadastradas" value={new Set(rules.map((item) => String(item.basis ?? ''))).size} meta="Tipos de base" />
+                  <MetricCard label="Eventos no período" value="—" meta="API pendente" tone="amber" />
+                </section>
+
+                <div className="form-section">
+                  <header>
+                    <h3>Como funciona</h3>
+                  </header>
+                  <p className="muted-note" style={{ margin: 0, fontSize: 12, lineHeight: 1.6 }}>
+                    Cada regra associa um profissional (ou base clínica) a um tipo de cálculo — percentual ou valor fixo —
+                    com vigência definida. Quando a API de eventos de comissão estiver disponível, os valores gerados
+                    no período aparecerão abaixo para conferência e fechamento.
+                  </p>
+                </div>
+
+                <div className="form-section">
+                  <header>
+                    <h3>Regras cadastradas</h3>
+                  </header>
+                  {rules.length === 0 ? (
+                    <EmptyState title="Nenhuma regra" description="Cadastre regras de comissão para começar a calcular repasses." />
+                  ) : (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Base</th>
+                            <th>Cálculo</th>
+                            <th>Valor</th>
+                            <th>Vigência</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rules.map((item) => (
+                            <tr key={String(item.id)}>
+                              <td>{presentationLabel(item.basis)}</td>
+                              <td>{presentationLabel(item.calculationType)}</td>
+                              <td>{text(item.value)}</td>
+                              <td>
+                                {dateOnly(item.validFrom)}
+                                {item.validTo ? ` → ${dateOnly(item.validTo)}` : ' · vigente'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-section">
+                  <header>
+                    <h3>Valores gerados no período</h3>
+                  </header>
+                  <EmptyState
+                    title="Nenhum evento de comissão"
+                    description="A API de eventos ainda não fecha comissão automática. Quando o endpoint estiver disponível, os valores calculados aparecerão aqui."
+                  />
+                </div>
+              </>
+            )}
+          </Panel>
+        </>
       )}
 
       {tab === 'payable' && (

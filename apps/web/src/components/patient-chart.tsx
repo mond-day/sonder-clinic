@@ -228,6 +228,21 @@ export function PatientChart({ patientId }: { patientId: string }) {
     }
   }
 
+  async function completePlanItem(planId: string, itemId: string) {
+    setSaving(true);
+    setFormError('');
+    try {
+      await api.patch(`/treatment-plans/${planId}`, {
+        items: [{ id: itemId, status: 'COMPLETED' }],
+      });
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível concluir o item.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) return <div className="state-message">Carregando prontuário…</div>;
   if (error) {
     return (
@@ -324,6 +339,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
                   {list(selectedPlan.items).map((item) => {
                     const id = String(item.id);
                     const checked = approveIds.includes(id) || ['APPROVED', 'COMPLETED'].includes(String(item.status));
+                    const isApproved = String(item.status) === 'APPROVED';
                     return (
                       <label key={id} className="check-field">
                         <input
@@ -340,6 +356,19 @@ export function PatientChart({ patientId }: { patientId: string }) {
                           {text(nested(item, 'procedure').name, text(item.procedureId))} · {currency(Number(item.unitPrice) * Number(item.quantity))}
                           <small> {presentationLabel(item.status)}</small>
                         </span>
+                        {isApproved ? (
+                          <button
+                            type="button"
+                            className="button small"
+                            disabled={saving}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              void completePlanItem(String(selectedPlan.id), id);
+                            }}
+                          >
+                            Concluir
+                          </button>
+                        ) : null}
                       </label>
                     );
                   })}
@@ -379,7 +408,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
           >
             {presentationMode ? '◉ Modo atendimento ativo' : '◉ Modo atendimento'}
           </button>
-          <Link className="button primary" href="/agenda">＋ Agendar</Link>
+          <Link className="button primary" href={`/agenda?patientId=${patientId}&new=1`}>＋ Agendar</Link>
         </div>
       </section>
 
@@ -568,6 +597,19 @@ export function PatientChart({ patientId }: { patientId: string }) {
                         {items.slice(0, 4).map((item) => (
                           <li key={String(item.id)}>
                             {text(nested(item, 'procedure').name, 'Procedimento')} · {presentationLabel(item.status)} · {currency(Number(item.unitPrice) * Number(item.quantity))}
+                            {String(item.status) === 'APPROVED' ? (
+                              <>
+                                {' '}
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  disabled={saving}
+                                  onClick={() => void completePlanItem(String(plan.id), String(item.id))}
+                                >
+                                  Concluir
+                                </button>
+                              </>
+                            ) : null}
                           </li>
                         ))}
                       </ul>

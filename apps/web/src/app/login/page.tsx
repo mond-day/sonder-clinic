@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, Suspense, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import { z } from 'zod';
@@ -206,6 +207,10 @@ export default function LoginPage() {
       <Suspense fallback={<div className="login-card"><p>Carregando…</p></div>}>
         <LoginForm />
       </Suspense>
+      <nav className="login-legal">
+        <Link href="/legal/privacidade">Política de Privacidade</Link>
+        <Link href="/legal/uso">Termos de Uso</Link>
+      </nav>
     </main>
   );
 }

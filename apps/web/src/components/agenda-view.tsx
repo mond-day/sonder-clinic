@@ -2,8 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Plus, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import { APPOINTMENT_DURATIONS, nearestDurationMinutes } from '@/lib/duration';
 import { list, nested, statusTone, text, timeOnly, type RecordValue } from '@/lib/format';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
@@ -56,6 +58,8 @@ const longDate = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: '2-dig
 const monthYear = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' });
 
 export function AgendaView() {
+  const searchParams = useSearchParams();
+  const queryPatientId = searchParams.get('patientId') ?? '';
   const { clinicId, clinics, professionals } = useSelection();
   const clinic = clinics.find((item) => item.id === clinicId);
   const units = clinic?.units ?? [];
@@ -111,6 +115,12 @@ export function AgendaView() {
   }, [clinicId, range.from, range.to]);
 
   useEffect(load, [load]);
+
+  useEffect(() => {
+    if (searchParams.get('new') === '1' || searchParams.get('patientId')) {
+      setFormOpen(true);
+    }
+  }, [searchParams]);
 
   const toneByProfessional = useMemo(() => {
     const map = new Map<string, (typeof eventTones)[number]>();
@@ -316,7 +326,7 @@ export function AgendaView() {
           clinics={clinics}
           professionals={professionals}
           patients={patients}
-          selectedPatientId=""
+          selectedPatientId={queryPatientId}
           onPatientChange={() => undefined}
           onSaved={load}
         />
@@ -359,7 +369,19 @@ export function AgendaView() {
             {editingAppointment ? (
               <>
                 <label>Início<input name="startAt" type="datetime-local" required defaultValue={new Date(String(selectedAppointment.startAt)).toISOString().slice(0, 16)} /></label>
-                <label>Duração (min)<input name="duration" type="number" min={15} step={5} required defaultValue={Math.round((new Date(String(selectedAppointment.endAt)).getTime() - new Date(String(selectedAppointment.startAt)).getTime()) / 60000)} /></label>
+                <label>Duração (min)
+                  <select
+                    name="duration"
+                    required
+                    defaultValue={nearestDurationMinutes(
+                      Math.round((new Date(String(selectedAppointment.endAt)).getTime() - new Date(String(selectedAppointment.startAt)).getTime()) / 60000),
+                    )}
+                  >
+                    {APPOINTMENT_DURATIONS.map((minutes) => (
+                      <option key={minutes} value={minutes}>{minutes} min</option>
+                    ))}
+                  </select>
+                </label>
                 <SearchableSelect name="professionalId" label="Profissional" defaultValue={String(selectedAppointment.professionalId)} options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
                 {!hideUnitChair ? (
                   <>

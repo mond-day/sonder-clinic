@@ -30,6 +30,7 @@ const categoryLabels: Record<string, string> = {
   ADMIN: 'Administrativo',
 };
 
+const priorityLabels: Record<string, string> = { HIGH: 'Alta', NORMAL: 'Normal', LOW: 'Baixa' };
 const priorityTone: Record<string, string> = { HIGH: 'red', NORMAL: '', LOW: 'green' };
 
 const createSchema = z.object({
@@ -78,9 +79,11 @@ export function TasksView() {
   const [priorityFilter, setPriorityFilter] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<RecordValue | null>(null);
+  const [editingTask, setEditingTask] = useState(false);
   const [formError, setFormError] = useState('');
   const [formMessage, setFormMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
 
   const load = useCallback(() => {
     if (!clinicId) return;
@@ -131,8 +134,29 @@ export function TasksView() {
     }
   }
 
+  async function updateTaskStatus(status: string) {
+    if (!selectedTask) return;
+    setStatusSaving(true);
+    setFormError('');
+    try {
+      await api.patch(`/tasks/${String(selectedTask.id)}`, { status });
+      setSelectedTask({ ...selectedTask, status });
+      setFormMessage('Status atualizado.');
+      load();
+      refreshWorkspace();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível atualizar o status.');
+    } finally {
+      setStatusSaving(false);
+    }
+  }
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (selectedTask && !editingTask) {
+      setEditingTask(true);
+      return;
+    }
     const form = event.currentTarget;
     const data = new FormData(form);
     const rawDue = String(data.get('dueAt') ?? '');
@@ -141,7 +165,7 @@ export function TasksView() {
       description: String(data.get('description') ?? '').trim() || undefined,
       category: String(data.get('category') ?? 'ADMIN'),
       priority: String(data.get('priority') ?? 'NORMAL'),
-      status: String(data.get('status') ?? 'INBOX'),
+      status: String(data.get('status') ?? selectedTask?.status ?? 'INBOX'),
       dueAt: rawDue ? new Date(rawDue).toISOString() : undefined,
       patientId: String(data.get('patientId') ?? '') || undefined,
       assigneeId: String(data.get('assigneeId') ?? '') || undefined,
@@ -163,6 +187,7 @@ export function TasksView() {
       form.reset();
       setFormOpen(false);
       setSelectedTask(null);
+      setEditingTask(false);
       load();
       refreshWorkspace();
     } catch (cause) {
@@ -200,7 +225,7 @@ export function TasksView() {
               className="button primary"
               type="button"
               aria-expanded={formOpen}
-              onClick={() => { setSelectedTask(null); setFormOpen(true); setFormMessage(''); }}
+              onClick={() => { setSelectedTask(null); setEditingTask(false); setFormOpen(true); setFormMessage(''); setFormError(''); }}
             >
               <Plus size={15} />Nova tarefa
             </button>
@@ -211,25 +236,84 @@ export function TasksView() {
       <Modal
         open={formOpen}
         title={selectedTask ? 'Detalhes da tarefa' : 'Nova tarefa'}
-        description="Edite os campos reais e salve sem perder o contexto do quadro."
-        onClose={() => { setFormOpen(false); setSelectedTask(null); setFormError(''); }}
+        description={
+          selectedTask
+            ? (editingTask ? 'Edite título, prazo, responsável e classificação.' : 'Visualização da tarefa. Status pode ser alterado a qualquer momento.')
+            : 'Preencha os campos e salve sem perder o contexto do quadro.'
+        }
+        onClose={() => { setFormOpen(false); setSelectedTask(null); setEditingTask(false); setFormError(''); }}
       >
           <form className="mutation-form" key={String(selectedTask?.id ?? 'new')} onSubmit={save}>
-            <Disclosure title="Informações principais" description="Defina o objetivo e a classificação">
-              <label className="span-2">Título<input name="title" defaultValue={text(selectedTask?.title, '')} placeholder="Cobrar prazo da coroa" required /></label>
-              <SearchableSelect name="category" label="Categoria" defaultValue={text(selectedTask?.category, 'PATIENT')} options={Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))} />
-              <SearchableSelect name="priority" label="Prioridade" defaultValue={text(selectedTask?.priority, 'NORMAL')} options={[{ value: 'HIGH', label: 'Alta' }, { value: 'NORMAL', label: 'Normal' }, { value: 'LOW', label: 'Baixa' }]} />
-            </Disclosure>
-            <Disclosure title="Vínculos e prazo" description="Associe paciente, responsável e posição no quadro">
-              <SearchableSelect name="status" label="Coluna" defaultValue={text(selectedTask?.status, 'INBOX')} options={columns.map(({ key, label }) => ({ value: key, label }))} />
-              <label>Prazo<input name="dueAt" type="datetime-local" defaultValue={selectedTask?.dueAt ? new Date(String(selectedTask.dueAt)).toISOString().slice(0, 16) : ''} /></label>
-              <SearchableSelect name="assigneeId" label="Responsável" defaultValue={text(selectedTask?.assigneeId, '')} placeholder="Sem responsável" options={professionals.map((item) => ({ value: item.userId, label: item.name }))} />
-              <SearchableSelect name="patientId" label="Paciente vinculado" defaultValue={text(selectedTask?.patientId, '')} placeholder="Sem paciente" options={patients.map((item) => ({ value: String(item.id), label: text(item.fullName) }))} />
-            </Disclosure>
-            <Disclosure title="Detalhes" defaultOpen={false}>
-              <label className="span-2">Descrição<textarea name="description" defaultValue={text(selectedTask?.description, '')} placeholder="Contexto para quem for executar" /></label>
-            </Disclosure>
-            <button className="button primary" disabled={busy}>{selectedTask ? 'Salvar alterações' : 'Criar tarefa'}</button>
+            {selectedTask ? (
+              <div className="appointment-detail-hero span-2">
+                <div>
+                  <small>Tarefa</small>
+                  <strong>{text(selectedTask.title)}</strong>
+                </div>
+                <label className="status-inline">
+                  Status
+                  <select
+                    name="status"
+                    value={String(selectedTask.status)}
+                    disabled={statusSaving}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setSelectedTask({ ...selectedTask, status: next });
+                      void updateTaskStatus(next);
+                    }}
+                  >
+                    {columns.map(({ key, label }) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
+
+            {selectedTask && !editingTask ? (
+              <div className="appointment-readonly span-2">
+                <div className="info-grid">
+                  <div className="info-item"><small>Categoria</small><strong>{categoryLabels[String(selectedTask.category)] ?? text(selectedTask.category)}</strong></div>
+                  <div className="info-item"><small>Prioridade</small><strong>{priorityLabels[String(selectedTask.priority)] ?? text(selectedTask.priority)}</strong></div>
+                  <div className="info-item"><small>Prazo</small><strong>{selectedTask.dueAt ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(String(selectedTask.dueAt))) : 'Sem prazo'}</strong></div>
+                  <div className="info-item"><small>Responsável</small><strong>{text(nested(selectedTask, 'assignee').name, 'Sem responsável')}</strong></div>
+                  <div className="info-item"><small>Paciente</small><strong>{text(nested(selectedTask, 'patient').fullName, 'Sem paciente')}</strong></div>
+                  <div className="info-item span-2"><small>Descrição</small><strong>{text(selectedTask.description, 'Sem descrição')}</strong></div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <Disclosure title="Informações principais" description="Defina o objetivo e a classificação">
+                  <label className="span-2">Título<input name="title" defaultValue={text(selectedTask?.title, '')} placeholder="Cobrar prazo da coroa" required /></label>
+                  <SearchableSelect name="category" label="Categoria" defaultValue={text(selectedTask?.category, 'PATIENT')} options={Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))} />
+                  <SearchableSelect name="priority" label="Prioridade" defaultValue={text(selectedTask?.priority, 'NORMAL')} options={[{ value: 'HIGH', label: 'Alta' }, { value: 'NORMAL', label: 'Normal' }, { value: 'LOW', label: 'Baixa' }]} />
+                </Disclosure>
+                <Disclosure title="Vínculos e prazo" description="Associe paciente, responsável e posição no quadro">
+                  {!selectedTask ? (
+                    <SearchableSelect name="status" label="Coluna" defaultValue="INBOX" options={columns.map(({ key, label }) => ({ value: key, label }))} />
+                  ) : (
+                    <input type="hidden" name="status" value={String(selectedTask.status)} />
+                  )}
+                  <label>Prazo<input name="dueAt" type="datetime-local" defaultValue={selectedTask?.dueAt ? new Date(String(selectedTask.dueAt)).toISOString().slice(0, 16) : ''} /></label>
+                  <SearchableSelect name="assigneeId" label="Responsável" defaultValue={text(selectedTask?.assigneeId, '')} placeholder="Sem responsável" options={professionals.map((item) => ({ value: item.userId, label: item.name }))} />
+                  <SearchableSelect name="patientId" label="Paciente vinculado" defaultValue={text(selectedTask?.patientId, '')} placeholder="Sem paciente" options={patients.map((item) => ({ value: String(item.id), label: text(item.fullName) }))} />
+                </Disclosure>
+                <Disclosure title="Detalhes" defaultOpen={false}>
+                  <label className="span-2">Descrição<textarea name="description" defaultValue={text(selectedTask?.description, '')} placeholder="Contexto para quem for executar" /></label>
+                </Disclosure>
+              </>
+            )}
+
+            <div className="modal-footer span-2">
+              {selectedTask && editingTask ? (
+                <button type="button" className="button soft" onClick={() => setEditingTask(false)}>Cancelar edição</button>
+              ) : null}
+              <button className="button primary" disabled={busy}>
+                {selectedTask
+                  ? (editingTask ? (busy ? 'Salvando…' : 'Salvar alterações') : 'Editar tarefa')
+                  : (busy ? 'Salvando…' : 'Criar tarefa')}
+              </button>
+            </div>
           </form>
           {formMessage && <p className="form-success" role="status">{formMessage}</p>}
           {formError && <p className="form-error" role="alert">{formError}</p>}
@@ -296,7 +380,7 @@ export function TasksView() {
                       <button
                         className="card-trigger"
                         type="button"
-                        onClick={() => { setSelectedTask(item); setFormOpen(true); setFormMessage(''); }}
+                        onClick={() => { setSelectedTask(item); setEditingTask(false); setFormOpen(true); setFormMessage(''); setFormError(''); }}
                         aria-label={`Abrir detalhes da tarefa ${text(item.title)}`}
                       >
                       <div className="task-top">
