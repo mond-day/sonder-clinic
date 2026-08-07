@@ -1,6 +1,6 @@
 # Production readiness — Sonder Clinic
 
-Checklist honesto para aptidão de produção. Atualizado na **1.1.5**.
+Checklist honesto para aptidão de produção. Atualizado na **1.1.6**.
 
 Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL** = funciona com ressalvas.
 
@@ -22,10 +22,10 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 |------|--------|-------|
 | Imagens GHCR (`api`/`web`/`worker`) | **GO** | Workflow `release-images.yml` |
 | Redis compartilhado (`QUEUE_DRIVER=redis`) | **PARTIAL** | Dev usa `memory`; prod deve usar Redis da `digital_network` |
-| Healthchecks Swarm | **GO** se stack aplicada | Ver `infra/swarm/stack.production.yml` |
+| Healthchecks Swarm | **GO** se stack aplicada | `/health` inclui storage, AV e OTEL status |
 | Backups Postgres | **PARTIAL** | Processo externo — documentar RPO/RTO no runbook |
-| Monitoramento / OTEL | **PARTIAL** | `OTEL_ENABLED=false` por padrão; logs estruturados existem |
-| ClamAV | **PARTIAL** | Off até endpoint; uploads não devem ser tratados como “limpos” |
+| Monitoramento / OTEL | **GO** (código) / **PARTIAL** (ops) | SDK em `@sonder/observability`; ligar `OTEL_ENABLED=true` + collector se desejado |
+| ClamAV | **GO** (adapter) / **PARTIAL** (ops) | `AV_DRIVER=clamav` + daemon; sem daemon uploads ficam `PENDING` |
 | Seed em produção | **NO-GO** | Seed é só desenvolvimento |
 
 ## Produto / compliance
@@ -37,7 +37,8 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 | Isolamento multi-tenant (org no JWT) | **GO** | |
 | Integrações (Evolution, Nibo, etc.) | **PARTIAL** | Desligadas sem credencial; configurar só o necessário |
 | Certificado A1 | **PARTIAL** | Upload/storage OK; precisa PKCS#12 válido da clínica |
-| E2E Playwright | **PARTIAL** | CI roda E2E; coberturas novas (units/commissions/automation) manuais |
+| Recorrências financeiras | **GO** | API + UI + worker |
+| E2E Playwright | **PARTIAL** | CI roda E2E; coberturas novas (recorrências/AV/OTEL) manuais |
 
 ## Checklist pré-release operacional
 
@@ -45,11 +46,13 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 2. `pnpm db:deploy` no ambiente alvo; smoke login admin.
 3. Confirmar MinIO bucket + policy privada; testar upload branding (falha se mal configurado).
 4. Configurar SMTP e testar “Esqueci minha senha”.
-5. Apontar imagens `v1.1.5` no Swarm; health `/health` API e web.
+5. Apontar imagens `v1.1.6` no Swarm; health `/health` API e web.
 6. Backup Postgres verificado (restore dry-run).
 7. Desabilitar `*_MOCK=true` apenas para provedores com credencial real.
-8. Revisar `docs/SECURITY.md` e ADR 0002.
+8. (Opcional) ClamAV: `AV_DRIVER=clamav`, `CLAMAV_HOST`/`CLAMAV_PORT`.
+9. (Opcional) OTEL: `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
+10. Revisar `docs/SECURITY.md` e ADR 0002.
 
-## Veredito 1.1.5
+## Veredito 1.1.6
 
-O produto está **completo o suficiente** para piloto controlado **após** secrets, HTTPS, storage, SMTP (se reset), migrations e backups. **Não** é “prod-ready zero-ops”: observabilidade, ClamAV e recorrências financeiras ainda são gaps honestos.
+Residuais de **código** da linha 1.1.x (recorrências, ClamAV operable, OTEL) estão fechados com evidência no repositório. O produto está apto a **piloto controlado** após secrets, HTTPS, storage, SMTP (se reset), migrations e backups. Itens PARTIAL restantes são **ops/infra externos** ou protótipos explícitos (odontograma 3D) — não código faltando nestes contratos.

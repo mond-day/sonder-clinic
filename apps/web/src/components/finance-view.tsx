@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { RefreshCw, SlidersHorizontal } from 'lucide-react';
@@ -19,7 +19,7 @@ import {
 import { useAuth } from './auth-provider';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
-import { EmptyState, MetricCard, PageHeader, Panel, StatusBadge, UnavailableFeature } from './ui';
+import { EmptyState, MetricCard, PageHeader, Panel, StatusBadge } from './ui';
 import { Modal } from './modal';
 
 type FinanceTab = 'overview' | 'receivable' | 'payable' | 'commissions' | 'recurring' | 'cashflow';
@@ -29,7 +29,7 @@ const tabs: Array<{ id: FinanceTab; label: string; available: boolean }> = [
   { id: 'receivable', label: 'Contas a receber', available: true },
   { id: 'payable', label: 'Contas a pagar', available: true },
   { id: 'commissions', label: 'Comissões', available: true },
-  { id: 'recurring', label: 'Recorrências', available: false },
+  { id: 'recurring', label: 'Recorrências', available: true },
   { id: 'cashflow', label: 'Fluxo de caixa', available: true },
 ];
 
@@ -45,6 +45,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const [tab, setTab] = useState<FinanceTab>(resolvedInitial);
   const [receivables, setReceivables] = useState<RecordValue[]>([]);
   const [payables, setPayables] = useState<RecordValue[]>([]);
+  const [recurrences, setRecurrences] = useState<RecordValue[]>([]);
   const [cashflow, setCashflow] = useState<RecordValue | null>(null);
   const [rules, setRules] = useState<RecordValue[]>([]);
   const [commissionEvents, setCommissionEvents] = useState<RecordValue[]>([]);
@@ -57,7 +58,20 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const [statusFilter, setStatusFilter] = useState('');
   const [patientQuery, setPatientQuery] = useState('');
   const [closingId, setClosingId] = useState<string | null>(null);
+  const [recurrenceBusy, setRecurrenceBusy] = useState<string | null>(null);
+  const [recurrenceForm, setRecurrenceForm] = useState({
+    kind: 'PAYABLE',
+    description: '',
+    amount: '',
+    frequency: 'MONTHLY',
+    interval: '1',
+    nextOccurrence: new Date().toISOString().slice(0, 10),
+    endsAt: '',
+    patientId: '',
+    supplierName: '',
+  });
   const canFinance = hasPermission(user?.permissions, 'financial.view');
+  const canFinanceCreate = hasPermission(user?.permissions, 'financial.create', 'organization.manage');
   const canCommission = hasPermission(user?.permissions, 'commission.view_all', 'organization.manage');
   const canCloseCommission = hasPermission(user?.permissions, 'commission.close', 'organization.manage');
 
@@ -74,15 +88,17 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
     Promise.all([
       canFinance ? api.get<RecordValue[]>(`/receivables?clinicId=${clinicId}`) : Promise.resolve([]),
       canFinance ? api.get<RecordValue[]>(`/payables?clinicId=${clinicId}`).catch(() => []) : Promise.resolve([]),
+      canFinance ? api.get<RecordValue[]>(`/finance-recurrences?clinicId=${clinicId}`).catch(() => []) : Promise.resolve([]),
       canFinance ? api.get<RecordValue>(`/cashflow?clinicId=${clinicId}`).catch(() => null) : Promise.resolve(null),
       canCommission ? api.get<RecordValue[]>('/commission-rules').catch(() => []) : Promise.resolve([]),
       canCommission ? api.get<RecordValue[]>(`/commission-events?clinicId=${clinicId}&from=${from}`).catch(() => []) : Promise.resolve([]),
       canCommission ? api.get<RecordValue[]>(`/commission-periods?clinicId=${clinicId}`).catch(() => []) : Promise.resolve([]),
       api.get<RecordValue[]>(`/patients?clinicId=${clinicId}`).catch(() => []),
     ])
-      .then(([nextReceivables, nextPayables, nextCashflow, nextRules, nextEvents, nextPeriods, nextPatients]) => {
+      .then(([nextReceivables, nextPayables, nextRecurrences, nextCashflow, nextRules, nextEvents, nextPeriods, nextPatients]) => {
         setReceivables(list(nextReceivables));
         setPayables(list(nextPayables));
+        setRecurrences(list(nextRecurrences));
         setCashflow(nextCashflow);
         setRules(list(nextRules));
         setCommissionEvents(list(nextEvents));
@@ -117,6 +133,64 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível abrir a competência.');
     }
   };
+
+  const createRecurrence = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!clinicId || !canFinanceCreate) return;
+    setRecurrenceBusy('create');
+    setError('');
+    try {
+      await api.post('/finance-recurrences', {
+        clinicId,
+        kind: recurrenceForm.kind,
+        description: recurrenceForm.description,
+        amount: recurrenceForm.amount.replace(',', '.'),
+        frequency: recurrenceForm.frequency,
+        interval: Number(recurrenceForm.interval) || 1,
+        nextOccurrence: recurrenceForm.nextOccurrence,
+        endsAt: recurrenceForm.endsAt || undefined,
+        patientId: recurrenceForm.kind === 'RECEIVABLE' ? recurrenceForm.patientId || undefined : undefined,
+        supplierName: recurrenceForm.kind === 'PAYABLE' ? recurrenceForm.supplierName || undefined : undefined,
+      });
+      setRecurrenceForm((prev) => ({
+        ...prev,
+        description: '',
+        amount: '',
+        supplierName: '',
+        patientId: '',
+      }));
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível criar a recorrência.');
+    } finally {
+      setRecurrenceBusy(null);
+    }
+  };
+
+  const toggleRecurrence = async (id: string, active: boolean) => {
+    setRecurrenceBusy(id);
+    try {
+      await api.patch(`/finance-recurrences/${id}`, { active: !active });
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível atualizar a recorrência.');
+    } finally {
+      setRecurrenceBusy(null);
+    }
+  };
+
+  const generateRecurrence = async (id: string) => {
+    setRecurrenceBusy(id);
+    try {
+      await api.post(`/finance-recurrences/${id}/generate`, {});
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível gerar a ocorrência.');
+    } finally {
+      setRecurrenceBusy(null);
+    }
+  };
+
   useEffect(() => {
     setFiltersOpen(window.localStorage.getItem('sonder.finance.filtersOpen') === 'true');
   }, []);
@@ -221,8 +295,12 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   <StatusBadge tone="amber">Acompanhar</StatusBadge>
                 </div>
                 <div className="billing-row">
-                  <div><strong>Contas a pagar / fluxo</strong><span>Aguardando endpoints</span></div>
-                  <StatusBadge tone="gray">Pendente</StatusBadge>
+                  <div><strong>Contas a pagar</strong><span>{payables.length} títulos</span></div>
+                  <StatusBadge tone="blue">Ativo</StatusBadge>
+                </div>
+                <div className="billing-row">
+                  <div><strong>Recorrências</strong><span>{recurrences.filter((item) => item.active).length} ativas</span></div>
+                  <StatusBadge tone="blue">Ativo</StatusBadge>
                 </div>
               </div>
             </Panel>
@@ -230,6 +308,10 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
               <div className="billing-list">
                 <button className="billing-row" type="button" style={{ width: '100%', border: 0, background: 'transparent', textAlign: 'left' }} onClick={() => setTab('receivable')}>
                   <div><strong>Contas a receber</strong><span>Criar título e registrar pagamento</span></div>
+                  <StatusBadge tone="blue">Abrir</StatusBadge>
+                </button>
+                <button className="billing-row" type="button" style={{ width: '100%', border: 0, background: 'transparent', textAlign: 'left' }} onClick={() => setTab('recurring')}>
+                  <div><strong>Recorrências</strong><span>Gerar títulos periódicos</span></div>
                   <StatusBadge tone="blue">Abrir</StatusBadge>
                 </button>
                 <button className="billing-row" type="button" style={{ width: '100%', border: 0, background: 'transparent', textAlign: 'left' }} onClick={() => setTab('commissions')}>
@@ -530,11 +612,170 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
         </Panel>
       )}
       {tab === 'recurring' && (
-        <UnavailableFeature
-          title="Recorrências financeiras"
-          description="Sem endpoint de recorrências. Evitamos mocks de produção."
-          contractHint="GET/POST /api/v1/finance-recurrences"
-        />
+        <>
+          <Panel title="Nova recorrência" description="Gera contas a pagar ou a receber no vencimento (worker + generate manual).">
+            {!canFinanceCreate ? (
+              <div className="state-message error" role="alert">Sem permissão financial.create.</div>
+            ) : (
+              <form className="form-grid" onSubmit={createRecurrence}>
+                <label>
+                  Tipo
+                  <select
+                    value={recurrenceForm.kind}
+                    onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, kind: event.target.value }))}
+                  >
+                    <option value="PAYABLE">Conta a pagar</option>
+                    <option value="RECEIVABLE">Conta a receber</option>
+                  </select>
+                </label>
+                <label>
+                  Descrição
+                  <input
+                    required
+                    minLength={3}
+                    value={recurrenceForm.description}
+                    onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, description: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Valor
+                  <input
+                    required
+                    inputMode="decimal"
+                    value={recurrenceForm.amount}
+                    onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, amount: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Frequência
+                  <select
+                    value={recurrenceForm.frequency}
+                    onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, frequency: event.target.value }))}
+                  >
+                    <option value="DAILY">Diária</option>
+                    <option value="WEEKLY">Semanal</option>
+                    <option value="MONTHLY">Mensal</option>
+                    <option value="YEARLY">Anual</option>
+                  </select>
+                </label>
+                <label>
+                  Intervalo
+                  <input
+                    type="number"
+                    min={1}
+                    max={36}
+                    value={recurrenceForm.interval}
+                    onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, interval: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Próxima ocorrência
+                  <input
+                    type="date"
+                    required
+                    value={recurrenceForm.nextOccurrence}
+                    onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, nextOccurrence: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Termina em (opcional)
+                  <input
+                    type="date"
+                    value={recurrenceForm.endsAt}
+                    onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, endsAt: event.target.value }))}
+                  />
+                </label>
+                {recurrenceForm.kind === 'RECEIVABLE' ? (
+                  <label>
+                    Paciente
+                    <select
+                      required
+                      value={recurrenceForm.patientId}
+                      onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, patientId: event.target.value }))}
+                    >
+                      <option value="">Selecione</option>
+                      {patients.map((patient) => (
+                        <option key={String(patient.id)} value={String(patient.id)}>
+                          {text(patient.fullName)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label>
+                    Fornecedor (opcional)
+                    <input
+                      value={recurrenceForm.supplierName}
+                      onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, supplierName: event.target.value }))}
+                    />
+                  </label>
+                )}
+                <div className="form-actions">
+                  <button className="button" type="submit" disabled={recurrenceBusy === 'create'}>
+                    {recurrenceBusy === 'create' ? 'Salvando…' : 'Criar recorrência'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </Panel>
+          <Panel title="Recorrências cadastradas" description={`${recurrences.length} regras na clínica.`}>
+            {!canFinance ? (
+              <div className="state-message error" role="alert">Sem permissão financial.view.</div>
+            ) : recurrences.length === 0 ? (
+              <EmptyState title="Nenhuma recorrência" description="Cadastre aluguel, assinaturas ou mensalidades periódicas." />
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Descrição</th>
+                      <th>Tipo</th>
+                      <th>Valor</th>
+                      <th>Frequência</th>
+                      <th>Próxima</th>
+                      <th>Status</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recurrences.map((item) => (
+                      <tr key={String(item.id)}>
+                        <td>{text(item.description)}</td>
+                        <td>{presentationLabel(item.kind)}</td>
+                        <td>{currency(item.amount)}</td>
+                        <td>{presentationLabel(item.frequency)} × {text(item.interval, '1')}</td>
+                        <td>{dateOnly(item.nextOccurrence)}</td>
+                        <td>
+                          <StatusBadge tone={item.active ? 'green' : 'gray'}>
+                            {item.active ? 'Ativa' : 'Inativa'}
+                          </StatusBadge>
+                        </td>
+                        <td className="table-actions">
+                          <button
+                            type="button"
+                            className="button secondary"
+                            disabled={recurrenceBusy === String(item.id) || !canFinanceCreate || !item.active}
+                            onClick={() => void generateRecurrence(String(item.id))}
+                          >
+                            Gerar agora
+                          </button>
+                          <button
+                            type="button"
+                            className="button secondary"
+                            disabled={recurrenceBusy === String(item.id) || !canFinanceCreate}
+                            onClick={() => void toggleRecurrence(String(item.id), Boolean(item.active))}
+                          >
+                            {item.active ? 'Pausar' : 'Reativar'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+        </>
       )}
       {tab === 'cashflow' && (
         <Panel title="Fluxo de caixa" description="Entradas e saídas consolidadas da clínica.">

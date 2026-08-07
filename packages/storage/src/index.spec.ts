@@ -31,4 +31,19 @@ describe('storage adapters', () => {
     expect(enabled.enabled).toBe(true);
     expect(storageStatus().storage.driver).toBe('minio');
   });
+
+  it('keeps antivirus disabled without clamav driver', () => {
+    process.env.AV_DRIVER = 'stub';
+    const status = storageStatus();
+    expect(status.antivirus.enabled).toBe(false);
+    expect(status.antivirus.disabledReason).toMatch(/stub/i);
+  });
+
+  it('enables clamav adapter only when AV_DRIVER=clamav', () => {
+    process.env.AV_DRIVER = 'clamav';
+    process.env.CLAMAV_HOST = '127.0.0.1';
+    const status = storageStatus();
+    expect(status.antivirus.enabled).toBe(true);
+    expect(status.antivirus.host).toBe('127.0.0.1');
+  });
 });

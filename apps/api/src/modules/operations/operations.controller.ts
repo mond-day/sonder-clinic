@@ -1,6 +1,6 @@
 import { Body, ConflictException, Controller, Get, Headers, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsArray, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { Response } from 'express';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
@@ -106,6 +106,31 @@ class PayablePaymentDto {
 }
 class CancelPayableDto {
   @IsString() @MinLength(3) reason!: string;
+}
+class FinanceRecurrenceDto {
+  @IsUUID() clinicId!: string;
+  @IsIn(['PAYABLE', 'RECEIVABLE']) kind!: 'PAYABLE' | 'RECEIVABLE';
+  @IsString() @MinLength(3) description!: string;
+  @IsString() amount!: string;
+  @IsIn(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']) frequency!: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+  @IsOptional() @IsInt() @Min(1) interval?: number;
+  @IsDateString() nextOccurrence!: string;
+  @IsOptional() @IsDateString() endsAt?: string;
+  @IsOptional() @IsUUID() patientId?: string;
+  @IsOptional() @IsString() supplierName?: string;
+  @IsOptional() @IsString() notes?: string;
+}
+class FinanceRecurrencePatchDto {
+  @IsOptional() @IsString() @MinLength(3) description?: string;
+  @IsOptional() @IsString() amount?: string;
+  @IsOptional() @IsIn(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']) frequency?: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+  @IsOptional() @IsInt() @Min(1) interval?: number;
+  @IsOptional() @IsDateString() nextOccurrence?: string;
+  @IsOptional() @IsDateString() endsAt?: string | null;
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsUUID() patientId?: string;
+  @IsOptional() @IsString() supplierName?: string;
+  @IsOptional() @IsString() notes?: string;
 }
 
 @ApiTags('operations')
@@ -248,6 +273,27 @@ export class OperationsController {
     @Query('to') to?: string,
   ) {
     return this.operations.cashflow(req.auth.organizationId, clinicId, from, to);
+  }
+
+  @Get('finance-recurrences') @RequirePermissions('financial.view')
+  financeRecurrences(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) {
+    return this.operations.financeRecurrences(req.auth.organizationId, clinicId);
+  }
+  @Post('finance-recurrences') @RequirePermissions('financial.create')
+  createFinanceRecurrence(@Req() req: AuthenticatedRequest, @Body() body: FinanceRecurrenceDto) {
+    return this.operations.createFinanceRecurrence(req.auth.organizationId, body);
+  }
+  @Patch('finance-recurrences/:id') @RequirePermissions('financial.create')
+  updateFinanceRecurrence(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: FinanceRecurrencePatchDto,
+  ) {
+    return this.operations.updateFinanceRecurrence(req.auth.organizationId, id, body);
+  }
+  @Post('finance-recurrences/:id/generate') @RequirePermissions('financial.create')
+  generateFinanceRecurrence(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.operations.generateFinanceRecurrence(req.auth.organizationId, id);
   }
 }
 

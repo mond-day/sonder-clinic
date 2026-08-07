@@ -1,6 +1,6 @@
 {
   "name": "@sonder/worker",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/main.ts",
@@ -12,7 +12,8 @@
     "test:integration": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@sonder/database": "workspace:*"
+    "@sonder/database": "workspace:*",
+    "@sonder/observability": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

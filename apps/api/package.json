@@ -1,6 +1,6 @@
 {
   "name": "@sonder/api",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
@@ -19,6 +19,7 @@
     "@nestjs/platform-express": "^11.0.0",
     "@nestjs/swagger": "^11.0.0",
     "@sonder/database": "workspace:*",
+    "@sonder/observability": "workspace:*",
     "@sonder/storage": "workspace:^",
     "argon2": "^0.41.1",
     "class-transformer": "^0.5.1",

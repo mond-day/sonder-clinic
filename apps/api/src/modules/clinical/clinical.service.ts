@@ -356,7 +356,12 @@ export class ClinicalService {
     if (file.size > MAX_MEDIA_BYTES) throw new BadRequestException('Arquivo deve ter no máximo 25 MB.');
     const extension = file.originalname.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '';
     const scan = await this.antivirus.scan(file.buffer);
-    // Sem ClamAV ativo/respondeu limpo → não marca como CLEAN (evita falso sucesso).
+    if (scan.infected) {
+      throw new BadRequestException(
+        `Arquivo rejeitado pelo antivírus${scan.detail ? `: ${scan.detail}` : '.'}`,
+      );
+    }
+    // Sem ClamAV ativo / daemon offline → PENDING (nunca CLEAN falso).
     const antivirusStatus = scan.clean ? 'CLEAN' : 'PENDING';
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
 

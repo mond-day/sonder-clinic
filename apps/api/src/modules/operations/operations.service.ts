@@ -24,6 +24,31 @@ const receivableSchema = z.object({
   dueDate: z.string().date(),
   paymentMethod: z.string().optional(),
 });
+const financeRecurrenceSchema = z.object({
+  clinicId: z.string().uuid(),
+  kind: z.enum(['PAYABLE', 'RECEIVABLE']),
+  description: z.string().trim().min(3),
+  amount: z.string().regex(/^\d+(\.\d{1,2})?$/),
+  frequency: z.enum(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']),
+  interval: z.number().int().min(1).max(36).optional(),
+  nextOccurrence: z.string().date(),
+  endsAt: z.string().date().optional(),
+  patientId: z.string().uuid().optional(),
+  supplierName: z.string().trim().min(2).optional(),
+  notes: z.string().trim().min(2).optional(),
+});
+const financeRecurrencePatchSchema = z.object({
+  description: z.string().trim().min(3).optional(),
+  amount: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
+  frequency: z.enum(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']).optional(),
+  interval: z.number().int().min(1).max(36).optional(),
+  nextOccurrence: z.string().date().optional(),
+  endsAt: z.string().date().nullable().optional(),
+  active: z.boolean().optional(),
+  patientId: z.string().uuid().optional(),
+  supplierName: z.string().trim().min(2).optional(),
+  notes: z.string().trim().min(2).optional(),
+});
 
 @Injectable()
 export class OperationsService {
@@ -921,4 +946,205 @@ export class OperationsService {
       };
     });
   }
+
+  financeRecurrences(organizationId: string, clinicId?: string) {
+    return prisma.financeRecurrence.findMany({
+      where: { organizationId, ...(clinicId ? { clinicId } : {}) },
+      orderBy: [{ active: 'desc' }, { nextOccurrence: 'asc' }],
+    });
+  }
+
+  async createFinanceRecurrence(organizationId: string, input: {
+    clinicId: string;
+    kind: 'PAYABLE' | 'RECEIVABLE';
+    description: string;
+    amount: string;
+    frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+    interval?: number;
+    nextOccurrence: string;
+    endsAt?: string;
+    patientId?: string;
+    supplierName?: string;
+    notes?: string;
+  }) {
+    parseWithZod(financeRecurrenceSchema, input);
+    const clinic = await prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId } });
+    if (!clinic) throw new NotFoundException('Clínica não encontrada.');
+    if (input.kind === 'RECEIVABLE') {
+      if (!input.patientId) throw new BadRequestException('Recorrência a receber exige patientId.');
+      const patient = await prisma.patient.findFirst({
+        where: { id: input.patientId, organizationId, status: { not: 'ARCHIVED' } },
+        select: { id: true },
+      });
+      if (!patient) throw new NotFoundException('Paciente não encontrado.');
+    }
+    const metadata: Record<string, unknown> = {};
+    if (input.patientId) metadata.patientId = input.patientId;
+    if (input.supplierName) metadata.supplierName = input.supplierName;
+    if (input.notes) metadata.notes = input.notes;
+    return prisma.financeRecurrence.create({
+      data: {
+        organizationId,
+        clinicId: input.clinicId,
+        kind: input.kind,
+        description: input.description.trim(),
+        amount: money(input.amount),
+        frequency: input.frequency,
+        interval: input.interval ?? 1,
+        nextOccurrence: new Date(`${input.nextOccurrence}T00:00:00.000Z`),
+        endsAt: input.endsAt ? new Date(`${input.endsAt}T00:00:00.000Z`) : null,
+        metadata: json(metadata),
+      },
+    });
+  }
+
+  async updateFinanceRecurrence(organizationId: string, id: string, input: {
+    description?: string;
+    amount?: string;
+    frequency?: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+    interval?: number;
+    nextOccurrence?: string;
+    endsAt?: string | null;
+    active?: boolean;
+    patientId?: string;
+    supplierName?: string;
+    notes?: string;
+  }) {
+    parseWithZod(financeRecurrencePatchSchema, input);
+    const existing = await prisma.financeRecurrence.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Recorrência não encontrada.');
+    const metadata = { ...(existing.metadata as Record<string, unknown>) };
+    if (input.patientId !== undefined) metadata.patientId = input.patientId;
+    if (input.supplierName !== undefined) metadata.supplierName = input.supplierName;
+    if (input.notes !== undefined) metadata.notes = input.notes;
+    if (existing.kind === 'RECEIVABLE') {
+      const patientId = typeof metadata.patientId === 'string' ? metadata.patientId : undefined;
+      if (!patientId) throw new BadRequestException('Recorrência a receber exige patientId.');
+    }
+    return prisma.financeRecurrence.update({
+      where: { id },
+      data: {
+        description: input.description?.trim(),
+        amount: input.amount ? money(input.amount) : undefined,
+        frequency: input.frequency,
+        interval: input.interval,
+        nextOccurrence: input.nextOccurrence
+          ? new Date(`${input.nextOccurrence}T00:00:00.000Z`)
+          : undefined,
+        endsAt: input.endsAt === null
+          ? null
+          : input.endsAt
+            ? new Date(`${input.endsAt}T00:00:00.000Z`)
+            : undefined,
+        active: input.active,
+        metadata: json(metadata),
+      },
+    });
+  }
+
+  async generateFinanceRecurrence(organizationId: string, id: string) {
+    const recurrence = await prisma.financeRecurrence.findFirst({ where: { id, organizationId } });
+    if (!recurrence) throw new NotFoundException('Recorrência não encontrada.');
+    if (!recurrence.active) throw new ConflictException('Recorrência inativa.');
+    const result = await materializeFinanceRecurrence(recurrence);
+    if (!result) throw new ConflictException('Recorrência fora da janela (endsAt) ou sem dados para gerar.');
+    return result;
+  }
+}
+
+type RecurrenceRow = {
+  id: string;
+  organizationId: string;
+  clinicId: string;
+  kind: string;
+  description: string;
+  amount: Prisma.Decimal;
+  frequency: string;
+  interval: number;
+  nextOccurrence: Date;
+  endsAt: Date | null;
+  metadata: unknown;
+};
+
+function advanceOccurrence(from: Date, frequency: string, interval: number): Date {
+  const next = new Date(from);
+  const step = Math.max(1, interval);
+  switch (frequency) {
+    case 'DAILY':
+      next.setUTCDate(next.getUTCDate() + step);
+      break;
+    case 'WEEKLY':
+      next.setUTCDate(next.getUTCDate() + 7 * step);
+      break;
+    case 'YEARLY':
+      next.setUTCFullYear(next.getUTCFullYear() + step);
+      break;
+    case 'MONTHLY':
+    default:
+      next.setUTCMonth(next.getUTCMonth() + step);
+      break;
+  }
+  return next;
+}
+
+async function materializeFinanceRecurrence(recurrence: RecurrenceRow) {
+  const occurrence = new Date(recurrence.nextOccurrence);
+  if (recurrence.endsAt && occurrence > recurrence.endsAt) {
+    await prisma.financeRecurrence.update({
+      where: { id: recurrence.id },
+      data: { active: false },
+    });
+    return null;
+  }
+  const metadata = (recurrence.metadata ?? {}) as Record<string, unknown>;
+  const dueDate = occurrence;
+  const description = `${recurrence.description} (${dueDate.toISOString().slice(0, 10)})`;
+
+  return prisma.$transaction(async (tx) => {
+    let created: { type: string; id: string };
+    if (recurrence.kind === 'PAYABLE') {
+      const payable = await tx.payable.create({
+        data: {
+          organizationId: recurrence.organizationId,
+          clinicId: recurrence.clinicId,
+          description,
+          originalAmount: recurrence.amount,
+          dueDate,
+          supplierName: typeof metadata.supplierName === 'string' ? metadata.supplierName : undefined,
+          notes: typeof metadata.notes === 'string' ? metadata.notes : `Gerado pela recorrência ${recurrence.id}`,
+        },
+      });
+      created = { type: 'PAYABLE', id: payable.id };
+    } else if (recurrence.kind === 'RECEIVABLE') {
+      const patientId = typeof metadata.patientId === 'string' ? metadata.patientId : null;
+      if (!patientId) throw new BadRequestException('Recorrência a receber sem patientId no metadata.');
+      const receivable = await tx.receivable.create({
+        data: {
+          organizationId: recurrence.organizationId,
+          clinicId: recurrence.clinicId,
+          patientId,
+          description,
+          originalAmount: recurrence.amount,
+          discount: money('0'),
+          surcharge: money('0'),
+          netAmount: recurrence.amount,
+          dueDate,
+        },
+      });
+      created = { type: 'RECEIVABLE', id: receivable.id };
+    } else {
+      throw new BadRequestException(`Tipo de recorrência inválido: ${recurrence.kind}`);
+    }
+
+    const nextOccurrence = advanceOccurrence(occurrence, recurrence.frequency, recurrence.interval);
+    const exhausted = Boolean(recurrence.endsAt && nextOccurrence > recurrence.endsAt);
+    const updated = await tx.financeRecurrence.update({
+      where: { id: recurrence.id },
+      data: {
+        nextOccurrence,
+        active: exhausted ? false : true,
+      },
+    });
+    return { recurrence: updated, generated: created };
+  });
 }

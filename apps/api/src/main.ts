@@ -3,9 +3,11 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
+import { startObservability } from '@sonder/observability';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
+  await startObservability('sonder-api');
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api/v1');
   app.use(cookieParser());

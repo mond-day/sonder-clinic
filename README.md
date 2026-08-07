@@ -2,7 +2,7 @@
 
 ERP odontológico interno, multi‑clínica, construído como monorepo TypeScript (Next.js + NestJS + worker + PostgreSQL/Prisma). Cobre a operação de uma clínica de ponta a ponta: agenda, pacientes, prontuário clínico, odontograma, planos de tratamento, documentos, financeiro, comissões, comunicação, integrações e configurações.
 
-> Versão atual: **1.1.5**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
+> Versão atual: **1.1.6**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
 
 ---
 
@@ -58,6 +58,8 @@ Monorepo gerenciado com **pnpm workspaces** + **Turborepo**. Quatro unidades pri
 - **`apps/api`** — API NestJS com prefixo global `/api/v1`, Swagger em `/docs`, validação por DTO (whitelist) e RBAC por permissão.
 - **`apps/worker`** — processo de background que consome a tabela `OutboxEvent` (padrão *transactional outbox*) por polling. Em dev processa localmente; em produção despacha para adapters reais via fila Redis.
 - **`packages/database`** — Prisma schema, client, migrações e seed. Fonte única do modelo de dados; importado como `@sonder/database`.
+- **`packages/storage`** — adapters de storage (local/MinIO/S3) e antivírus ClamAV (INSTREAM).
+- **`packages/observability`** — OpenTelemetry opcional (`OTEL_ENABLED`).
 - **`packages/typescript-config`** — configs TS compartilhadas.
 
 O escopo de organização (`organizationId`) é sempre derivado do JWT, nunca de parâmetro do cliente — base do isolamento multi‑tenant.
@@ -154,11 +156,11 @@ O arquivo `.env.example` documenta todas as variáveis; nenhum segredo real é v
 | Auth | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`, `COOKIE_SECURE` | segredos de dev são placeholders; TTL access 15m / refresh 30d |
 | Cripto | `ENCRYPTION_MASTER_KEY` | 32 bytes hex para AES‑256‑GCM |
 | Storage | `STORAGE_DRIVER`, `STORAGE_LOCAL_PATH`, `S3_*` | `local` em dev, `s3`/MinIO em prod |
-| Antivírus | `AV_DRIVER` | `stub` em dev |
+| Antivírus | `AV_DRIVER`, `CLAMAV_HOST`, `CLAMAV_PORT` | `stub` em dev; `clamav` + host em prod opcional |
 | Integrações | `NIBO_*`, `ABACATEPAY_*`, `EVOLUTION_*`, `CHATWOOT_*`, `GOOGLE_*`, `OPENAI_*`, `AI_PROVIDER`, `INTEGRATION_SCOPE_DEFAULT` | `*_MOCK=true` roda com stubs, sem credenciais reais |
 | Certificado A1 | `A1_CERTIFICATE_PATH`, `A1_PASSWORD_FILE` | nunca versionar; usar Docker secrets em prod |
 | Import | `CODENTAL_IMPORT_ENABLED`, `CODENTAL_IMPORT_PATH` | desabilitado até os arquivos serem fornecidos |
-| Observabilidade | `OTEL_ENABLED`, `LOG_LEVEL` | OTEL desligado em dev |
+| Observabilidade | `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_LEVEL` | SDK real; desligado por padrão |
 
 > **Segurança:** `.env` nunca deve ir para o Git. Antes de produção, troque **todos** os segredos, habilite `COOKIE_SECURE=true` e siga o checklist em `docs/SECURITY.md`.
 
@@ -204,7 +206,9 @@ sonder-clinic/
 │   │       └── providers/
 │   └── worker/         # processador de OutboxEvent
 ├── packages/
-│   ├── database/       # Prisma schema, client (@sonder/database), migrações, seed
+│   ├── database/       # Prisma schema, client, migrações, seed
+│   ├── storage/        # local/MinIO/S3 + ClamAV
+│   ├── observability/  # OpenTelemetry opcional
 │   └── typescript-config/
 ├── infra/
 │   ├── docker/docker-compose.dev.yml   # Postgres 16 para dev
@@ -241,7 +245,7 @@ A API expõe estes conjuntos de recursos (todos sob `/api/v1`, documentados no S
 | **Prescrição assistida** | sugestão via OpenAI (mock em dev), com revisão obrigatória |
 | **Integrações/Settings** | conexões externas, branding e documentos legais por clínica |
 
-> **Honestidade sobre o status:** a UI cobre mutações principais (pacientes, agenda, evolução, odontograma, títulos/recebimentos, settings, usuários, unidades/cadeiras, comissões por competência e regras de retorno automático). Ainda pendente: recorrências financeiras e odontograma 3D (protótipo). Relatórios têm resumo real; exportação CSV/filtros avançados são parciais. Mapa atual: `docs/IMPLEMENTATION_STATUS.md`. Checklist prod: `docs/PRODUCTION_READINESS.md`.
+> **Honestidade sobre o status:** a UI cobre mutações principais (pacientes, agenda, evolução, odontograma, títulos/recebimentos, recorrências, settings, usuários, unidades/cadeiras, comissões por competência e regras de retorno automático). Odontograma 3D permanece protótipo. Relatórios têm resumo real; exportação CSV/filtros avançados são parciais. Mapa atual: `docs/IMPLEMENTATION_STATUS.md`. Checklist prod: `docs/PRODUCTION_READINESS.md`.
 
 ## Integrações externas
 
@@ -263,7 +267,8 @@ As credenciais ficam **criptografadas (AES‑256‑GCM)**, são **mascaradas na 
 
 - **Fila:** `QUEUE_DRIVER=memory` em desenvolvimento (sem Redis). O worker faz polling da `OutboxEvent`. Em produção, `QUEUE_DRIVER=redis` e o worker despacha para os adapters reais (Evolution, Chatwoot, etc.).
 - **Storage:** `local` em dev (`.data/storage`); `s3`/MinIO em produção.
-- **Antivírus:** `stub` em dev; ClamAV previsto para produção (ainda desabilitado).
+- **Antivírus:** `stub`/`disabled` em dev (não marca CLEAN); `AV_DRIVER=clamav` + `CLAMAV_HOST` usa INSTREAM TCP real. Sem daemon → `PENDING`. Infectado rejeita upload.
+- **Observabilidade:** `@sonder/observability` — `OTEL_ENABLED=true` ativa SDK (console ou OTLP). Status em `/api/v1/health`.
 
 ## Produção: Swarm, Traefik e imagens
 
@@ -274,7 +279,7 @@ Deploy via **Docker Swarm** em `infra/swarm/stack.production.yml`:
 - **Traefik** faz roteamento por host com TLS (Let's Encrypt): `web` em `app.sonder.clinic` (porta 3000), `api` em `api.sonder.clinic` (porta 4000). Hosts configuráveis por env (`APP_HOST`, `API_HOST`).
 - Segredos via **Docker secrets** externos: `jwt_access_secret`, `jwt_refresh_secret`, `encryption_master_key`, `s3_access_key`, `s3_secret_key`.
 
-Imagens publicadas no **GHCR** (`ghcr.io/mond-day`), tag padrão **1.1.5**:
+Imagens publicadas no **GHCR** (`ghcr.io/mond-day`), tag padrão **1.1.6**:
 
 - `ghcr.io/mond-day/sonder-clinic-api`
 - `ghcr.io/mond-day/sonder-clinic-web`
@@ -288,11 +293,11 @@ Imagens publicadas no **GHCR** (`ghcr.io/mond-day`), tag padrão **1.1.5**:
 Passos de release (detalhes em `docs/RELEASE.md`):
 
 ```bash
-# 1. Atualize a versão nos package.json (root + apps)
+# 1. Atualize a versão nos package.json (root + apps + packages)
 # 2. Commit
-git tag -a v1.1.5 -m "Release 1.1.5"
+git tag -a v1.1.6 -m "Release 1.1.6"
 git push origin main
-git push origin v1.1.5
+git push origin v1.1.6
 # 3. Atualize WEB_IMAGE/API_IMAGE/WORKER_IMAGE no stack de produção
 ```
 
@@ -308,14 +313,16 @@ O `web` ainda não possui testes automatizados. A qualidade atual é validada po
 
 ## Documentação complementar
 
-- `docs/AGENTS.md` — arquitetura, convenções, env e como rodar (orientação para agentes).
-- `docs/IMPLEMENTATION_STATUS.md` — o que está pronto, parcial e próximo.
+- `docs/README.md` — índice canônico.
+- `docs/AGENTS.md` — arquitetura, convenções, env e como rodar.
+- `docs/IMPLEMENTATION_STATUS.md` — o que está pronto e residual honesto.
 - `docs/PRODUCTION_READINESS.md` — checklist go/no-go de produção.
 - `docs/RELEASE.md` — versionamento, imagens e processo de release.
 - `docs/SECURITY.md` — controles de segurança.
+- `docs/api/workspace-contracts.md` — contratos HTTP do workspace.
 - `docs/HTML_REFERENCES.md` — índice dos protótipos em `HTML_REFERENCIAS/`.
 - `docs/archive/` — specs históricas (não são fonte de verdade).
-- `docs/ASSUMPTIONS.md`, `docs/DUVIDAS_E_ASSUMPTIONS.md` — decisões de produto.
+- `docs/ASSUMPTIONS.md` — decisões de produto.
 
 Repositório: https://github.com/mond-day/sonder-clinic
 

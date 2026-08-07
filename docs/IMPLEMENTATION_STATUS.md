@@ -1,32 +1,32 @@
 # Status de implementação
 
-Atualizado em 06/08/2026 — versão **1.1.5**.
+Atualizado — versão **1.1.6**.
 
-## Concluído nesta entrega (1.1.5)
+## Concluído nesta entrega (1.1.6)
 
-### Residuais 1.1.4
-- **Unidades/cadeiras:** CRUD em `GET/POST/PATCH /settings/units` e `POST /settings/units/:id/chairs` + `PATCH /settings/chairs/:id`; UI em Configurações → Unidades.
-- **Comissões por competência:** geração de `CommissionEvent` (+ espelho `CommissionEntry`) no pagamento; `GET /commission-events`, `GET/POST /commission-periods`, close/reopen; UI Financeiro → Comissões.
-- **AutomationRule:** `GET/POST/PATCH /automation-rules`; worker processa `appointment.completed` e cria `ReturnAlert`; UI em Configurações → Retornos automáticos.
-- **Branding/storage:** path explícito local (dev) / MinIO|S3 (prod); upload falha com erro claro se storage desabilitado (sem falso sucesso).
-- Payables e cashflow consumidos na UI (API já existia).
+Residuais que a 1.1.5 ainda deixava abertos no código:
 
-### Docs / limpeza
-- Checklist de produção em `docs/PRODUCTION_READINESS.md`.
-- Guia para agentes em `docs/AGENTS.md`.
-- HTMLs soltos na raiz removidos; referências em `HTML_REFERENCIAS/` (+ README).
-- Specs longas movidas para `docs/archive/`.
+- **Recorrências financeiras:** `GET/POST/PATCH /finance-recurrences` + `POST .../:id/generate`; worker materializa títulos devidos; UI Financeiro → Recorrências.
+- **ClamAV operable:** `AV_DRIVER=clamav` + `CLAMAV_HOST`/`CLAMAV_PORT` usa protocolo INSTREAM TCP real; sem host/daemon → `PENDING` (nunca `CLEAN` falso); infectado rejeita upload.
+- **OpenTelemetry real:** pacote `@sonder/observability`; `OTEL_ENABLED=true` inicia SDK (console ou OTLP); default desligado com status explícito em `/health`.
 
-## Herdado de 1.1.4 / 1.1.3
+## Herdado (1.1.5 e anteriores)
 
-- Upload `PatientMedia`, assinatura A1 real, password reset via SMTP (erro sem SMTP).
-- Users/roles HTTP + UI.
-- Integrações desabilitadas sem credencial / `*_MOCK=true` (sem falso sucesso).
-- UX agenda, pacientes, prontuário, financeiro.
+- Unidades/cadeiras, comissões por competência, AutomationRule → ReturnAlert.
+- Branding/storage sem falso sucesso; payables/cashflow na UI.
+- PatientMedia, assinatura A1 real, password reset SMTP, users/roles, integrações gated.
 
-## Residual conhecido (não bloqueia “complete enough” 1.1.5)
-- Odontograma 3D continua conceito/protótipo.
-- Recorrências financeiras (`FinanceRecurrence`) sem API/UI.
-- ClamAV gated; sem socket → arquivo não marcado como limpo.
-- Assinatura A1 e recuperação de senha dependem de certificado PKCS#12 e SMTP em produção.
-- E2E cobre happy path; não cobre todos os residuals novos.
+## Fora do escopo de “código residual” (produto)
+
+| Item | Estado honesto |
+|------|----------------|
+| Odontograma 3D | Conceito/protótipo — fora de contrato HTTP |
+| Secrets / HTTPS / Postgres gerenciado / SMTP / MinIO | Infra operacional — ver `PRODUCTION_READINESS.md` |
+| ClamAV daemon na stack | Adapter pronto; serviço externo opcional |
+| Collector OTEL | SDK pronto; endpoint externo opcional |
+| LGPD processos DPO | Textos no app; processo jurídico externo |
+| E2E completo de todos os residuals | Happy path no CI; casos novos manuais/recomendados |
+
+## Docs
+
+Índice em `docs/README.md`. Specs gigantes só em `docs/archive/`.

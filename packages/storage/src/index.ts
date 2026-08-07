@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createWriteStream, promises as fs } from 'node:fs';
+import { createConnection } from 'node:net';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
@@ -213,24 +214,97 @@ class ClamAvScanner {
     }
   }
 
-  async scan(_buffer: Buffer): Promise<{ clean: boolean; engine: string; detail?: string }> {
+  async scan(buffer: Buffer): Promise<{
+    clean: boolean;
+    infected: boolean;
+    engine: string;
+    detail?: string;
+  }> {
     if (!this.enabled) {
-      return { clean: false, engine: process.env.AV_DRIVER ?? 'stub', detail: this.disabledReason };
+      return {
+        clean: false,
+        infected: false,
+        engine: process.env.AV_DRIVER ?? 'stub',
+        detail: this.disabledReason,
+      };
     }
-    const host = process.env.CLAMAV_HOST;
+
+    const host = process.env.CLAMAV_HOST?.trim();
     if (!host) {
       return {
         clean: false,
+        infected: false,
         engine: 'clamav',
-        detail: 'CLAMAV_HOST ausente — varredura não executada.',
+        detail: 'CLAMAV_HOST ausente — varredura não executada (arquivo permanece PENDING).',
       };
     }
-    return {
-      clean: false,
-      engine: 'clamav',
-      detail: 'ClamAV configurado, mas o agente de socket não respondeu neste ambiente.',
-    };
+
+    const port = Number(process.env.CLAMAV_PORT ?? 3310);
+    try {
+      const response = await scanWithClamdInstream(buffer, host, port);
+      if (response.includes('OK') && !response.includes('FOUND')) {
+        return { clean: true, infected: false, engine: 'clamav', detail: response.trim() };
+      }
+      if (response.includes('FOUND')) {
+        return { clean: false, infected: true, engine: 'clamav', detail: response.trim() };
+      }
+      return {
+        clean: false,
+        infected: false,
+        engine: 'clamav',
+        detail: `Resposta inesperada do ClamAV: ${response.trim() || '(vazia)'}`,
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Falha ao contactar ClamAV.';
+      return {
+        clean: false,
+        infected: false,
+        engine: 'clamav',
+        detail: `ClamAV indisponível: ${detail}`,
+      };
+    }
   }
+}
+
+function scanWithClamdInstream(buffer: Buffer, host: string, port: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host, port });
+    const chunks: Buffer[] = [];
+    let settled = false;
+
+    const finish = (error?: Error, result?: string) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(result ?? '');
+    };
+
+    socket.setTimeout(15_000);
+    socket.on('timeout', () => finish(new Error(`Timeout em ${host}:${port}`)));
+    socket.on('error', (error) => finish(error));
+    socket.on('data', (chunk) => chunks.push(chunk));
+    socket.on('end', () => finish(undefined, Buffer.concat(chunks).toString('utf8')));
+
+    socket.on('connect', () => {
+      try {
+        socket.write('zINSTREAM\0');
+        const chunkSize = 64 * 1024;
+        for (let offset = 0; offset < buffer.length; offset += chunkSize) {
+          const slice = buffer.subarray(offset, Math.min(offset + chunkSize, buffer.length));
+          const header = Buffer.alloc(4);
+          header.writeUInt32BE(slice.length, 0);
+          socket.write(header);
+          socket.write(slice);
+        }
+        const end = Buffer.alloc(4);
+        end.writeUInt32BE(0, 0);
+        socket.write(end);
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  });
 }
 
 export function createStorageAdapter(): StorageAdapter {
@@ -254,6 +328,9 @@ export const storageStatus = () => {
     },
     antivirus: {
       enabled: antivirus.enabled,
+      driver: process.env.AV_DRIVER ?? 'stub',
+      host: process.env.CLAMAV_HOST ?? null,
+      port: Number(process.env.CLAMAV_PORT ?? 3310),
       disabledReason: antivirus.disabledReason ?? null,
     },
   };

@@ -1,6 +1,6 @@
 # Guia para agentes (Sonder Clinic)
 
-Contexto operacional do monorepo. Preferir este arquivo + `IMPLEMENTATION_STATUS.md` + `PRODUCTION_READINESS.md` a specs longas em `docs/archive/`.
+Contexto operacional do monorepo. Preferir `docs/README.md` + este arquivo + `IMPLEMENTATION_STATUS.md` + `PRODUCTION_READINESS.md` a specs em `docs/archive/`.
 
 ## Arquitetura
 
@@ -8,9 +8,10 @@ Contexto operacional do monorepo. Preferir este arquivo + `IMPLEMENTATION_STATUS
 |--------------|--------|
 | `apps/api` | NestJS, prefixo `/api/v1`, guards JWT + permissões |
 | `apps/web` | Next.js App Router, UI PT-BR |
-| `apps/worker` | Polling de `OutboxEvent` (WhatsApp reminder, automation) |
+| `apps/worker` | Polling de `OutboxEvent` + geração de recorrências financeiras |
 | `packages/database` | Prisma schema + migrations + seed |
-| `packages/storage` | `STORAGE_DRIVER=local` (dev) ou `minio`/`s3` (prod) |
+| `packages/storage` | Storage local/MinIO/S3 + scanner ClamAV (INSTREAM) |
+| `packages/observability` | OpenTelemetry opcional (`OTEL_ENABLED`) |
 
 Isolamento: `organizationId` no JWT; clínicas via query/`clinicId`.
 
@@ -19,14 +20,13 @@ Isolamento: `organizationId` no JWT; clínicas via query/`clinicId`.
 - Validação: Zod nos services (`parseWithZod`) + class-validator nos DTOs.
 - Permissões: `@RequirePermissions('a', 'b')` = OR; seed em `packages/database/prisma/seed.ts`.
 - Soft-delete preferido (`EntityStatus` ACTIVE/INACTIVE) em unidades/cadeiras.
-- Integrações: sem credencial ou `*_MOCK=true` → desabilitado com erro explícito (nunca falso sucesso).
+- Integrações / AV / OTEL: sem credencial ou flag off → desabilitado com erro/status explícito (nunca falso sucesso).
 - Migrations **aditivas**; APIs additive quando possível.
 - UI em português.
 
 ## Como rodar (dev)
 
 ```bash
-# Preferir
 ./script/dev.command
 # ou
 pnpm install && pnpm db:generate && pnpm db:deploy && pnpm db:seed
@@ -34,31 +34,34 @@ pnpm dev
 ```
 
 - Web: `http://localhost:3000`
-- API: `http://localhost:4000/api/v1` · Swagger `/docs`
+- API: `http://localhost:4000/api/v1` · Swagger `/docs` · Health `/api/v1/health`
 - Login seed: `admin@sonder.local` / `Sonder@123`
-- `script/dev.command` libera portas 3000/4000 de sessões anteriores deste repo.
 
-Gates locais: `pnpm typecheck`, `pnpm test`, `env -u NODE_ENV pnpm build`, `pnpm test:e2e`.
+Gates: `pnpm typecheck`, `pnpm test`, `env -u NODE_ENV pnpm build`, `pnpm test:e2e`.
 
 ## Env vars críticas
 
-Ver `.env.example`. Em resumo:
+Ver `.env.example`. Resumo:
 
-- Auth: `JWT_*`, `ENCRYPTION_MASTER_KEY` (64 hex)
-- DB: `DATABASE_URL`
-- Storage: `STORAGE_DRIVER`, `STORAGE_LOCAL_PATH` ou `S3_*`
-- Queue: `QUEUE_DRIVER=memory|redis`
-- SMTP: `SMTP_HOST` (password reset)
-- Integrações: `*_MOCK` + credenciais
+| Grupo | Vars |
+|-------|------|
+| Auth | `JWT_*`, `ENCRYPTION_MASTER_KEY` (64 hex), `COOKIE_SECURE` |
+| DB | `DATABASE_URL` |
+| Storage | `STORAGE_DRIVER`, `STORAGE_LOCAL_PATH` ou `S3_*` |
+| Antivirus | `AV_DRIVER=stub\|disabled\|clamav`, `CLAMAV_HOST`, `CLAMAV_PORT` |
+| Queue | `QUEUE_DRIVER=memory\|redis`, `REDIS_URL` |
+| SMTP | `SMTP_HOST` (password reset) |
+| OTEL | `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| Integrações | `*_MOCK` + credenciais |
 
 ## Protótipos HTML
 
-Índice e pacotes em [`HTML_REFERENCIAS/README.md`](../HTML_REFERENCIAS/README.md) (~312KB). Não duplicar megabytes na raiz.
+[`HTML_REFERENCIAS/README.md`](../HTML_REFERENCIAS/README.md). Índice: `HTML_REFERENCES.md`.
 
 ## Specs históricas
 
-`docs/archive/` — implementação integral e plano frontend. Usar só quando precisar de detalhe de domínio; o código + status atual prevalecem.
+`docs/archive/` — não são fonte de verdade. Código + status atual prevalecem.
 
-## Gaps conhecidos de prod
+## Gaps de prod
 
-Ver `PRODUCTION_READINESS.md`.
+Ver `PRODUCTION_READINESS.md` (ops/infra, não “código residual” da 1.1.6).

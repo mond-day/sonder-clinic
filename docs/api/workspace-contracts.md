@@ -1,6 +1,6 @@
 # Contratos de API — Workspace Clínico
 
-Atualizado em 6 de agosto de 2026 (release **1.1.5**).
+Atualizado na release **1.1.6**.
 
 ## Implementados
 
@@ -43,8 +43,6 @@ POST /api/v1/commission-periods/:id/close
 POST /api/v1/commission-periods/:id/reopen
 ```
 
-Eventos gerados no `POST /receivables/:id/payments` quando há tratamento + regra elegível.
-
 ### Users / roles
 
 ```http
@@ -53,12 +51,16 @@ GET/POST/PATCH /api/v1/roles …
 POST/DELETE /api/v1/users/:id/roles …
 ```
 
-### Financeiro ampliado (parcial)
+### Financeiro
 
 ```http
 GET/POST /api/v1/payables …
 GET      /api/v1/cashflow?clinicId&from&to
+GET/POST/PATCH /api/v1/finance-recurrences
+POST     /api/v1/finance-recurrences/:id/generate
 ```
+
+Worker gera ocorrências devidas (`active && nextOccurrence <= hoje`) criando `Payable` ou `Receivable`.
 
 ### Branding / certificado / PatientMedia
 
@@ -69,12 +71,17 @@ POST/DELETE /api/v1/settings/certificate
 POST /api/v1/patients/:id/media
 ```
 
-Storage: local em dev (`STORAGE_DRIVER=local`); MinIO/S3 em prod. Sem credenciais MinIO o upload **falha** (sem falso sucesso).
+Storage: local em dev; MinIO/S3 em prod. Sem credenciais MinIO o upload **falha**.
+AV: `AV_DRIVER=stub|disabled|clamav`; infectado rejeita; sem scan limpo → `PENDING`.
 
-## Ainda pendentes
+### Health
 
 ```http
-GET/POST /api/v1/finance-recurrences
+GET /api/v1/health
 ```
 
-Odontograma 3D permanece protótipo (fora de contrato HTTP).
+Inclui status de storage, antivirus e observability (sem secrets).
+
+## Fora de contrato HTTP
+
+Odontograma 3D permanece protótipo.
