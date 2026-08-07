@@ -1,36 +1,32 @@
 # Status de implementação
 
-Atualizado em 06/08/2026 — versão **1.1.3**.
+Atualizado em 06/08/2026 — versão **1.1.5**.
 
-## Concluído nesta entrega (1.1.3)
+## Concluído nesta entrega (1.1.5)
 
-### Residuais técnicos 1.1.2
-- Upload multipart `PatientMedia` (`POST /patients/:id/media`) com storage + ClamAV gated (sem marcar limpo sem varredura).
-- Assinatura A1 de documentos consome PKCS#12 armazenado (`method: A1`); `MOCK_A1` rejeitado; sem certificado válido → erro explícito.
-- ClamAV permanece gated sem falso sucesso.
+### Residuais 1.1.4
+- **Unidades/cadeiras:** CRUD em `GET/POST/PATCH /settings/units` e `POST /settings/units/:id/chairs` + `PATCH /settings/chairs/:id`; UI em Configurações → Unidades.
+- **Comissões por competência:** geração de `CommissionEvent` (+ espelho `CommissionEntry`) no pagamento; `GET /commission-events`, `GET/POST /commission-periods`, close/reopen; UI Financeiro → Comissões.
+- **AutomationRule:** `GET/POST/PATCH /automation-rules`; worker processa `appointment.completed` e cria `ReturnAlert`; UI em Configurações → Retornos automáticos.
+- **Branding/storage:** path explícito local (dev) / MinIO|S3 (prod); upload falha com erro claro se storage desabilitado (sem falso sucesso).
+- Payables e cashflow consumidos na UI (API já existia).
 
-### UX
-- Login: revelar senha + “Esqueci minha senha” via SMTP (erro claro sem SMTP).
-- Agenda: modal em visualização, editar sob demanda, status editável, unidade/cadeira ocultos se únicos, etiquetas/antecedência em multiselect, observações únicas.
-- Pacientes: ícones editar/visualizar/reticências; célula só com nome + última consulta (bug `[object Object]` corrigido).
-- Prontuário: WhatsApp/editar em ícones; privacy-banner removido; alertas sutis; timeline alinhada; tratamentos/financeiro/documentos inline; anamnese e odontograma com botão Adicionar.
+### Docs / limpeza
+- Checklist de produção em `docs/PRODUCTION_READINESS.md`.
+- Guia para agentes em `docs/AGENTS.md`.
+- HTMLs soltos na raiz removidos; referências em `HTML_REFERENCIAS/` (+ README).
+- Specs longas movidas para `docs/archive/`.
 
-### Qualidade
-- Gates: `pnpm typecheck`, `pnpm test`, `env -u NODE_ENV pnpm build`, `db:deploy`, `db:seed`, `pnpm test:e2e` (11/11).
+## Herdado de 1.1.4 / 1.1.3
 
-## Herdado de 1.1.2 / 1.1.1
+- Upload `PatientMedia`, assinatura A1 real, password reset via SMTP (erro sem SMTP).
+- Users/roles HTTP + UI.
+- Integrações desabilitadas sem credencial / `*_MOCK=true` (sem falso sucesso).
+- UX agenda, pacientes, prontuário, financeiro.
 
-### Referências HTML
-- Pacote V2 Anamnese/Evolução em `HTML_REFERENCIAS/02_ANAMNESE_EVOLUCAO_V2/`.
-- Pacote completo de protótipos aprovados em `HTML_REFERENCIAS/01_WORKSPACE_APROVADO/`.
-
-### Integrações desabilitadas sem credencial
-- Evolution, Nibo, Google Calendar, Chatwoot, AbacatePay, OpenAI: desativado quando `*_MOCK=true` ou env ausente.
-- MinIO/local storage via `@sonder/storage`.
-- ClamAV: `AV_DRIVER=clamav` + `CLAMAV_HOST`; sem socket → não marca arquivo como limpo.
-- SMTP: necessário para recuperação de senha (`SMTP_HOST`).
-
-## Residual conhecido
-- Odontograma 3D permanece conceito (protótipo).
-- Assinatura A1 depende de certificado PKCS#12 válido configurado na clínica.
-- Recuperação de senha depende de SMTP configurado.
+## Residual conhecido (não bloqueia “complete enough” 1.1.5)
+- Odontograma 3D continua conceito/protótipo.
+- Recorrências financeiras (`FinanceRecurrence`) sem API/UI.
+- ClamAV gated; sem socket → arquivo não marcado como limpo.
+- Assinatura A1 e recuperação de senha dependem de certificado PKCS#12 e SMTP em produção.
+- E2E cobre happy path; não cobre todos os residuals novos.

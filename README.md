@@ -2,7 +2,7 @@
 
 ERP odontológico interno, multi‑clínica, construído como monorepo TypeScript (Next.js + NestJS + worker + PostgreSQL/Prisma). Cobre a operação de uma clínica de ponta a ponta: agenda, pacientes, prontuário clínico, odontograma, planos de tratamento, documentos, financeiro, comissões, comunicação, integrações e configurações.
 
-> Versão atual: **1.0.0**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
+> Versão atual: **1.1.5**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
 
 ---
 
@@ -241,7 +241,7 @@ A API expõe estes conjuntos de recursos (todos sob `/api/v1`, documentados no S
 | **Prescrição assistida** | sugestão via OpenAI (mock em dev), com revisão obrigatória |
 | **Integrações/Settings** | conexões externas, branding e documentos legais por clínica |
 
-> **Honestidade sobre o status:** boa parte da UI é operacional para consulta e para as mutações principais (pacientes, agenda, evolução, odontograma, títulos/recebimentos, settings). Alguns fluxos existem na API mas ainda **não têm tela completa**: aprovação/execução de planos, assinatura/correção de evoluções, geração/assinatura de documentos, estornos e fechamento de comissões. Relatórios têm resumo real, mas exportação CSV e filtros de período ainda não. Consulte `docs/IMPLEMENTATION_STATUS.md` para o mapa atualizado.
+> **Honestidade sobre o status:** a UI cobre mutações principais (pacientes, agenda, evolução, odontograma, títulos/recebimentos, settings, usuários, unidades/cadeiras, comissões por competência e regras de retorno automático). Ainda pendente: recorrências financeiras e odontograma 3D (protótipo). Relatórios têm resumo real; exportação CSV/filtros avançados são parciais. Mapa atual: `docs/IMPLEMENTATION_STATUS.md`. Checklist prod: `docs/PRODUCTION_READINESS.md`.
 
 ## Integrações externas
 
@@ -274,7 +274,7 @@ Deploy via **Docker Swarm** em `infra/swarm/stack.production.yml`:
 - **Traefik** faz roteamento por host com TLS (Let's Encrypt): `web` em `app.sonder.clinic` (porta 3000), `api` em `api.sonder.clinic` (porta 4000). Hosts configuráveis por env (`APP_HOST`, `API_HOST`).
 - Segredos via **Docker secrets** externos: `jwt_access_secret`, `jwt_refresh_secret`, `encryption_master_key`, `s3_access_key`, `s3_secret_key`.
 
-Imagens publicadas no **GHCR** (`ghcr.io/mond-day`), tag padrão **1.0.0**:
+Imagens publicadas no **GHCR** (`ghcr.io/mond-day`), tag padrão **1.1.5**:
 
 - `ghcr.io/mond-day/sonder-clinic-api`
 - `ghcr.io/mond-day/sonder-clinic-web`
@@ -290,9 +290,9 @@ Passos de release (detalhes em `docs/RELEASE.md`):
 ```bash
 # 1. Atualize a versão nos package.json (root + apps)
 # 2. Commit
-git tag -a v1.0.1 -m "Release 1.0.1"
+git tag -a v1.1.5 -m "Release 1.1.5"
 git push origin main
-git push origin v1.0.1
+git push origin v1.1.5
 # 3. Atualize WEB_IMAGE/API_IMAGE/WORKER_IMAGE no stack de produção
 ```
 
@@ -308,11 +308,14 @@ O `web` ainda não possui testes automatizados. A qualidade atual é validada po
 
 ## Documentação complementar
 
+- `docs/AGENTS.md` — arquitetura, convenções, env e como rodar (orientação para agentes).
 - `docs/IMPLEMENTATION_STATUS.md` — o que está pronto, parcial e próximo.
-- `docs/ASSUMPTIONS.md` — decisões (assumptions) de implementação.
-- `docs/DUVIDAS_E_ASSUMPTIONS.md` e `docs/DUVIDAS_PARA_RESPONDER.md` — decisões de produto e pendências.
-- `docs/SECURITY.md` — controles de segurança e checklist pré‑produção.
+- `docs/PRODUCTION_READINESS.md` — checklist go/no-go de produção.
 - `docs/RELEASE.md` — versionamento, imagens e processo de release.
+- `docs/SECURITY.md` — controles de segurança.
+- `docs/HTML_REFERENCES.md` — índice dos protótipos em `HTML_REFERENCIAS/`.
+- `docs/archive/` — specs históricas (não são fonte de verdade).
+- `docs/ASSUMPTIONS.md`, `docs/DUVIDAS_E_ASSUMPTIONS.md` — decisões de produto.
 
 Repositório: https://github.com/mond-day/sonder-clinic
 
