@@ -56,12 +56,37 @@ const createLabCaseSchema = z.object({
   cost: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
   notes: z.string().trim().optional(),
 });
+const automationActionSchema = z.object({
+  type: z.literal('CREATE_RETURN_ALERT'),
+  reason: z.string().trim().min(3).max(200),
+  preferredChannel: returnChannel.optional(),
+  daysAfter: z.number().int().min(0).max(365).optional(),
+});
+const createAutomationRuleSchema = z.object({
+  clinicId: z.string().uuid().optional(),
+  name: z.string().trim().min(3).max(120),
+  trigger: z.literal('APPOINTMENT_COMPLETED'),
+  conditions: z.record(z.string(), z.unknown()).default({}),
+  action: automationActionSchema,
+  allowedHours: z.record(z.string(), z.unknown()).default({}),
+  frequency: z.string().trim().max(40).optional(),
+  active: z.boolean().optional(),
+});
+const updateAutomationRuleSchema = z.object({
+  name: z.string().trim().min(3).max(120).optional(),
+  conditions: z.record(z.string(), z.unknown()).optional(),
+  action: automationActionSchema.optional(),
+  allowedHours: z.record(z.string(), z.unknown()).optional(),
+  frequency: z.string().trim().max(40).nullable().optional(),
+  active: z.boolean().optional(),
+});
 
 type CreateReturnAlert = z.infer<typeof createReturnAlertSchema>;
 type UpdateReturnAlert = z.infer<typeof updateReturnAlertSchema>;
 type CreateTask = z.infer<typeof createTaskSchema>;
 type UpdateTask = z.infer<typeof updateTaskSchema>;
 type CreateLabCase = z.infer<typeof createLabCaseSchema>;
+const json = (value: unknown) => value as Prisma.InputJsonValue;
 
 const dayStart = (date = new Date()) => {
   const value = new Date(date);
@@ -357,6 +382,51 @@ export class WorkspaceService {
       data: { readAt: new Date() },
     });
     return { updated: result.count };
+  }
+
+  automationRules(organizationId: string, clinicId?: string) {
+    return prisma.automationRule.findMany({
+      where: {
+        organizationId,
+        OR: clinicId ? [{ clinicId }, { clinicId: null }] : undefined,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createAutomationRule(organizationId: string, input: unknown) {
+    const data = parseWithZod(createAutomationRuleSchema, input);
+    if (data.clinicId) await this.assertClinic(organizationId, data.clinicId);
+    return prisma.automationRule.create({
+      data: {
+        organizationId,
+        clinicId: data.clinicId,
+        name: data.name,
+        trigger: data.trigger,
+        conditions: json(data.conditions),
+        action: json(data.action),
+        allowedHours: json(data.allowedHours),
+        frequency: data.frequency,
+        active: data.active ?? true,
+      },
+    });
+  }
+
+  async updateAutomationRule(organizationId: string, id: string, input: unknown) {
+    const data = parseWithZod(updateAutomationRuleSchema, input);
+    const existing = await prisma.automationRule.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Regra de automação não encontrada.');
+    return prisma.automationRule.update({
+      where: { id },
+      data: {
+        name: data.name,
+        conditions: data.conditions === undefined ? undefined : json(data.conditions),
+        action: data.action === undefined ? undefined : json(data.action),
+        allowedHours: data.allowedHours === undefined ? undefined : json(data.allowedHours),
+        frequency: data.frequency === undefined ? undefined : data.frequency,
+        active: data.active,
+      },
+    });
   }
 
   private async withAssignees<T extends { assigneeId: string | null }>(items: T[]) {

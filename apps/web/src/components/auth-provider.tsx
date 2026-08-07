@@ -20,7 +20,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    if (pathname === '/login' || pathname.startsWith('/legal/')) {
+    const isPublic =
+      pathname === '/login'
+      || pathname.startsWith('/legal/')
+      || pathname.startsWith('/assinar/');
+    if (isPublic) {
       setLoading(false);
       return;
     }

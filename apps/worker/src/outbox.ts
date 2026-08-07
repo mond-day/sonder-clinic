@@ -3,6 +3,7 @@ import { prisma } from '@sonder/database';
 import { readEvolutionConfiguration, sendEvolutionText } from './evolution';
 
 const WHATSAPP_REMINDER_EVENT = 'appointment.whatsapp-reminder.requested';
+const APPOINTMENT_COMPLETED_EVENT = 'appointment.completed';
 const MAX_ATTEMPTS = 5;
 
 type OutboxEvent = {
@@ -10,6 +11,7 @@ type OutboxEvent = {
   eventType: string;
   aggregateId: string;
   attempts: number;
+  payload: unknown;
 };
 
 function decryptCredentials(payload: string): Record<string, string> {
@@ -194,6 +196,87 @@ async function processEvent(event: OutboxEvent): Promise<void> {
     await processWhatsAppReminder(event);
     return;
   }
+  if (event.eventType === APPOINTMENT_COMPLETED_EVENT) {
+    await processAppointmentCompleted(event);
+    return;
+  }
+  await prisma.outboxEvent.update({
+    where: { id: event.id },
+    data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
+  });
+}
+
+async function processAppointmentCompleted(event: OutboxEvent): Promise<void> {
+  const payload = (event.payload ?? {}) as {
+    organizationId?: string;
+    clinicId?: string;
+    patientId?: string;
+    professionalId?: string;
+    category?: string | null;
+    appointmentId?: string;
+  };
+  const organizationId = payload.organizationId;
+  const clinicId = payload.clinicId;
+  const patientId = payload.patientId;
+  if (!organizationId || !clinicId || !patientId) {
+    throw new Error('Payload de appointment.completed incompleto.');
+  }
+
+  const rules = await prisma.automationRule.findMany({
+    where: {
+      organizationId,
+      active: true,
+      trigger: 'APPOINTMENT_COMPLETED',
+      OR: [{ clinicId }, { clinicId: null }],
+    },
+  });
+
+  for (const rule of rules) {
+    const conditions = (rule.conditions ?? {}) as { specialty?: string; category?: string };
+    if (conditions.specialty && conditions.specialty !== payload.category) continue;
+    if (conditions.category && conditions.category !== payload.category) continue;
+
+    const action = (rule.action ?? {}) as {
+      type?: string;
+      reason?: string;
+      preferredChannel?: 'WHATSAPP' | 'PHONE' | 'EMAIL' | 'IN_PERSON';
+      daysAfter?: number;
+    };
+    if (action.type !== 'CREATE_RETURN_ALERT' || !action.reason) continue;
+
+    const daysAfter = typeof action.daysAfter === 'number' ? action.daysAfter : 7;
+    const dueAt = new Date();
+    dueAt.setDate(dueAt.getDate() + daysAfter);
+
+    const existing = await prisma.returnAlert.findFirst({
+      where: {
+        organizationId,
+        clinicId,
+        patientId,
+        status: { in: ['PENDING', 'CONTACTED'] },
+        reason: action.reason,
+        notes: { contains: event.aggregateId },
+      },
+      select: { id: true },
+    });
+    if (existing) continue;
+
+    await prisma.returnAlert.create({
+      data: {
+        organizationId,
+        clinicId,
+        patientId,
+        professionalId: payload.professionalId,
+        reason: action.reason,
+        specialty: conditions.specialty ?? payload.category ?? undefined,
+        dueAt,
+        preferredChannel: action.preferredChannel ?? 'WHATSAPP',
+        notes: `Automação ${rule.name} · appointment ${event.aggregateId}`,
+        appointmentId: event.aggregateId,
+      },
+    });
+  }
+
   await prisma.outboxEvent.update({
     where: { id: event.id },
     data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },

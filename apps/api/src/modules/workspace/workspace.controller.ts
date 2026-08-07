@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { WorkspaceService } from './workspace.service';
@@ -123,6 +123,26 @@ class ReadAllNotificationsDto {
   @IsOptional() @IsUUID() clinicId?: string;
 }
 
+class CreateAutomationRuleDto {
+  @IsOptional() @IsUUID() clinicId?: string;
+  @IsString() @MinLength(3) name!: string;
+  @IsIn(['APPOINTMENT_COMPLETED']) trigger!: 'APPOINTMENT_COMPLETED';
+  @IsOptional() @IsObject() conditions?: Record<string, unknown>;
+  @IsObject() action!: Record<string, unknown>;
+  @IsOptional() @IsObject() allowedHours?: Record<string, unknown>;
+  @IsOptional() @IsString() frequency?: string;
+  @IsOptional() active?: boolean;
+}
+
+class UpdateAutomationRuleDto {
+  @IsOptional() @IsString() @MinLength(3) name?: string;
+  @IsOptional() @IsObject() conditions?: Record<string, unknown>;
+  @IsOptional() @IsObject() action?: Record<string, unknown>;
+  @IsOptional() @IsObject() allowedHours?: Record<string, unknown>;
+  @IsOptional() @IsString() frequency?: string;
+  @IsOptional() active?: boolean;
+}
+
 @ApiTags('workspace')
 @Controller()
 @UseGuards(AuthGuard, PermissionsGuard)
@@ -217,5 +237,23 @@ export class WorkspaceController {
   @RequirePermissions('notification.view')
   readNotification(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.workspace.readNotification(req.auth.organizationId, req.auth.userId, id);
+  }
+
+  @Get('automation-rules')
+  @RequirePermissions('return_alert.manage', 'return_alert.view')
+  automationRules(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) {
+    return this.workspace.automationRules(req.auth.organizationId, clinicId);
+  }
+
+  @Post('automation-rules')
+  @RequirePermissions('return_alert.manage')
+  createAutomationRule(@Req() req: AuthenticatedRequest, @Body() body: CreateAutomationRuleDto) {
+    return this.workspace.createAutomationRule(req.auth.organizationId, body);
+  }
+
+  @Patch('automation-rules/:id')
+  @RequirePermissions('return_alert.manage')
+  updateAutomationRule(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateAutomationRuleDto) {
+    return this.workspace.updateAutomationRule(req.auth.organizationId, id, body);
   }
 }

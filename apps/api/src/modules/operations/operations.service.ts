@@ -9,6 +9,10 @@ import { CertificateService } from '../settings/certificate.service';
 const money = (value: string) => new Prisma.Decimal(value);
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const json = (value: unknown) => value as Prisma.InputJsonValue;
+const monthStart = (value: string | Date) => {
+  const date = typeof value === 'string' ? new Date(`${value.slice(0, 10)}T00:00:00.000Z`) : value;
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+};
 const receivableSchema = z.object({
   clinicId: z.string().uuid(),
   patientId: z.string().uuid(),
@@ -473,7 +477,13 @@ export class OperationsService {
   }) {
     const existing = await prisma.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
     if (existing) return existing;
-    const receivable = await prisma.receivable.findFirst({ where: { id: receivableId, organizationId }, include: { payments: true } });
+    const receivable = await prisma.receivable.findFirst({
+      where: { id: receivableId, organizationId },
+      include: {
+        payments: true,
+        treatment: { select: { id: true, professionalId: true, clinicId: true } },
+      },
+    });
     if (!receivable) throw new NotFoundException('Recebível não encontrado.');
     const amount = money(input.amount);
     return prisma.$transaction(async (tx) => {
@@ -482,6 +492,15 @@ export class OperationsService {
       });
       const paid = receivable.payments.reduce((sum, item) => item.status === 'CONFIRMED' ? sum.add(item.amount) : sum, amount);
       await tx.receivable.update({ where: { id: receivableId }, data: { status: paid.greaterThanOrEqualTo(receivable.netAmount) ? 'PAID' : 'PARTIALLY_PAID' } });
+      await this.generateCommissionForPayment(tx, {
+        organizationId,
+        clinicId: receivable.clinicId,
+        paymentId: payment.id,
+        amount,
+        occurredAt: payment.paidAt ?? new Date(),
+        professionalId: receivable.treatment?.professionalId,
+        treatmentId: receivable.treatmentId,
+      });
       await tx.outboxEvent.create({ data: { aggregateType: 'Payment', aggregateId: payment.id, eventType: 'payment.confirmed', payload: { paymentId: payment.id, receivableId } } });
       return payment;
     });
@@ -495,6 +514,10 @@ export class OperationsService {
     return prisma.$transaction(async (tx) => {
       const refund = await tx.refund.create({ data: { paymentId, amount, reason: input.reason, authorizedById: actorId } });
       await tx.payment.update({ where: { id: paymentId }, data: { status: 'REFUNDED' } });
+      await tx.commissionEvent.updateMany({
+        where: { organizationId, sourceType: 'PAYMENT', sourceId: paymentId, status: { in: ['FORECASTED', 'GENERATED'] } },
+        data: { status: 'REVERSED' },
+      });
       await tx.outboxEvent.create({ data: { aggregateType: 'Payment', aggregateId: paymentId, eventType: 'payment.refunded', payload: { paymentId, refundId: refund.id } } });
       return refund;
     });
@@ -509,6 +532,163 @@ export class OperationsService {
     basis: string; calculationType: string; value: string; validFrom: string; priority?: number;
   }) {
     return prisma.commissionRule.create({ data: { organizationId, ...input, value: money(input.value), validFrom: new Date(`${input.validFrom}T00:00:00Z`) } });
+  }
+
+  commissionEvents(organizationId: string, query: {
+    clinicId?: string; professionalId?: string; from?: string; to?: string; periodId?: string;
+  }) {
+    const from = query.from ? new Date(`${query.from}T00:00:00.000Z`) : undefined;
+    const to = query.to ? new Date(`${query.to}T23:59:59.999Z`) : undefined;
+    return prisma.commissionEvent.findMany({
+      where: {
+        organizationId,
+        clinicId: query.clinicId,
+        professionalId: query.professionalId,
+        periodId: query.periodId,
+        occurredAt: from || to ? { gte: from, lte: to } : undefined,
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: 500,
+    });
+  }
+
+  commissionPeriods(organizationId: string, clinicId?: string) {
+    return prisma.commissionPeriod.findMany({
+      where: { organizationId, clinicId },
+      include: { _count: { select: { events: true } } },
+      orderBy: { referenceMonth: 'desc' },
+      take: 36,
+    });
+  }
+
+  async openCommissionPeriod(organizationId: string, input: { clinicId: string; referenceMonth: string }) {
+    const clinic = await prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId }, select: { id: true } });
+    if (!clinic) throw new NotFoundException('Clínica não encontrada.');
+    const referenceMonth = monthStart(input.referenceMonth);
+    const existing = await prisma.commissionPeriod.findUnique({
+      where: { clinicId_referenceMonth: { clinicId: input.clinicId, referenceMonth } },
+    });
+    if (existing) return existing;
+    return prisma.commissionPeriod.create({
+      data: { organizationId, clinicId: input.clinicId, referenceMonth, status: 'OPEN' },
+    });
+  }
+
+  async closeCommissionPeriod(organizationId: string, actorId: string, id: string) {
+    const period = await prisma.commissionPeriod.findFirst({ where: { id, organizationId } });
+    if (!period) throw new NotFoundException('Período de comissão não encontrado.');
+    if (period.status === 'CLOSED') return period;
+    return prisma.$transaction(async (tx) => {
+      const closed = await tx.commissionPeriod.update({
+        where: { id },
+        data: { status: 'CLOSED', closedAt: new Date(), closedById: actorId },
+      });
+      await tx.commissionEvent.updateMany({
+        where: { periodId: id, status: { in: ['FORECASTED', 'GENERATED'] } },
+        data: { status: 'RELEASED' },
+      });
+      return closed;
+    });
+  }
+
+  async reopenCommissionPeriod(organizationId: string, id: string) {
+    const period = await prisma.commissionPeriod.findFirst({ where: { id, organizationId } });
+    if (!period) throw new NotFoundException('Período de comissão não encontrado.');
+    if (period.status !== 'CLOSED') throw new ConflictException('Somente períodos fechados podem ser reabertos.');
+    return prisma.$transaction(async (tx) => {
+      const reopened = await tx.commissionPeriod.update({
+        where: { id },
+        data: { status: 'OPEN', closedAt: null, closedById: null },
+      });
+      await tx.commissionEvent.updateMany({
+        where: { periodId: id, status: 'RELEASED' },
+        data: { status: 'GENERATED' },
+      });
+      return reopened;
+    });
+  }
+
+  private async generateCommissionForPayment(
+    tx: Prisma.TransactionClient,
+    input: {
+      organizationId: string;
+      clinicId: string;
+      paymentId: string;
+      amount: Prisma.Decimal;
+      occurredAt: Date;
+      professionalId?: string | null;
+      treatmentId?: string | null;
+    },
+  ) {
+    if (!input.professionalId) return;
+    const eligible = (await tx.commissionRule.findMany({
+      where: {
+        organizationId: input.organizationId,
+        active: true,
+        validFrom: { lte: input.occurredAt },
+      },
+      orderBy: { priority: 'desc' },
+    })).filter((rule) => {
+      if (rule.clinicId && rule.clinicId !== input.clinicId) return false;
+      if (rule.professionalId && rule.professionalId !== input.professionalId) return false;
+      if (rule.validUntil && rule.validUntil < input.occurredAt) return false;
+      return true;
+    });
+    const rule = eligible[0];
+    if (!rule) return;
+
+    const referenceMonth = monthStart(input.occurredAt);
+    let period = await tx.commissionPeriod.findUnique({
+      where: { clinicId_referenceMonth: { clinicId: input.clinicId, referenceMonth } },
+    });
+    if (!period) {
+      period = await tx.commissionPeriod.create({
+        data: {
+          organizationId: input.organizationId,
+          clinicId: input.clinicId,
+          referenceMonth,
+          status: 'OPEN',
+        },
+      });
+    }
+    if (period.status === 'CLOSED') {
+      throw new ConflictException('Competência de comissão já fechada — reabra o período antes de registrar pagamentos.');
+    }
+
+    const commissionAmount = rule.calculationType === 'FIXED'
+      ? rule.value
+      : input.amount.mul(rule.value).div(100);
+
+    await tx.commissionEvent.create({
+      data: {
+        organizationId: input.organizationId,
+        clinicId: input.clinicId,
+        professionalId: input.professionalId,
+        ruleId: rule.id,
+        periodId: period.id,
+        sourceType: 'PAYMENT',
+        sourceId: input.paymentId,
+        basisAmount: input.amount,
+        commissionAmount,
+        status: 'GENERATED',
+        occurredAt: input.occurredAt,
+        metadata: json({ treatmentId: input.treatmentId, basis: rule.basis }),
+      },
+    });
+    await tx.commissionEntry.create({
+      data: {
+        organizationId: input.organizationId,
+        clinicId: input.clinicId,
+        professionalId: input.professionalId,
+        paymentId: input.paymentId,
+        triggeringEvent: 'PAYMENT_CONFIRMED',
+        snapshot: json({ ruleId: rule.id, calculationType: rule.calculationType, value: rule.value.toString() }),
+        baseAmount: input.amount,
+        amount: commissionAmount,
+        status: 'GENERATED',
+        competence: referenceMonth,
+      },
+    });
   }
 
   deliveries(organizationId: string) {

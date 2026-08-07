@@ -29,6 +29,26 @@ const agendaTagSchema = z.object({
   color: z.string().regex(/^#[0-9a-f]{6}$/i),
 });
 const updateAgendaTagSchema = agendaTagSchema.omit({ clinicId: true }).partial().extend({ active: z.boolean().optional() });
+const unitSchema = z.object({
+  clinicId: z.string().uuid(),
+  name: z.string().trim().min(2).max(80),
+  phone: z.string().trim().max(40).optional(),
+  timezone: z.string().trim().min(3).max(64).optional(),
+});
+const updateUnitSchema = z.object({
+  name: z.string().trim().min(2).max(80).optional(),
+  phone: z.string().trim().max(40).nullable().optional(),
+  timezone: z.string().trim().min(3).max(64).optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+});
+const chairSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+  isSchedulingEnabled: z.boolean().optional(),
+});
+const updateChairSchema = chairSchema.partial().extend({
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+});
 
 export type BrandingSettings = {
   name: string;
@@ -58,7 +78,18 @@ export class SettingsService {
           tradeName: true,
           units: {
             where: { status: 'ACTIVE' },
-            select: { id: true, name: true, chairs: { select: { id: true, name: true } } },
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              timezone: true,
+              chairs: {
+                where: { status: 'ACTIVE' },
+                select: { id: true, name: true, color: true, isSchedulingEnabled: true },
+                orderBy: { name: 'asc' },
+              },
+            },
+            orderBy: { name: 'asc' },
           },
         },
         orderBy: { tradeName: 'asc' },
@@ -303,6 +334,152 @@ export class SettingsService {
     }
     const body = await this.storage.getObject(file.objectKey);
     return { body, mimeType: file.mimeType, originalName: file.originalName };
+  }
+
+  async listUnits(organizationId: string, clinicId: string) {
+    await this.assertClinic(organizationId, clinicId);
+    return prisma.unit.findMany({
+      where: { clinicId, clinic: { organizationId } },
+      include: {
+        chairs: { orderBy: { name: 'asc' } },
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async createUnit(
+    organizationId: string,
+    actorId: string,
+    input: { clinicId: string; name: string; phone?: string; timezone?: string },
+  ) {
+    const data = parseWithZod(unitSchema, input);
+    await this.assertClinic(organizationId, data.clinicId);
+    return prisma.$transaction(async (tx) => {
+      const unit = await tx.unit.create({
+        data: {
+          clinicId: data.clinicId,
+          name: data.name,
+          phone: data.phone,
+          timezone: data.timezone ?? 'America/Cuiaba',
+        },
+        include: { chairs: true },
+      });
+      await tx.auditEvent.create({
+        data: {
+          actorId,
+          action: 'unit.created',
+          entity: 'Unit',
+          entityId: unit.id,
+          clinicId: data.clinicId,
+          changes: { name: data.name },
+          correlationId: randomUUID(),
+        },
+      });
+      return unit;
+    });
+  }
+
+  async updateUnit(
+    organizationId: string,
+    actorId: string,
+    id: string,
+    input: { name?: string; phone?: string | null; timezone?: string; status?: 'ACTIVE' | 'INACTIVE' },
+  ) {
+    const data = parseWithZod(updateUnitSchema, input);
+    const existing = await prisma.unit.findFirst({
+      where: { id, clinic: { organizationId } },
+      select: { id: true, clinicId: true },
+    });
+    if (!existing) throw new NotFoundException('Unidade não encontrada.');
+    return prisma.$transaction(async (tx) => {
+      const unit = await tx.unit.update({
+        where: { id },
+        data: {
+          name: data.name,
+          phone: data.phone === undefined ? undefined : data.phone,
+          timezone: data.timezone,
+          status: data.status,
+        },
+        include: { chairs: { orderBy: { name: 'asc' } } },
+      });
+      await tx.auditEvent.create({
+        data: {
+          actorId,
+          action: 'unit.updated',
+          entity: 'Unit',
+          entityId: id,
+          clinicId: existing.clinicId,
+          changes: { fields: Object.keys(data) },
+          correlationId: randomUUID(),
+        },
+      });
+      return unit;
+    });
+  }
+
+  async createChair(
+    organizationId: string,
+    actorId: string,
+    unitId: string,
+    input: { name: string; color?: string; isSchedulingEnabled?: boolean },
+  ) {
+    const data = parseWithZod(chairSchema, input);
+    const unit = await prisma.unit.findFirst({
+      where: { id: unitId, clinic: { organizationId }, status: 'ACTIVE' },
+      select: { id: true, clinicId: true },
+    });
+    if (!unit) throw new NotFoundException('Unidade não encontrada.');
+    return prisma.$transaction(async (tx) => {
+      const chair = await tx.chair.create({
+        data: {
+          unitId,
+          name: data.name,
+          color: data.color ?? '#176B5B',
+          isSchedulingEnabled: data.isSchedulingEnabled ?? true,
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          actorId,
+          action: 'chair.created',
+          entity: 'Chair',
+          entityId: chair.id,
+          clinicId: unit.clinicId,
+          changes: { name: data.name, unitId },
+          correlationId: randomUUID(),
+        },
+      });
+      return chair;
+    });
+  }
+
+  async updateChair(
+    organizationId: string,
+    actorId: string,
+    id: string,
+    input: { name?: string; color?: string; isSchedulingEnabled?: boolean; status?: 'ACTIVE' | 'INACTIVE' },
+  ) {
+    const data = parseWithZod(updateChairSchema, input);
+    const existing = await prisma.chair.findFirst({
+      where: { id, unit: { clinic: { organizationId } } },
+      select: { id: true, unit: { select: { clinicId: true } } },
+    });
+    if (!existing) throw new NotFoundException('Cadeira não encontrada.');
+    return prisma.$transaction(async (tx) => {
+      const chair = await tx.chair.update({ where: { id }, data });
+      await tx.auditEvent.create({
+        data: {
+          actorId,
+          action: 'chair.updated',
+          entity: 'Chair',
+          entityId: id,
+          clinicId: existing.unit.clinicId,
+          changes: { fields: Object.keys(data) },
+          correlationId: randomUUID(),
+        },
+      });
+      return chair;
+    });
   }
 
   private async assertClinic(organizationId: string, clinicId: string) {

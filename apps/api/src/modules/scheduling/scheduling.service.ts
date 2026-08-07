@@ -149,6 +149,23 @@ export class SchedulingService {
         include: appointmentInclude,
       });
       await this.configureReminder(transaction, organizationId, id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
+      if (input.status === 'COMPLETED' && appointment.status !== 'COMPLETED') {
+        await transaction.outboxEvent.create({
+          data: {
+            aggregateType: 'Appointment',
+            aggregateId: id,
+            eventType: 'appointment.completed',
+            payload: {
+              appointmentId: id,
+              organizationId,
+              clinicId: input.clinicId,
+              patientId: input.patientId,
+              professionalId: input.professionalId,
+              category: input.category ?? null,
+            },
+          },
+        });
+      }
       return transaction.appointment.findUniqueOrThrow({ where: { id: updated.id }, include: appointmentInclude });
     }, { isolationLevel: 'Serializable' });
   }

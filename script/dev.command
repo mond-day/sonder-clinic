@@ -74,10 +74,51 @@ corepack pnpm db:generate || fail "Falha ao gerar o Prisma Client."
 corepack pnpm db:deploy || fail "Falha ao aplicar as migrations."
 corepack pnpm db:seed || fail "Falha ao popular os dados de desenvolvimento."
 
+API_PORT="${API_PORT:-4000}"
+WEB_PORT="${WEB_PORT:-3000}"
+ROOT="$(pwd)"
+
+# Libera portas/processos de uma sessão anterior deste repo (evita EADDRINUSE no nest --watch).
+free_port() {
+  local port="$1"
+  local pids
+  pids=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)
+  [ -z "$pids" ] && return 0
+
+  local pid cmd
+  for pid in $pids; do
+    cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+    case "$cmd" in
+      *"$ROOT"*|*sonder-clinic*|*"nest start"*|*"next dev"*|*"next-server"*|*"tsx"*"src/main.ts"*)
+        echo "Encerrando processo antigo na porta $port (PID $pid)."
+        kill "$pid" 2>/dev/null || true
+        ;;
+      *)
+        fail "Porta $port em uso por outro processo (PID $pid): $cmd
+Encerre-o ou altere API_PORT/WEB_PORT no .env."
+        ;;
+    esac
+  done
+
+  for _ in $(seq 1 20); do
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || return 0
+    sleep 0.25
+  done
+  # Último recurso: processos órfãos do nest/next deste monorepo.
+  pkill -f "$ROOT/apps/api/.*nest.js start" 2>/dev/null || true
+  pkill -f "$ROOT/apps/web/.*next.*(dev|start)" 2>/dev/null || true
+  sleep 0.5
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 && \
+    fail "Não foi possível liberar a porta $port."
+}
+
+free_port "$API_PORT"
+free_port "$WEB_PORT"
+
 echo ""
-echo "Web:     http://localhost:3000"
-echo "API:     http://localhost:${API_PORT:-4000}/api/v1"
-echo "Swagger: http://localhost:${API_PORT:-4000}/docs"
+echo "Web:     http://localhost:$WEB_PORT"
+echo "API:     http://localhost:$API_PORT/api/v1"
+echo "Swagger: http://localhost:$API_PORT/docs"
 echo "Login:   admin@sonder.local / Sonder@123"
 echo ""
 

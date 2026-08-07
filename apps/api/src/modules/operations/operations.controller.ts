@@ -68,6 +68,17 @@ class CommissionRuleDto {
   @IsString() basis!: string; @IsIn(['PERCENTAGE', 'FIXED']) calculationType!: string;
   @IsString() value!: string; @IsDateString() validFrom!: string; @IsOptional() @IsInt() priority?: number;
 }
+class CommissionPeriodDto {
+  @IsUUID() clinicId!: string;
+  @IsDateString() referenceMonth!: string;
+}
+class CommissionEventsQueryDto {
+  @IsOptional() @IsUUID() clinicId?: string;
+  @IsOptional() @IsUUID() professionalId?: string;
+  @IsOptional() @IsDateString() from?: string;
+  @IsOptional() @IsDateString() to?: string;
+  @IsOptional() @IsUUID() periodId?: string;
+}
 class PrescriptionSuggestionDto {
   @IsUUID() patientId!: string; @IsString() purpose!: string;
   @IsOptional() @IsArray() @IsString({ each: true }) allergies?: string[];
@@ -171,6 +182,27 @@ export class OperationsController {
   rules(@Req() req: AuthenticatedRequest) { return this.operations.commissionRules(req.auth.organizationId); }
   @Post('commission-rules') @RequirePermissions('commission.configure')
   createRule(@Req() req: AuthenticatedRequest, @Body() body: CommissionRuleDto) { return this.operations.createCommissionRule(req.auth.organizationId, body); }
+
+  @Get('commission-events') @RequirePermissions('commission.view_all', 'commission.view_own')
+  commissionEvents(@Req() req: AuthenticatedRequest, @Query() query: CommissionEventsQueryDto) {
+    return this.operations.commissionEvents(req.auth.organizationId, query);
+  }
+  @Get('commission-periods') @RequirePermissions('commission.view_all')
+  commissionPeriods(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) {
+    return this.operations.commissionPeriods(req.auth.organizationId, clinicId);
+  }
+  @Post('commission-periods') @RequirePermissions('commission.close', 'commission.configure')
+  openCommissionPeriod(@Req() req: AuthenticatedRequest, @Body() body: CommissionPeriodDto) {
+    return this.operations.openCommissionPeriod(req.auth.organizationId, body);
+  }
+  @Post('commission-periods/:id/close') @RequirePermissions('commission.close')
+  closeCommissionPeriod(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.operations.closeCommissionPeriod(req.auth.organizationId, req.auth.userId, id);
+  }
+  @Post('commission-periods/:id/reopen') @RequirePermissions('commission.close')
+  reopenCommissionPeriod(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.operations.reopenCommissionPeriod(req.auth.organizationId, id);
+  }
 
   @Get('communication/deliveries') @RequirePermissions('integration.view')
   deliveries(@Req() req: AuthenticatedRequest) { return this.operations.deliveries(req.auth.organizationId); }

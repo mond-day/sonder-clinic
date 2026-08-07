@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsHexColor, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
+import { IsArray, IsDateString, IsHexColor, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
@@ -35,6 +35,33 @@ class UpdateAgendaTagDto {
   @IsOptional() @IsString() @MinLength(2) name?: string;
   @IsOptional() @IsHexColor() color?: string;
   @IsOptional() active?: boolean;
+}
+
+class CreateUnitDto {
+  @IsUUID() clinicId!: string;
+  @IsString() @MinLength(2) name!: string;
+  @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() timezone?: string;
+}
+
+class UpdateUnitDto {
+  @IsOptional() @IsString() @MinLength(2) name?: string;
+  @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
+}
+
+class CreateChairDto {
+  @IsString() @MinLength(1) name!: string;
+  @IsOptional() @IsHexColor() color?: string;
+  @IsOptional() isSchedulingEnabled?: boolean;
+}
+
+class UpdateChairDto {
+  @IsOptional() @IsString() @MinLength(1) name?: string;
+  @IsOptional() @IsHexColor() color?: string;
+  @IsOptional() isSchedulingEnabled?: boolean;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
 }
 
 @ApiTags('settings')
@@ -148,5 +175,35 @@ export class SettingsController {
   @RequirePermissions('clinic.manage')
   updateAgendaTag(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateAgendaTagDto) {
     return this.settings.updateAgendaTag(req.auth.organizationId, req.auth.userId, id, body);
+  }
+
+  @Get('units')
+  @RequirePermissions('unit.view', 'clinic.view')
+  units(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId: string) {
+    return this.settings.listUnits(req.auth.organizationId, clinicId);
+  }
+
+  @Post('units')
+  @RequirePermissions('unit.manage')
+  createUnit(@Req() req: AuthenticatedRequest, @Body() body: CreateUnitDto) {
+    return this.settings.createUnit(req.auth.organizationId, req.auth.userId, body);
+  }
+
+  @Patch('units/:id')
+  @RequirePermissions('unit.manage')
+  updateUnit(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateUnitDto) {
+    return this.settings.updateUnit(req.auth.organizationId, req.auth.userId, id, body);
+  }
+
+  @Post('units/:unitId/chairs')
+  @RequirePermissions('unit.manage')
+  createChair(@Req() req: AuthenticatedRequest, @Param('unitId') unitId: string, @Body() body: CreateChairDto) {
+    return this.settings.createChair(req.auth.organizationId, req.auth.userId, unitId, body);
+  }
+
+  @Patch('chairs/:id')
+  @RequirePermissions('unit.manage')
+  updateChair(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateChairDto) {
+    return this.settings.updateChair(req.auth.organizationId, req.auth.userId, id, body);
   }
 }

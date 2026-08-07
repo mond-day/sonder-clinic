@@ -45,7 +45,7 @@ type SectionKey =
   | 'certificate'
   | 'legal';
 
-type ConfigModal = 'branding' | 'integration' | 'tags' | 'certificate' | 'procedure' | null;
+type ConfigModal = 'branding' | 'integration' | 'tags' | 'certificate' | 'procedure' | 'unit' | 'chair' | 'automation' | null;
 
 const sections: Array<{
   key: SectionKey;
@@ -80,7 +80,7 @@ const legalNames: Record<string, string> = {
 };
 
 export function SettingsView() {
-  const { clinicId, clinics, professionals } = useSelection();
+  const { clinicId, clinics, professionals, refresh: refreshSelection } = useSelection();
   const { returnSummary } = useWorkspace();
   const clinic = clinics.find((item) => item.id === clinicId);
   const [section, setSection] = useState<SectionKey>('overview');
@@ -92,7 +92,16 @@ export function SettingsView() {
   const [legal, setLegal] = useState<RecordValue[]>([]);
   const [agendaTags, setAgendaTags] = useState<RecordValue[]>([]);
   const [certificate, setCertificate] = useState<RecordValue | null>(null);
+  const [automationRules, setAutomationRules] = useState<RecordValue[]>([]);
   const [configModal, setConfigModal] = useState<ConfigModal>(null);
+  const [chairUnitId, setChairUnitId] = useState('');
+  const [unitName, setUnitName] = useState('');
+  const [chairName, setChairName] = useState('');
+  const [automationName, setAutomationName] = useState('');
+  const [automationReason, setAutomationReason] = useState('Retorno pós-consulta');
+  const [automationDays, setAutomationDays] = useState('7');
+  const [formError, setFormError] = useState('');
+  const [formBusy, setFormBusy] = useState(false);
   const [certificateEditing, setCertificateEditing] = useState(false);
   const [viewingIntegration, setViewingIntegration] = useState<RecordValue | null>(null);
   const [integrationProviderPrefill, setIntegrationProviderPrefill] = useState<string | undefined>();
@@ -115,8 +124,9 @@ export function SettingsView() {
       api.get<RecordValue[]>(`/settings/legal?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
       api.get<RecordValue[]>(`/settings/agenda-tags?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
       api.get<RecordValue>(`/settings/certificate?clinicId=${clinicId}`).catch(() => null),
+      api.get<RecordValue[]>(`/automation-rules?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
     ])
-      .then(([nextProcedures, nextRules, nextDeliveries, nextIntegrations, nextBranding, nextLegal, nextTags, nextCertificate]) => {
+      .then(([nextProcedures, nextRules, nextDeliveries, nextIntegrations, nextBranding, nextLegal, nextTags, nextCertificate, nextAutomation]) => {
         setProcedures(list(nextProcedures));
         setRules(list(nextRules));
         setDeliveries(list(nextDeliveries));
@@ -125,12 +135,84 @@ export function SettingsView() {
         setLegal(list(nextLegal));
         setAgendaTags(list(nextTags));
         setCertificate(nextCertificate);
+        setAutomationRules(list(nextAutomation));
       })
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao carregar as configurações.'))
       .finally(() => setLoading(false));
   }, [clinicId]);
 
   useEffect(load, [load]);
+
+  const submitUnit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!clinicId || !unitName.trim()) return;
+    setFormBusy(true);
+    setFormError('');
+    try {
+      await api.post('/settings/units', { clinicId, name: unitName.trim() });
+      await refreshSelection();
+      closeConfigModal();
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar a unidade.');
+    } finally {
+      setFormBusy(false);
+    }
+  };
+
+  const submitChair = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!chairUnitId || !chairName.trim()) return;
+    setFormBusy(true);
+    setFormError('');
+    try {
+      await api.post(`/settings/units/${chairUnitId}/chairs`, { name: chairName.trim() });
+      await refreshSelection();
+      closeConfigModal();
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar a cadeira.');
+    } finally {
+      setFormBusy(false);
+    }
+  };
+
+  const submitAutomation = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!automationName.trim() || !automationReason.trim()) return;
+    setFormBusy(true);
+    setFormError('');
+    try {
+      await api.post('/automation-rules', {
+        clinicId,
+        name: automationName.trim(),
+        trigger: 'APPOINTMENT_COMPLETED',
+        conditions: {},
+        action: {
+          type: 'CREATE_RETURN_ALERT',
+          reason: automationReason.trim(),
+          daysAfter: Number(automationDays) || 7,
+          preferredChannel: 'WHATSAPP',
+        },
+        active: true,
+      });
+      closeConfigModal();
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar a regra.');
+    } finally {
+      setFormBusy(false);
+    }
+  };
+
+  const toggleAutomation = async (rule: RecordValue) => {
+    try {
+      await api.patch(`/automation-rules/${String(rule.id)}`, { active: !rule.active });
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Falha ao atualizar a regra.');
+    }
+  };
 
   const chairCount = useMemo(
     () => (clinic?.units ?? []).reduce((sum, unit) => sum + unit.chairs.length, 0),
@@ -165,6 +247,14 @@ export function SettingsView() {
     setConfigModal(null);
     setCertificateEditing(false);
     setIntegrationProviderPrefill(undefined);
+    setFormError('');
+    setFormBusy(false);
+    setUnitName('');
+    setChairName('');
+    setChairUnitId('');
+    setAutomationName('');
+    setAutomationReason('Retorno pós-consulta');
+    setAutomationDays('7');
   }
 
   function openIntegrationConfig(provider?: string) {
@@ -304,6 +394,37 @@ export function SettingsView() {
           <button className="button primary">Criar procedimento</button>
         </form>
       </Modal>
+      <Modal open={configModal === 'unit'} title="Nova unidade" description="Unidade física vinculada à clínica ativa." onClose={closeConfigModal} size="small">
+        <form className="mutation-form" onSubmit={submitUnit}>
+          <label className="span-2">Nome<input value={unitName} onChange={(e) => setUnitName(e.target.value)} minLength={2} required autoFocus /></label>
+          {formError ? <p className="state-message error" role="alert">{formError}</p> : null}
+          <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : 'Criar unidade'}</button>
+        </form>
+      </Modal>
+      <Modal open={configModal === 'chair'} title="Nova cadeira" description="Cadeira/consultório vinculada à unidade escolhida." onClose={closeConfigModal} size="small">
+        <form className="mutation-form" onSubmit={submitChair}>
+          <label className="span-2">Unidade
+            <select value={chairUnitId} onChange={(e) => setChairUnitId(e.target.value)} required>
+              <option value="">Selecione</option>
+              {(clinic?.units ?? []).map((unit) => (
+                <option key={unit.id} value={unit.id}>{unit.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="span-2">Nome<input value={chairName} onChange={(e) => setChairName(e.target.value)} minLength={1} required /></label>
+          {formError ? <p className="state-message error" role="alert">{formError}</p> : null}
+          <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : 'Criar cadeira'}</button>
+        </form>
+      </Modal>
+      <Modal open={configModal === 'automation'} title="Regra de retorno automático" description="Dispara quando a consulta é marcada como concluída." onClose={closeConfigModal}>
+        <form className="mutation-form" onSubmit={submitAutomation}>
+          <label className="span-2">Nome da regra<input value={automationName} onChange={(e) => setAutomationName(e.target.value)} minLength={3} required autoFocus /></label>
+          <label className="span-2">Motivo do retorno<input value={automationReason} onChange={(e) => setAutomationReason(e.target.value)} minLength={3} required /></label>
+          <label>Dias após conclusão<input type="number" min={0} max={365} value={automationDays} onChange={(e) => setAutomationDays(e.target.value)} required /></label>
+          {formError ? <p className="state-message error span-2" role="alert">{formError}</p> : null}
+          <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : 'Criar regra'}</button>
+        </form>
+      </Modal>
       <Modal
         open={configModal === 'certificate'}
         title="Certificado digital A1"
@@ -399,7 +520,7 @@ export function SettingsView() {
               {!loading && (clinic?.units.length ?? 0) === 0 && (
                 <EmptyState
                   title="Nenhuma unidade cadastrada"
-                  description="Sem unidades, a agenda não consegue alocar cadeiras. A estrutura atual vem do contexto da clínica."
+                  description="Crie a primeira unidade para alocar cadeiras na agenda."
                 />
               )}
               {(clinic?.units.length ?? 0) > 0 && (
@@ -413,15 +534,23 @@ export function SettingsView() {
                           {unit.chairs.length ? ` · ${unit.chairs.map((chair) => chair.name).join(', ')}` : ''}
                         </span>
                       </div>
-                      <StatusBadge tone="green">Ativa</StatusBadge>
+                      <button
+                        className="button small"
+                        type="button"
+                        onClick={() => { setChairUnitId(unit.id); setConfigModal('chair'); }}
+                      >
+                        + Cadeira
+                      </button>
                     </div>
                   ))}
                 </div>
               )}
               <p className="muted-note" style={{ padding: '0 14px 14px' }}>
                 {clinics.length} {clinics.length === 1 ? 'clínica' : 'clínicas'} · {clinic?.units.length ?? 0} unidades · {chairCount} cadeiras.
-                Criação dedicada de unidades/cadeiras ainda usa o contexto administrativo; a listagem vem de <code>GET /settings/context</code>.
               </p>
+              <div className="modal-footer" style={{ justifyContent: 'flex-start', gap: 8, padding: '0 14px 14px' }}>
+                <button className="button primary" type="button" onClick={() => setConfigModal('unit')}>Nova unidade</button>
+              </div>
               {professionals.length > 0 ? (
                 <div className="table-wrap">
                   <table className="data-table">
@@ -524,7 +653,7 @@ export function SettingsView() {
           {section === 'returns' && (
             <Panel
               title={activeLabel}
-              description="Central de retornos: alertas manuais hoje; automação por procedimento ainda em evolução."
+              description="Fila de contato e regras que geram retornos automaticamente após consultas concluídas."
             >
               <div className="settings-list">
                 <div className="settings-row">
@@ -556,10 +685,38 @@ export function SettingsView() {
                   <Link className="button small primary" href="/retornos">Abrir central</Link>
                 </div>
               </div>
-              <p className="muted-note" style={{ padding: '0 14px 14px' }}>
-                Hoje os alertas são <strong>manuais</strong> (<code>POST /return-alerts</code>) ou vindos do seed.
-                A geração <strong>automática</strong> por procedimento/especialidade ainda não tem endpoint de regras exposto nesta tela.
-              </p>
+
+              <div className="form-section" style={{ padding: '0 14px 14px' }}>
+                <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <h3 style={{ margin: 0 }}>Regras de automação</h3>
+                  <button className="button small primary" type="button" onClick={() => setConfigModal('automation')}>Nova regra</button>
+                </header>
+                {automationRules.length === 0 ? (
+                  <EmptyState
+                    title="Nenhuma regra automática"
+                    description="Crie uma regra para gerar retorno quando a consulta for marcada como concluída."
+                  />
+                ) : (
+                  <div className="settings-list">
+                    {automationRules.map((rule) => {
+                      const action = (rule.action ?? {}) as RecordValue;
+                      return (
+                        <div className="settings-row" key={String(rule.id)}>
+                          <div>
+                            <strong>{text(rule.name)}</strong>
+                            <span>
+                              {presentationLabel(rule.trigger)} · {text(action.reason, '—')} · +{text(action.daysAfter, '7')} dias
+                            </span>
+                          </div>
+                          <button className="button small" type="button" onClick={() => void toggleAutomation(rule)}>
+                            {rule.active ? 'Desativar' : 'Ativar'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </Panel>
           )}
 

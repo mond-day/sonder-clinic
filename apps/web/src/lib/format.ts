@@ -100,7 +100,8 @@ const presentationLabels: Record<string, string> = {
   CLINIC: 'Clínica', PROFESSIONAL: 'Profissional', ENVIRONMENT: 'Ambiente', TENANT: 'Clínica',
   ADULT: 'Adulto', CHILD: 'Infantil', ELDERLY: 'Idoso', PREGNANT: 'Gestante',
   APPOINTMENTS: 'Agenda', FINANCIAL: 'Financeiro', COMMISSIONS: 'Comissões',
-  COMMUNICATION: 'Comunicação',
+  COMMUNICATION: 'Comunicação', CLOSED: 'Fechado',
+  APPOINTMENT_COMPLETED: 'Consulta concluída',
 };
 
 export const presentationLabel = (value: unknown) => {

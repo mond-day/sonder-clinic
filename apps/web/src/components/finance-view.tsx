@@ -27,10 +27,10 @@ type FinanceTab = 'overview' | 'receivable' | 'payable' | 'commissions' | 'recur
 const tabs: Array<{ id: FinanceTab; label: string; available: boolean }> = [
   { id: 'overview', label: 'Visão geral', available: true },
   { id: 'receivable', label: 'Contas a receber', available: true },
-  { id: 'payable', label: 'Contas a pagar', available: false },
+  { id: 'payable', label: 'Contas a pagar', available: true },
   { id: 'commissions', label: 'Comissões', available: true },
   { id: 'recurring', label: 'Recorrências', available: false },
-  { id: 'cashflow', label: 'Fluxo de caixa', available: false },
+  { id: 'cashflow', label: 'Fluxo de caixa', available: true },
 ];
 
 const financeTabIds = new Set<string>(tabs.map((item) => item.id));
@@ -44,7 +44,11 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const { clinicId, clinics, professionals } = useSelection();
   const [tab, setTab] = useState<FinanceTab>(resolvedInitial);
   const [receivables, setReceivables] = useState<RecordValue[]>([]);
+  const [payables, setPayables] = useState<RecordValue[]>([]);
+  const [cashflow, setCashflow] = useState<RecordValue | null>(null);
   const [rules, setRules] = useState<RecordValue[]>([]);
+  const [commissionEvents, setCommissionEvents] = useState<RecordValue[]>([]);
+  const [commissionPeriods, setCommissionPeriods] = useState<RecordValue[]>([]);
   const [patients, setPatients] = useState<RecordValue[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -52,8 +56,10 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [patientQuery, setPatientQuery] = useState('');
+  const [closingId, setClosingId] = useState<string | null>(null);
   const canFinance = hasPermission(user?.permissions, 'financial.view');
   const canCommission = hasPermission(user?.permissions, 'commission.view_all', 'organization.manage');
+  const canCloseCommission = hasPermission(user?.permissions, 'commission.close', 'organization.manage');
 
   useEffect(() => {
     setTab(resolvedInitial);
@@ -63,14 +69,24 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
     if (!clinicId) return;
     setLoading(true);
     setError('');
+    const month = new Date().toISOString().slice(0, 7);
+    const from = `${month}-01`;
     Promise.all([
       canFinance ? api.get<RecordValue[]>(`/receivables?clinicId=${clinicId}`) : Promise.resolve([]),
+      canFinance ? api.get<RecordValue[]>(`/payables?clinicId=${clinicId}`).catch(() => []) : Promise.resolve([]),
+      canFinance ? api.get<RecordValue>(`/cashflow?clinicId=${clinicId}`).catch(() => null) : Promise.resolve(null),
       canCommission ? api.get<RecordValue[]>('/commission-rules').catch(() => []) : Promise.resolve([]),
+      canCommission ? api.get<RecordValue[]>(`/commission-events?clinicId=${clinicId}&from=${from}`).catch(() => []) : Promise.resolve([]),
+      canCommission ? api.get<RecordValue[]>(`/commission-periods?clinicId=${clinicId}`).catch(() => []) : Promise.resolve([]),
       api.get<RecordValue[]>(`/patients?clinicId=${clinicId}`).catch(() => []),
     ])
-      .then(([nextReceivables, nextRules, nextPatients]) => {
+      .then(([nextReceivables, nextPayables, nextCashflow, nextRules, nextEvents, nextPeriods, nextPatients]) => {
         setReceivables(list(nextReceivables));
+        setPayables(list(nextPayables));
+        setCashflow(nextCashflow);
         setRules(list(nextRules));
+        setCommissionEvents(list(nextEvents));
+        setCommissionPeriods(list(nextPeriods));
         setPatients(list(nextPatients));
       })
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao carregar o financeiro.'))
@@ -78,6 +94,29 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   }, [canCommission, canFinance, clinicId]);
 
   useEffect(load, [load]);
+
+  const closePeriod = async (periodId: string) => {
+    setClosingId(periodId);
+    try {
+      await api.post(`/commission-periods/${periodId}/close`, {});
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível fechar a competência.');
+    } finally {
+      setClosingId(null);
+    }
+  };
+
+  const ensureOpenPeriod = async () => {
+    if (!clinicId) return;
+    try {
+      const referenceMonth = `${new Date().toISOString().slice(0, 7)}-01`;
+      await api.post('/commission-periods', { clinicId, referenceMonth });
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível abrir a competência.');
+    }
+  };
   useEffect(() => {
     setFiltersOpen(window.localStorage.getItem('sonder.finance.filtersOpen') === 'true');
   }, []);
@@ -318,7 +357,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
         <>
           <Panel
             title="Comissões e repasses"
-            description="Regras definem como calcular repasses. Períodos de vigência e valores gerados (eventos) aparecem aqui quando disponíveis."
+            description="Pagamentos confirmados geram eventos por competência. Feche o mês para liberar os valores."
           >
             {!canCommission ? (
               <div className="state-message error" role="alert">Sem permissão commission.view_all.</div>
@@ -332,18 +371,55 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                     meta="Regras percentuais"
                   />
                   <MetricCard label="Bases cadastradas" value={new Set(rules.map((item) => String(item.basis ?? ''))).size} meta="Tipos de base" />
-                  <MetricCard label="Eventos no período" value="—" meta="API pendente" tone="amber" />
+                  <MetricCard label="Eventos no período" value={commissionEvents.length} meta="Competência atual" />
                 </section>
 
                 <div className="form-section">
-                  <header>
-                    <h3>Como funciona</h3>
+                  <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                    <h3 style={{ margin: 0 }}>Competências</h3>
+                    {canCloseCommission ? (
+                      <button className="button small" type="button" onClick={() => void ensureOpenPeriod()}>
+                        Garantir mês aberto
+                      </button>
+                    ) : null}
                   </header>
-                  <p className="muted-note" style={{ margin: 0, fontSize: 12, lineHeight: 1.6 }}>
-                    Cada regra associa um profissional (ou base clínica) a um tipo de cálculo — percentual ou valor fixo —
-                    com vigência definida. Quando a API de eventos de comissão estiver disponível, os valores gerados
-                    no período aparecerão abaixo para conferência e fechamento.
-                  </p>
+                  {commissionPeriods.length === 0 ? (
+                    <EmptyState title="Nenhuma competência" description="Eventos de pagamento abrem a competência automaticamente." />
+                  ) : (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Mês</th>
+                            <th>Status</th>
+                            <th>Eventos</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {commissionPeriods.map((period) => (
+                            <tr key={String(period.id)}>
+                              <td>{dateOnly(period.referenceMonth)}</td>
+                              <td><StatusBadge tone={period.status === 'CLOSED' ? 'green' : 'amber'}>{presentationLabel(period.status)}</StatusBadge></td>
+                              <td>{text(nested(period, '_count').events, '0')}</td>
+                              <td>
+                                {canCloseCommission && period.status === 'OPEN' ? (
+                                  <button
+                                    className="button small primary"
+                                    type="button"
+                                    disabled={closingId === String(period.id)}
+                                    onClick={() => void closePeriod(String(period.id))}
+                                  >
+                                    {closingId === String(period.id) ? 'Fechando…' : 'Fechar'}
+                                  </button>
+                                ) : null}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-section">
@@ -385,10 +461,35 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   <header>
                     <h3>Valores gerados no período</h3>
                   </header>
-                  <EmptyState
-                    title="Nenhum evento de comissão"
-                    description="A API de eventos ainda não fecha comissão automática. Quando o endpoint estiver disponível, os valores calculados aparecerão aqui."
-                  />
+                  {commissionEvents.length === 0 ? (
+                    <EmptyState
+                      title="Nenhum evento de comissão"
+                      description="Eventos nascem ao confirmar pagamento de recebível vinculado a tratamento com profissional e regra ativa."
+                    />
+                  ) : (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Data</th>
+                            <th>Base</th>
+                            <th>Comissão</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {commissionEvents.map((item) => (
+                            <tr key={String(item.id)}>
+                              <td>{dateOnly(item.occurredAt)}</td>
+                              <td>{currency(item.basisAmount)}</td>
+                              <td>{currency(item.commissionAmount)}</td>
+                              <td><StatusBadge tone={statusTone(String(item.status))}>{presentationLabel(item.status)}</StatusBadge></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -397,11 +498,36 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
       )}
 
       {tab === 'payable' && (
-        <UnavailableFeature
-          title="Contas a pagar"
-          description="A API atual não expõe payables. A interface permanece pronta para consumir o contrato quando existir."
-          contractHint="GET/POST /api/v1/payables"
-        />
+        <Panel title="Contas a pagar" description="Títulos de saída da clínica.">
+          {!canFinance ? (
+            <div className="state-message error" role="alert">Sem permissão financial.view.</div>
+          ) : payables.length === 0 ? (
+            <EmptyState title="Nenhuma conta a pagar" description="Cadastre despesas pelo módulo financeiro quando necessário." />
+          ) : (
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Descrição</th>
+                    <th>Vencimento</th>
+                    <th>Valor</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payables.map((item) => (
+                    <tr key={String(item.id)}>
+                      <td>{text(item.description)}</td>
+                      <td>{dateOnly(item.dueDate)}</td>
+                      <td>{currency(item.originalAmount ?? item.netAmount)}</td>
+                      <td><StatusBadge tone={statusTone(String(item.status))}>{presentationLabel(item.status)}</StatusBadge></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
       )}
       {tab === 'recurring' && (
         <UnavailableFeature
@@ -411,11 +537,19 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
         />
       )}
       {tab === 'cashflow' && (
-        <UnavailableFeature
-          title="Fluxo de caixa"
-          description="O relatório resumido existe em /reports/summary, mas não há série temporal de caixa."
-          contractHint="GET /api/v1/cashflow?clinicId&from&to"
-        />
+        <Panel title="Fluxo de caixa" description="Entradas e saídas consolidadas da clínica.">
+          {!canFinance ? (
+            <div className="state-message error" role="alert">Sem permissão financial.view.</div>
+          ) : !cashflow ? (
+            <EmptyState title="Sem dados de fluxo" description="O endpoint /cashflow não retornou agregados para o período." />
+          ) : (
+            <section className="stats">
+              <MetricCard label="Entradas" value={currency(cashflow.inflow ?? 0)} />
+              <MetricCard label="Saídas" value={currency(cashflow.outflow ?? 0)} />
+              <MetricCard label="Saldo" value={currency(cashflow.net ?? 0)} />
+            </section>
+          )}
+        </Panel>
       )}
     </>
   );
