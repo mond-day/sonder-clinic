@@ -2,33 +2,58 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@/lib/api';
-import { hasPermission, maskCpf, text } from '@/lib/format';
+import { hasPermission, maskCpf } from '@/lib/format';
 import { useAuth } from '@/components/auth-provider';
 import type { Professional } from '@/components/selection-provider';
 import { EmptyState, ErrorState, Panel, Skeleton } from '@/components/ui';
+import { Modal } from '@/components/modal';
 import * as documentApi from './document-api';
 import { CertificateEditor } from './certificate-editor';
+import { ConsentEditor } from './consent-editor';
 import { DocumentEditor } from './document-editor';
-import { DocumentFilters } from './document-filters';
+import { ReferralEditor } from './referral-editor';
 import { DocumentLibrary } from './document-library';
 import { DocumentPreview } from './document-preview';
 import { DocumentUploadDialog } from './document-upload-dialog';
 import { ExamRequestEditor } from './exam-request-editor';
 import { folderSchema } from './document-schemas';
+import { NewDocumentPicker } from './new-document-picker';
 import { PrescriptionEditor } from './prescription-editor';
 import { SignaturePanel } from './signature-panel';
 import type {
   DocumentFiltersState,
   DocumentFolder,
   DocumentModal,
+  DocumentsHomeTab,
   DocumentTemplate,
+  FileKindFilter,
   GeneratedDocument,
   LibraryItem,
+  NewDocumentKind,
   PatientMedia,
   Prescription,
   PrescriptionProtocol,
   SelectedLibraryRef,
 } from './document-types';
+
+const FILE_KIND_FILTERS: Array<{ id: FileKindFilter; label: string }> = [
+  { id: 'all', label: 'Todos' },
+  { id: 'photos', label: 'Fotos' },
+  { id: 'radiographs', label: 'Radiografias' },
+  { id: 'pdfs', label: 'PDFs' },
+  { id: 'videos', label: 'Vídeos' },
+  { id: 'other', label: 'Outros' },
+];
+
+function matchesFileKind(item: LibraryItem, kind: FileKindFilter): boolean {
+  if (kind === 'all') return true;
+  const type = `${item.type} ${item.name}`.toUpperCase();
+  if (kind === 'photos') return /PHOTO|IMAGE|IMG|JPG|JPEG|PNG|WEBP/.test(type);
+  if (kind === 'radiographs') return /RADIO|RX|XRAY|PANORAM|PERIAP|TOMO/.test(type);
+  if (kind === 'pdfs') return /PDF/.test(type);
+  if (kind === 'videos') return /VIDEO|MP4|MOV/.test(type);
+  return !/PHOTO|IMAGE|IMG|JPG|JPEG|PNG|WEBP|RADIO|RX|XRAY|PANORAM|PERIAP|TOMO|PDF|VIDEO|MP4|MOV/.test(type);
+}
 
 export function PatientDocumentWorkspace({
   clinicId,
@@ -57,6 +82,8 @@ export function PatientDocumentWorkspace({
   const canCancel = hasPermission(permissions, 'document.cancel');
   const canManageFolders = hasPermission(permissions, 'document.folder.manage');
 
+  const [homeTab, setHomeTab] = useState<DocumentsHomeTab>('documents');
+  const [fileKind, setFileKind] = useState<FileKindFilter>('all');
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [folders, setFolders] = useState<DocumentFolder[]>([]);
   const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
@@ -82,6 +109,21 @@ export function PatientDocumentWorkspace({
   const [shareLink, setShareLink] = useState('');
   const [mobileShowPreview, setMobileShowPreview] = useState(false);
   const [message, setMessage] = useState('');
+  const [promptForm, setPromptForm] = useState<null | {
+    title: string;
+    description: string;
+    initial?: string;
+    confirmLabel: string;
+    danger?: boolean;
+    requireMin?: number;
+    onConfirm: (value: string) => void;
+  }>(null);
+  const [promptValue, setPromptValue] = useState('');
+  const [confirmForm, setConfirmForm] = useState<null | {
+    title: string;
+    description: string;
+    onConfirm: () => void;
+  }>(null);
 
   const professionalName = useCallback(
     (id?: string | null) => professionals.find((row) => row.id === id)?.name ?? 'Profissional',
@@ -113,8 +155,7 @@ export function PatientDocumentWorkspace({
         if (current && library.some((row) => row.id === current.id && row.source === current.source)) {
           return current;
         }
-        const first = library[0];
-        return first ? { id: first.id, source: first.source } : null;
+        return null;
       });
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível carregar a biblioteca.');
@@ -178,14 +219,15 @@ export function PatientDocumentWorkspace({
   const filteredItems = useMemo(() => {
     const term = filters.search.trim().toLowerCase();
     return items.filter((item) => {
-      if (filters.segment === 'generated' && item.source === 'upload') return false;
-      if (filters.segment === 'uploads' && item.source !== 'upload') return false;
+      if (homeTab === 'documents' && item.source === 'upload') return false;
+      if (homeTab === 'files' && item.source !== 'upload') return false;
+      if (homeTab === 'files' && !matchesFileKind(item, fileKind)) return false;
       if (filters.folderId !== 'all' && item.folderId !== filters.folderId) return false;
       if (!term) return true;
       const haystack = [item.name, item.type, item.folderName ?? '', item.validationCode ?? ''].join(' ').toLowerCase();
       return haystack.includes(term);
     });
-  }, [filters.folderId, filters.search, filters.segment, items]);
+  }, [fileKind, filters.folderId, filters.search, homeTab, items]);
 
   const selectedMeta = filteredItems.find(
     (item) => item.id === selected?.id && item.source === selected.source,
@@ -212,17 +254,42 @@ export function PatientDocumentWorkspace({
   }
 
   async function createFolder() {
-    const name = window.prompt('Nome da nova pasta:');
-    if (!name) return;
-    const parsed = folderSchema.safeParse({ name });
-    if (!parsed.success) {
-      setActionError(parsed.error.issues[0]?.message ?? 'Nome inválido.');
-      return;
-    }
-    await runAction(async () => {
-      await documentApi.createDocumentFolder(patientId, parsed.data.name);
-      setMessage('Pasta criada.');
+    setPromptValue('');
+    setPromptForm({
+      title: 'Nova pasta',
+      description: 'Informe o nome da pasta.',
+      confirmLabel: 'Criar',
+      requireMin: 2,
+      onConfirm: (name) => {
+        const parsed = folderSchema.safeParse({ name });
+        if (!parsed.success) {
+          setActionError(parsed.error.issues[0]?.message ?? 'Nome inválido.');
+          return;
+        }
+        void runAction(async () => {
+          await documentApi.createDocumentFolder(patientId, parsed.data.name);
+          setMessage('Pasta criada.');
+        });
+      },
     });
+  }
+
+  function openNewDocument(kind: NewDocumentKind) {
+    setActionError('');
+    setModal(kind);
+  }
+
+  function switchHomeTab(tab: DocumentsHomeTab) {
+    setHomeTab(tab);
+    setSelected(null);
+    setMobileShowPreview(false);
+    setFilters((current) => ({
+      ...current,
+      search: '',
+      folderId: 'all',
+      segment: tab === 'files' ? 'uploads' : 'generated',
+    }));
+    setFileKind('all');
   }
 
   if (!canView) {
@@ -249,50 +316,95 @@ export function PatientDocumentWorkspace({
     <div className="documents-workspace">
       {message ? <div className="secure-notice">{message}</div> : null}
 
-      <section className="document-quick-actions" aria-label="Ações rápidas">
-        <button type="button" className="action-card" disabled={!canCreate} onClick={() => { setModal('generate'); setActionError(''); }}>
-          <span className="action-icon">DOC</span>
-          <span>
-            <strong>Gerar documento</strong>
-            <small>Atestado, termo, declaração ou encaminhamento</small>
-          </span>
+      <div className="doc-home-tabs" role="tablist" aria-label="Documentos e arquivos">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={homeTab === 'documents'}
+          className={homeTab === 'documents' ? 'active' : ''}
+          onClick={() => switchHomeTab('documents')}
+        >
+          Documentos
         </button>
-        <button type="button" className="action-card" disabled={!canCreate} onClick={() => { setModal('prescription'); setActionError(''); }}>
-          <span className="action-icon blue">RX</span>
-          <span>
-            <strong>Nova prescrição</strong>
-            <small>Medicamentos, exames e texto estruturado</small>
-          </span>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={homeTab === 'files'}
+          className={homeTab === 'files' ? 'active' : ''}
+          onClick={() => switchHomeTab('files')}
+        >
+          Arquivos
         </button>
-        <button type="button" className="action-card" disabled={!canCreate} onClick={() => { setModal('certificate'); setActionError(''); }}>
-          <span className="action-icon purple">AT</span>
-          <span>
-            <strong>Emitir atestado</strong>
-            <small>Dias, horas, comparecimento e CID autorizado</small>
-          </span>
-        </button>
-        <button type="button" className="action-card" disabled={!canCreate} onClick={() => { setModal('exam-request'); setActionError(''); }}>
-          <span className="action-icon blue">EX</span>
-          <span>
-            <strong>Solicitar exame</strong>
-            <small>Lista estruturada, indicação e urgência</small>
-          </span>
-        </button>
-        <button type="button" className="action-card" disabled={!canCreate} onClick={() => { setModal('upload'); setActionError(''); }}>
-          <span className="action-icon amber">↑</span>
-          <span>
-            <strong>Enviar arquivos</strong>
-            <small>Fotos, radiografias, PDFs e exames</small>
-          </span>
-        </button>
-      </section>
+      </div>
 
-      <div className={`documents-layout ${mobileShowPreview ? 'show-preview' : ''}`}>
-        <Panel className="documents-library-panel" title="Biblioteca do paciente" description="Documentos gerados, receitas e arquivos enviados.">
-          <DocumentFilters
-            value={filters}
-            onChange={(next) => setFilters(next)}
-          />
+      <div className="doc-home-toolbar">
+        <div>
+          <strong>{homeTab === 'documents' ? 'Documentos emitidos' : 'Arquivos do paciente'}</strong>
+          <p className="muted-note">
+            {homeTab === 'documents'
+              ? 'Receitas, atestados, exames, termos e documentos personalizados.'
+              : 'Fotos, radiografias, PDFs e vídeos — preview em primeiro plano.'}
+          </p>
+        </div>
+        {homeTab === 'documents' ? (
+          <button
+            type="button"
+            className="button primary"
+            disabled={!canCreate}
+            onClick={() => { setModal('picker'); setActionError(''); }}
+          >
+            ＋ Novo documento
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="button primary"
+            disabled={!canCreate}
+            onClick={() => { setModal('upload'); setActionError(''); }}
+          >
+            ＋ Enviar arquivo
+          </button>
+        )}
+      </div>
+
+      <div className={`documents-layout ${homeTab === 'files' ? 'files-priority' : ''} ${mobileShowPreview ? 'show-preview' : ''}`}>
+        <Panel
+          className="documents-library-panel"
+          title={homeTab === 'documents' ? 'Biblioteca de documentos' : 'Biblioteca de arquivos'}
+          description={homeTab === 'documents' ? 'Emitidos e assinados.' : 'Uploads e pastas.'}
+        >
+          <div className="document-filters">
+            <input
+              placeholder={homeTab === 'documents' ? 'Buscar documento' : 'Buscar arquivo'}
+              value={filters.search}
+              onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+              aria-label={homeTab === 'documents' ? 'Buscar documentos' : 'Buscar arquivos'}
+            />
+            {homeTab === 'files' ? (
+              <div className="segmented" role="tablist" aria-label="Tipo de arquivo">
+                {FILE_KIND_FILTERS.map((kind) => (
+                  <button
+                    key={kind.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={fileKind === kind.id}
+                    className={fileKind === kind.id ? 'active' : ''}
+                    onClick={() => setFileKind(kind.id)}
+                  >
+                    {kind.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <label className="check-field compact">
+              <input
+                type="checkbox"
+                checked={filters.includeArchived}
+                onChange={(event) => setFilters((current) => ({ ...current, includeArchived: event.target.checked }))}
+              />
+              Incluir arquivados
+            </label>
+          </div>
           <DocumentLibrary
             folders={folders}
             items={filteredItems}
@@ -320,6 +432,7 @@ export function PatientDocumentWorkspace({
             history={history ?? []}
             loading={detailLoading}
             busy={busy}
+            patientId={patientId}
             patientName={patientName}
             patientCpfMasked={maskCpf(patientCpf)}
             professionalName={professionalName}
@@ -368,45 +481,72 @@ export function PatientDocumentWorkspace({
             }}
             onRename={() => {
               if (!selectedMeta || selectedMeta.source !== 'upload') return;
-              const name = window.prompt('Novo nome do arquivo:', selectedMeta.name);
-              if (!name?.trim()) return;
-              void runAction(async () => {
-                await documentApi.patchMedia(patientId, selectedMeta.id, { displayName: name.trim() });
-                setMessage('Arquivo renomeado.');
+              setPromptValue(selectedMeta.name);
+              setPromptForm({
+                title: 'Renomear arquivo',
+                description: 'Informe o novo nome.',
+                initial: selectedMeta.name,
+                confirmLabel: 'Salvar',
+                requireMin: 1,
+                onConfirm: (name) => {
+                  void runAction(async () => {
+                    await documentApi.patchMedia(patientId, selectedMeta.id, { displayName: name.trim() });
+                    setMessage('Arquivo renomeado.');
+                  });
+                },
               });
             }}
             onArchive={() => {
               if (!selectedMeta) return;
-              const confirmed = window.confirm(`Arquivar “${selectedMeta.name}”?`);
-              if (!confirmed) return;
-              void runAction(async () => {
-                if (selectedMeta.source === 'upload') {
-                  await documentApi.archiveMedia(patientId, selectedMeta.id);
-                } else if (selectedMeta.source === 'generated') {
-                  await documentApi.archiveDocument(selectedMeta.id);
-                } else {
-                  await documentApi.cancelPrescription(selectedMeta.id, 'Arquivado pela biblioteca');
-                }
-                setSelected(null);
-                setMessage('Item arquivado/cancelado.');
+              setConfirmForm({
+                title: 'Arquivar item',
+                description: `Arquivar “${selectedMeta.name}”?`,
+                onConfirm: () => {
+                  void runAction(async () => {
+                    if (selectedMeta.source === 'upload') {
+                      await documentApi.archiveMedia(patientId, selectedMeta.id);
+                    } else if (selectedMeta.source === 'generated') {
+                      await documentApi.archiveDocument(selectedMeta.id);
+                    } else {
+                      await documentApi.cancelPrescription(selectedMeta.id, 'Arquivado pela biblioteca');
+                    }
+                    setSelected(null);
+                    setMessage('Item arquivado/cancelado.');
+                  });
+                },
               });
             }}
             onCancel={() => {
               if (!selectedMeta || selectedMeta.source === 'upload') return;
-              const reason = window.prompt('Motivo do cancelamento (mín. 3 caracteres):');
-              if (!reason || reason.trim().length < 3) return;
-              void runAction(async () => {
-                if (selectedMeta.source === 'generated') {
-                  await documentApi.cancelDocument(selectedMeta.id, reason.trim());
-                } else {
-                  await documentApi.cancelPrescription(selectedMeta.id, reason.trim());
-                }
-                setMessage('Documento cancelado.');
+              setPromptValue('');
+              setPromptForm({
+                title: 'Cancelar documento',
+                description: 'Informe o motivo (mín. 3 caracteres).',
+                confirmLabel: 'Cancelar documento',
+                danger: true,
+                requireMin: 3,
+                onConfirm: (reason) => {
+                  void runAction(async () => {
+                    if (selectedMeta.source === 'generated') {
+                      await documentApi.cancelDocument(selectedMeta.id, reason);
+                    } else {
+                      await documentApi.cancelPrescription(selectedMeta.id, reason);
+                    }
+                    setMessage('Documento cancelado.');
+                  });
+                },
               });
             }}
           />
         </Panel>
       </div>
+
+      <NewDocumentPicker
+        open={modal === 'picker'}
+        disabled={!canCreate || busy}
+        onClose={() => setModal(null)}
+        onSelect={openNewDocument}
+      />
 
       <DocumentEditor
         open={modal === 'generate'}
@@ -428,6 +568,7 @@ export function PatientDocumentWorkspace({
               folderId: input.folderId,
               clinicalContent: input.clinicalContent,
             });
+            setHomeTab('documents');
             setMobileShowPreview(true);
             setMessage('Documento gerado como rascunho congelado.');
             setModal(null);
@@ -451,6 +592,7 @@ export function PatientDocumentWorkspace({
               patientId,
               ...input,
             });
+            setHomeTab('documents');
             setMobileShowPreview(true);
             setMessage('Prescrição gerada e pronta para assinatura.');
             setModal(null);
@@ -485,6 +627,7 @@ export function PatientDocumentWorkspace({
               folderId: input.folderId,
               clinicalContent: input.clinicalContent,
             });
+            setHomeTab('documents');
             setMobileShowPreview(true);
             setMessage('Atestado gerado e pronto para assinatura.');
             setModal(null);
@@ -511,8 +654,65 @@ export function PatientDocumentWorkspace({
               folderId: input.folderId,
               clinicalContent: input.clinicalContent,
             });
+            setHomeTab('documents');
             setMobileShowPreview(true);
             setMessage('Solicitação de exame gerada.');
+            setModal(null);
+            return created;
+          }, (created) => ({ id: created.id, source: 'generated' as const }));
+        }}
+      />
+
+      <ConsentEditor
+        open={modal === 'consent'}
+        templates={templates}
+        professionals={professionals}
+        folders={folders}
+        treatments={treatments}
+        busy={busy}
+        error={actionError}
+        onClose={() => setModal(null)}
+        onSubmit={async (input) => {
+          await runAction(async () => {
+            const created = await documentApi.generateDocument({
+              clinicId,
+              patientId,
+              templateId: input.templateId,
+              professionalId: input.professionalId,
+              treatmentId: input.treatmentId,
+              folderId: input.folderId,
+              clinicalContent: input.clinicalContent,
+            });
+            setHomeTab('documents');
+            setMobileShowPreview(true);
+            setMessage('Termo gerado como rascunho congelado.');
+            setModal(null);
+            return created;
+          }, (created) => ({ id: created.id, source: 'generated' as const }));
+        }}
+      />
+
+      <ReferralEditor
+        open={modal === 'referral'}
+        templates={templates}
+        professionals={professionals}
+        folders={folders}
+        busy={busy}
+        error={actionError}
+        onClose={() => setModal(null)}
+        onSubmit={async (input) => {
+          await runAction(async () => {
+            const created = await documentApi.generateDocument({
+              clinicId,
+              patientId,
+              templateId: input.templateId,
+              professionalId: input.professionalId,
+              folderId: input.folderId,
+              clinicalContent: input.clinicalContent,
+            });
+            setHomeTab('documents');
+            setMobileShowPreview(true);
+            setMessage('Encaminhamento gerado como rascunho congelado.');
             setModal(null);
             return created;
           }, (created) => ({ id: created.id, source: 'generated' as const }));
@@ -539,6 +739,7 @@ export function PatientDocumentWorkspace({
               const uploaded = await documentApi.uploadMedia(patientId, form);
               lastId = uploaded.id;
             }
+            setHomeTab('files');
             setMobileShowPreview(true);
             setMessage(input.files.length > 1 ? 'Arquivos enviados.' : 'Arquivo enviado.');
             setModal(null);
@@ -579,6 +780,62 @@ export function PatientDocumentWorkspace({
           }
         }}
       />
+
+      <Modal
+        open={Boolean(promptForm)}
+        title={promptForm?.title ?? ''}
+        description={promptForm?.description}
+        onClose={() => setPromptForm(null)}
+      >
+        <form
+          className="mutation-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const min = promptForm?.requireMin ?? 1;
+            if (!promptForm || promptValue.trim().length < min) return;
+            const confirm = promptForm.onConfirm;
+            setPromptForm(null);
+            confirm(promptValue.trim());
+          }}
+        >
+          <label className="span-2">Valor
+            <input required minLength={promptForm?.requireMin ?? 1} value={promptValue} onChange={(event) => setPromptValue(event.target.value)} />
+          </label>
+          <div className="modal-footer">
+            <button type="button" className="button ghost" onClick={() => setPromptForm(null)}>Voltar</button>
+            <button
+              type="submit"
+              className={`button ${promptForm?.danger ? 'danger' : 'primary'}`}
+              disabled={busy || promptValue.trim().length < (promptForm?.requireMin ?? 1)}
+            >
+              {promptForm?.confirmLabel ?? 'Confirmar'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(confirmForm)}
+        title={confirmForm?.title ?? ''}
+        description={confirmForm?.description}
+        onClose={() => setConfirmForm(null)}
+      >
+        <div className="modal-footer">
+          <button type="button" className="button ghost" onClick={() => setConfirmForm(null)}>Voltar</button>
+          <button
+            type="button"
+            className="button primary"
+            disabled={busy}
+            onClick={() => {
+              const confirm = confirmForm?.onConfirm;
+              setConfirmForm(null);
+              confirm?.();
+            }}
+          >
+            Confirmar
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

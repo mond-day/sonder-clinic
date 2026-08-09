@@ -1,9 +1,11 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
 import { createAntivirusScanner, createStorageAdapter } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
+import { assertLabStatusTransition } from './workspace-lab.utils';
+import { advanceTaskOccurrence, normalizeTaskFrequency } from './workspace-tasks.utils';
 
 const returnStatus = z.enum(['PENDING', 'CONTACTED', 'SCHEDULED', 'DONE', 'DISMISSED']);
 const returnChannel = z.enum(['WHATSAPP', 'PHONE', 'EMAIL', 'IN_PERSON']);
@@ -118,6 +120,8 @@ export class WorkspaceService {
     participants: true,
     comments: { orderBy: { createdAt: 'asc' as const } },
     attachments: { orderBy: { createdAt: 'desc' as const } },
+    recurrence: true,
+    activities: { orderBy: { createdAt: 'desc' as const }, take: 50 },
   } satisfies Prisma.TaskInclude;
 
   private readonly labCaseInclude = {
@@ -256,6 +260,22 @@ export class WorkspaceService {
     return this.enrichTaskRelations(withAssignees);
   }
 
+  private async recordTaskActivity(
+    taskId: string,
+    type: string,
+    actorId?: string,
+    payload: Record<string, unknown> = {},
+  ) {
+    await prisma.taskActivity.create({
+      data: {
+        taskId,
+        actorId,
+        type,
+        payload: json(payload),
+      },
+    });
+  }
+
   async createTask(organizationId: string, createdById: string, input: CreateTask) {
     const data = parseWithZod(createTaskSchema, input);
     await this.assertWorkspaceResources(organizationId, data);
@@ -263,6 +283,7 @@ export class WorkspaceService {
       data: { ...data, organizationId, createdById, dueAt: data.dueAt ? new Date(data.dueAt) : undefined },
       include: this.taskInclude,
     });
+    await this.recordTaskActivity(item.id, 'TASK_CREATED', createdById, { title: item.title });
     const [withAssignee] = await this.withAssignees([item]);
     if (!withAssignee) throw new NotFoundException('Tarefa não encontrada.');
     const [enriched] = await this.enrichTaskRelations([withAssignee]);
@@ -284,10 +305,134 @@ export class WorkspaceService {
       },
       include: this.taskInclude,
     });
+    if (data.status && data.status !== existing.status) {
+      await this.recordTaskActivity(id, 'STATUS_CHANGED', undefined, {
+        from: existing.status,
+        to: data.status,
+      });
+    } else if (data.assigneeId !== undefined && data.assigneeId !== existing.assigneeId) {
+      await this.recordTaskActivity(id, 'ASSIGNEE_CHANGED', undefined, {
+        from: existing.assigneeId,
+        to: data.assigneeId,
+      });
+    } else {
+      await this.recordTaskActivity(id, 'TASK_UPDATED', undefined, data as Record<string, unknown>);
+    }
     const [withAssignee] = await this.withAssignees([item]);
     if (!withAssignee) throw new NotFoundException('Tarefa não encontrada.');
     const [enriched] = await this.enrichTaskRelations([withAssignee]);
     return enriched;
+  }
+
+  async upsertTaskRecurrence(
+    organizationId: string,
+    taskId: string,
+    actorId: string,
+    input: {
+      frequency: string;
+      interval?: number;
+      nextOccurrence?: string;
+      endsAt?: string | null;
+      active?: boolean;
+    },
+  ) {
+    const task = await prisma.task.findFirst({ where: { id: taskId, organizationId } });
+    if (!task) throw new NotFoundException('Tarefa não encontrada.');
+    const frequency = normalizeTaskFrequency(input.frequency);
+    const interval = Math.max(1, input.interval ?? 1);
+    const nextOccurrence = input.nextOccurrence
+      ? new Date(`${input.nextOccurrence.slice(0, 10)}T00:00:00.000Z`)
+      : (task.dueAt ?? new Date());
+    const endsAt = input.endsAt === null
+      ? null
+      : input.endsAt
+        ? new Date(`${input.endsAt.slice(0, 10)}T00:00:00.000Z`)
+        : undefined;
+    const recurrence = await prisma.taskRecurrence.upsert({
+      where: { taskId },
+      create: {
+        taskId,
+        frequency,
+        interval,
+        nextOccurrence,
+        endsAt: endsAt ?? null,
+        active: input.active ?? true,
+      },
+      update: {
+        frequency,
+        interval,
+        nextOccurrence,
+        ...(endsAt !== undefined ? { endsAt } : {}),
+        ...(input.active !== undefined ? { active: input.active } : {}),
+      },
+    });
+    await this.recordTaskActivity(taskId, 'RECURRENCE_CHANGED', actorId, {
+      frequency,
+      interval,
+      nextOccurrence: recurrence.nextOccurrence,
+      active: recurrence.active,
+    });
+    return this.getTask(organizationId, taskId);
+  }
+
+  async taskHistory(organizationId: string, taskId: string) {
+    const task = await prisma.task.findFirst({ where: { id: taskId, organizationId }, select: { id: true } });
+    if (!task) throw new NotFoundException('Tarefa não encontrada.');
+    return prisma.taskActivity.findMany({
+      where: { taskId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
+
+  /** Gera próxima ocorrência imediatamente (idempotente via occurrenceKey). */
+  async generateTaskOccurrence(organizationId: string, taskId: string, actorId: string) {
+    const task = await prisma.task.findFirst({
+      where: { id: taskId, organizationId },
+      include: { recurrence: true },
+    });
+    if (!task?.recurrence?.active || !task.recurrence.nextOccurrence) {
+      throw new ConflictException('Tarefa sem recorrência ativa.');
+    }
+    const occurrence = new Date(task.recurrence.nextOccurrence);
+    const key = `${taskId}:${occurrence.toISOString().slice(0, 10)}`;
+    const existing = await prisma.task.findUnique({ where: { occurrenceKey: key } });
+    if (existing) return existing;
+    const created = await prisma.$transaction(async (tx) => {
+      const row = await tx.task.create({
+        data: {
+          organizationId: task.organizationId,
+          clinicId: task.clinicId,
+          title: task.title,
+          description: task.description,
+          category: task.category,
+          priority: task.priority,
+          status: 'INBOX',
+          dueAt: occurrence,
+          assigneeId: task.assigneeId,
+          patientId: task.patientId,
+          createdById: actorId,
+          sourceTaskId: taskId,
+          occurrenceKey: key,
+        },
+      });
+      await tx.taskActivity.create({
+        data: {
+          taskId,
+          actorId,
+          type: 'RECURRENCE_GENERATED',
+          payload: json({ occurrenceKey: key }),
+        },
+      });
+      const next = advanceTaskOccurrence(occurrence, task.recurrence!.frequency, task.recurrence!.interval);
+      const ended = Boolean(task.recurrence!.endsAt && next > task.recurrence!.endsAt);
+      await tx.taskRecurrence.update({
+        where: { id: task.recurrence!.id },
+        data: { nextOccurrence: ended ? null : next, active: !ended },
+      });
+      return row;
+    });
+    return created;
   }
 
   async addTaskChecklistItem(organizationId: string, taskId: string, title: string) {
@@ -370,6 +515,62 @@ export class WorkspaceService {
     await prisma.taskComment.create({
       data: { taskId, authorId, content: trimmed },
     });
+    return this.getTask(organizationId, taskId);
+  }
+
+  async updateTaskComment(
+    organizationId: string,
+    taskId: string,
+    commentId: string,
+    actorId: string,
+    content: string,
+  ) {
+    const comment = await prisma.taskComment.findFirst({
+      where: { id: commentId, taskId, task: { organizationId } },
+    });
+    if (!comment) throw new NotFoundException('Comentário não encontrado.');
+    if (comment.authorId !== actorId) {
+      throw new ForbiddenException('Somente o autor pode editar o comentário.');
+    }
+    const trimmed = content.trim();
+    if (trimmed.length < 1) throw new BadRequestException('Informe o comentário.');
+    await prisma.taskComment.update({
+      where: { id: commentId },
+      data: { content: trimmed, editedAt: new Date() },
+    });
+    return this.getTask(organizationId, taskId);
+  }
+
+  async deleteTaskComment(
+    organizationId: string,
+    taskId: string,
+    commentId: string,
+    actorId: string,
+    clinicId?: string | null,
+  ) {
+    const comment = await prisma.taskComment.findFirst({
+      where: { id: commentId, taskId, task: { organizationId } },
+      include: { task: { select: { clinicId: true } } },
+    });
+    if (!comment) throw new NotFoundException('Comentário não encontrado.');
+    await prisma.$transaction([
+      prisma.taskComment.delete({ where: { id: commentId } }),
+      prisma.auditEvent.create({
+        data: {
+          actorId,
+          action: 'task_comment.deleted',
+          entity: 'TaskComment',
+          entityId: commentId,
+          clinicId: clinicId ?? comment.task.clinicId ?? undefined,
+          changes: {
+            taskId,
+            authorId: comment.authorId,
+            contentPreview: comment.content.slice(0, 200),
+          } as Prisma.InputJsonValue,
+          correlationId: randomUUID(),
+        },
+      }),
+    ]);
     return this.getTask(organizationId, taskId);
   }
 
@@ -637,6 +838,7 @@ export class WorkspaceService {
     const status = parseWithZod(labStatus, statusValue);
     const existing = await prisma.labCase.findFirst({ where: { id, organizationId } });
     if (!existing) throw new NotFoundException('Caso laboratorial não encontrado.');
+    assertLabStatusTransition(existing.status, status, notes);
     const now = new Date();
     return prisma.labCase.update({
       where: { id },
@@ -646,9 +848,142 @@ export class WorkspaceService {
         returnedAt: status === 'RETURNED' ? now : undefined,
         installedAt: status === 'INSTALLED' ? now : undefined,
         events: { create: { status, notes, createdById: userId } },
+        ...(status === 'CANCELLED' ? { notes: notes?.trim() || existing.notes } : {}),
       },
       include: this.labCaseInclude,
     });
+  }
+
+  async updateLabCase(organizationId: string, userId: string, id: string, input: {
+    description?: string;
+    laboratoryId?: string | null;
+    laboratoryName?: string;
+    professionalId?: string | null;
+    toothFdi?: string | null;
+    specialty?: string | null;
+    dueAt?: string | null;
+    cost?: string | null;
+    notes?: string | null;
+  }) {
+    const existing = await prisma.labCase.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Caso laboratorial não encontrado.');
+    if (['INSTALLED', 'CANCELLED'].includes(existing.status)) {
+      throw new ConflictException('Caso encerrado não pode ser editado.');
+    }
+    let laboratoryName = input.laboratoryName?.trim();
+    let laboratoryId = input.laboratoryId;
+    if (laboratoryId) {
+      const laboratory = await prisma.laboratory.findFirst({
+        where: { id: laboratoryId, organizationId, status: 'ACTIVE' },
+      });
+      if (!laboratory) throw new NotFoundException('Laboratório não encontrado.');
+      laboratoryName = laboratory.name;
+    }
+    if (input.professionalId) {
+      const professional = await prisma.professional.findFirst({
+        where: {
+          id: input.professionalId,
+          status: 'ACTIVE',
+          clinicLinks: { some: { clinicId: existing.clinicId, active: true } },
+        },
+      });
+      if (!professional) throw new NotFoundException('Profissional não vinculado à clínica.');
+    }
+    return prisma.labCase.update({
+      where: { id },
+      data: {
+        description: input.description?.trim(),
+        laboratoryId: laboratoryId === undefined ? undefined : laboratoryId,
+        laboratoryName: laboratoryName ?? undefined,
+        professionalId: input.professionalId === undefined ? undefined : input.professionalId,
+        toothFdi: input.toothFdi === undefined ? undefined : input.toothFdi,
+        specialty: input.specialty === undefined ? undefined : input.specialty,
+        dueAt: input.dueAt === undefined ? undefined : (input.dueAt ? new Date(input.dueAt) : null),
+        cost: input.cost === undefined ? undefined : (input.cost ? new Prisma.Decimal(input.cost) : null),
+        notes: input.notes === undefined ? undefined : input.notes,
+        events: {
+          create: {
+            status: existing.status,
+            notes: 'Caso atualizado.',
+            createdById: userId,
+          },
+        },
+      },
+      include: this.labCaseInclude,
+    });
+  }
+
+  async addLabCaseAttachment(
+    organizationId: string,
+    labCaseId: string,
+    actorId: string,
+    file: { originalname: string; size: number; buffer: Buffer; mimetype: string },
+    kind = 'OTHER',
+  ) {
+    const labCase = await prisma.labCase.findFirst({ where: { id: labCaseId, organizationId } });
+    if (!labCase) throw new NotFoundException('Caso laboratorial não encontrado.');
+    if (!this.storage.enabled) {
+      throw new BadRequestException(
+        this.storage.disabledReason
+          ?? 'Storage desabilitado — configure STORAGE_DRIVER=local ou MinIO/S3 com credenciais.',
+      );
+    }
+    if (!file?.buffer?.length) throw new BadRequestException('Envie um arquivo.');
+    if (file.size > 25 * 1024 * 1024) throw new BadRequestException('Anexo deve ter no máximo 25 MB.');
+    const extension = file.originalname.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '';
+    const scan = await this.antivirus.scan(file.buffer);
+    if (scan.infected) {
+      throw new BadRequestException(`Arquivo rejeitado pelo antivírus${scan.detail ? `: ${scan.detail}` : '.'}`);
+    }
+    const antivirusStatus = scan.clean ? 'CLEAN' : 'PENDING';
+    const checksum = createHash('sha256').update(file.buffer).digest('hex');
+    let stored;
+    try {
+      stored = await this.storage.putObject({
+        organizationId,
+        clinicId: labCase.clinicId,
+        filename: file.originalname,
+        contentType: file.mimetype || 'application/octet-stream',
+        body: file.buffer,
+        keyPrefix: 'lab-case-attachments',
+        metadata: { kind: 'lab-case-attachment', labCaseId },
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Falha ao gravar no storage.';
+      throw new BadRequestException(detail);
+    }
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const fileObject = await tx.fileObject.create({
+          data: {
+            organizationId,
+            bucket: stored.bucket,
+            objectKey: stored.objectKey,
+            originalName: file.originalname,
+            mimeType: file.mimetype || 'application/octet-stream',
+            extension: extension || null,
+            sizeBytes: BigInt(file.size),
+            checksum,
+            status: 'AVAILABLE',
+            antivirusStatus,
+            createdById: actorId,
+            metadata: json({ kind: 'lab-case-attachment', labCaseId }),
+          },
+        });
+        return tx.labCaseAttachment.create({
+          data: {
+            labCaseId,
+            fileId: fileObject.id,
+            kind,
+            label: file.originalname,
+            createdById: actorId,
+          },
+        });
+      });
+    } catch (error) {
+      await this.storage.deleteObject(stored.objectKey).catch(() => undefined);
+      throw error;
+    }
   }
 
   async labCaseHistory(organizationId: string, id: string) {

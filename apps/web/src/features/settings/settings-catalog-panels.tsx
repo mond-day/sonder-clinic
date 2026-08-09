@@ -676,7 +676,7 @@ export function CommunicationTemplatesPanel() {
           ))}
         </div>
       )}
-      <p className="muted-note">SMTP cobre e-mail. WhatsApp continua stub/Evolution — ver canais abaixo.</p>
+      <p className="muted-note">SMTP cobre e-mail. WhatsApp usa Evolution real quando EVOLUTION_MOCK=false + credenciais — ver canais abaixo.</p>
       <Modal open={open} title="Novo template" description="Variáveis: {{patientName}}, {{date}}, {{clinicName}}, {{professionalName}}." onClose={() => setOpen(false)}>
         <form className="mutation-form" onSubmit={createTemplate}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
@@ -803,7 +803,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
       {loading ? <div className="state-message">Carregando…</div> : null}
       {!loading && channels.length === 0 ? (
-        <EmptyState title="Nenhum canal" description="Crie um canal EMAIL (SMTP) ou WHATSAPP (stub Evolution)." />
+        <EmptyState title="Nenhum canal" description="Crie um canal EMAIL (SMTP) ou WHATSAPP (Evolution)." />
       ) : (
         <div className="settings-list">
           {channels.map((row) => (
@@ -825,7 +825,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
         </div>
       )}
       <p className="muted-note">
-        EMAIL exige SMTP_HOST. WHATSAPP/SMS registram FAILED de forma honesta se Evolution estiver em MOCK ou sem envio outbound.
+        EMAIL exige SMTP_HOST. WHATSAPP registra FAILED se Evolution estiver em MOCK ou sem baseUrl/apiKey/instance. SMS permanece stub.
       </p>
       <Modal open={open} title="Novo canal" description="Canal operacional para envio manual e futuras automações." onClose={() => setOpen(false)}>
         <form className="mutation-form" onSubmit={createChannel}>
@@ -833,7 +833,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
           <label className="span-2">Tipo
             <select name="type" defaultValue="EMAIL">
               <option value="EMAIL">E-mail (SMTP)</option>
-              <option value="WHATSAPP">WhatsApp (Evolution stub)</option>
+              <option value="WHATSAPP">WhatsApp (Evolution)</option>
               <option value="SMS">SMS (stub)</option>
             </select>
           </label>

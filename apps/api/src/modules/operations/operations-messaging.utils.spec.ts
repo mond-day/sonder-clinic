@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { renderMessageTemplate } from './operations-messaging.utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderMessageTemplate, resolveEvolutionConfig } from './operations-messaging.utils';
 
 describe('renderMessageTemplate', () => {
   it('substitutes known variables', () => {
@@ -18,5 +18,31 @@ describe('renderMessageTemplate', () => {
       clinicName: '',
       professionalName: '',
     })).toBe('Oi {{unknown}}');
+  });
+});
+
+describe('resolveEvolutionConfig', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('exige baseUrl, apiKey e instance', () => {
+    expect(resolveEvolutionConfig({ baseUrl: 'https://evo.local', apiKey: 'k' })).toBeNull();
+    expect(
+      resolveEvolutionConfig({ baseUrl: 'https://evo.local/', apiKey: 'k', instance: 'clinic' }),
+    ).toEqual({
+      baseUrl: 'https://evo.local',
+      apiKey: 'k',
+      instance: 'clinic',
+    });
+  });
+
+  it('aceita env EVOLUTION_*', () => {
+    vi.stubEnv('EVOLUTION_BASE_URL', 'https://from-env');
+    vi.stubEnv('EVOLUTION_API_KEY', 'env-key');
+    vi.stubEnv('EVOLUTION_INSTANCE', 'env-instance');
+    expect(resolveEvolutionConfig({})).toEqual({
+      baseUrl: 'https://from-env',
+      apiKey: 'env-key',
+      instance: 'env-instance',
+    });
   });
 });

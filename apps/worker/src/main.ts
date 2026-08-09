@@ -1,17 +1,28 @@
 import { startObservability } from '@sonder/observability';
 import { processDueFinanceRecurrences } from './finance-recurrences';
+import { processDueTaskRecurrences } from './task-recurrences';
 import { processOutbox } from './outbox';
 
 const intervalMs = 5_000;
 
 async function tick(): Promise<void> {
   await processOutbox();
-  const generated = await processDueFinanceRecurrences();
-  if (generated > 0) {
+  const [financeGenerated, taskGenerated] = await Promise.all([
+    processDueFinanceRecurrences(),
+    processDueTaskRecurrences(),
+  ]);
+  if (financeGenerated > 0) {
     console.info(JSON.stringify({
       service: 'sonder-worker',
       event: 'finance-recurrence.generated',
-      count: generated,
+      count: financeGenerated,
+    }));
+  }
+  if (taskGenerated > 0) {
+    console.info(JSON.stringify({
+      service: 'sonder-worker',
+      event: 'task-recurrence.generated',
+      count: taskGenerated,
     }));
   }
 }

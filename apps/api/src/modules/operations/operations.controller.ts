@@ -81,6 +81,8 @@ class TreatmentDto {
 class ApprovalDto {
   @IsArray() @IsUUID(undefined, { each: true }) itemIds!: string[];
   @IsOptional() @IsInt() @Min(1) version?: number;
+  @IsOptional() @IsString() paymentMethod?: string;
+  @IsOptional() @IsDateString() dueDate?: string;
 }
 class SessionDto {
   @IsUUID() professionalId!: string; @IsOptional() @IsUUID() appointmentId?: string;
@@ -404,7 +406,14 @@ export class OperationsController {
   }
   @Post('treatment-plans/:id/approve') @RequirePermissions('treatment.approve')
   approve(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: ApprovalDto) {
-    return this.operations.approveTreatment(req.auth.organizationId, req.auth.userId, id, body.itemIds, body.version);
+    return this.operations.approveTreatment(
+      req.auth.organizationId,
+      req.auth.userId,
+      id,
+      body.itemIds,
+      body.version,
+      { paymentMethod: body.paymentMethod, dueDate: body.dueDate },
+    );
   }
   @Post('treatment-plans/:id/cancel') @RequirePermissions('treatment.cancel')
   cancel(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: CancelReasonDto) {
@@ -600,7 +609,13 @@ export class OperationsController {
   }
 
   @Get('receivables') @RequirePermissions('financial.view')
-  receivables(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) { return this.operations.receivables(req.auth.organizationId, clinicId); }
+  receivables(
+    @Req() req: AuthenticatedRequest,
+    @Query('clinicId') clinicId?: string,
+    @Query('patientId') patientId?: string,
+  ) {
+    return this.operations.receivables(req.auth.organizationId, clinicId, patientId);
+  }
   @Post('receivables') @RequirePermissions('financial.create')
   createReceivable(@Req() req: AuthenticatedRequest, @Body() body: ReceivableDto) { return this.operations.createReceivable(req.auth.organizationId, body); }
   @Post('receivables/:id/payments') @RequirePermissions('financial.create')

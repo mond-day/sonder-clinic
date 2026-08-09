@@ -186,14 +186,91 @@ export class UsersService {
     });
   }
 
-  listProfessionals(organizationId: string) {
+  listProfessionals(organizationId: string, clinicId?: string) {
     return prisma.professional.findMany({
-      where: { user: { organizationId } },
+      where: {
+        user: { organizationId },
+        ...(clinicId
+          ? {
+              clinicLinks: { some: { clinicId, active: true } },
+            }
+          : {}),
+      },
       include: {
         user: { select: { id: true, email: true, name: true, status: true } },
+        clinicLinks: { include: { clinic: { select: { id: true, tradeName: true } } } },
+        unitLinks: { include: { unit: { select: { id: true, name: true, clinicId: true } } } },
+        specialties: true,
       },
       orderBy: { name: 'asc' },
     });
+  }
+
+  async setProfessionalScope(
+    organizationId: string,
+    professionalId: string,
+    input: {
+      clinicIds?: string[];
+      unitIds?: string[];
+      specialties?: string[];
+    },
+  ) {
+    const professional = await prisma.professional.findFirst({
+      where: { id: professionalId, user: { organizationId } },
+    });
+    if (!professional) throw new NotFoundException('Profissional não encontrado.');
+
+    if (input.clinicIds) {
+      const clinics = await prisma.clinic.findMany({
+        where: { organizationId, id: { in: input.clinicIds } },
+        select: { id: true },
+      });
+      if (clinics.length !== input.clinicIds.length) {
+        throw new BadRequestException('Uma ou mais clínicas são inválidas.');
+      }
+      await prisma.$transaction([
+        prisma.professionalClinic.deleteMany({ where: { professionalId } }),
+        ...input.clinicIds.map((clinicId) =>
+          prisma.professionalClinic.create({
+            data: { professionalId, clinicId, active: true },
+          }),
+        ),
+      ]);
+    }
+
+    if (input.unitIds) {
+      const units = await prisma.unit.findMany({
+        where: { id: { in: input.unitIds }, clinic: { organizationId } },
+        select: { id: true },
+      });
+      if (units.length !== input.unitIds.length) {
+        throw new BadRequestException('Uma ou mais unidades são inválidas.');
+      }
+      await prisma.$transaction([
+        prisma.professionalUnit.deleteMany({ where: { professionalId } }),
+        ...input.unitIds.map((unitId) =>
+          prisma.professionalUnit.create({
+            data: { professionalId, unitId, active: true },
+          }),
+        ),
+      ]);
+    }
+
+    if (input.specialties) {
+      const specialties = [...new Set(input.specialties.map((item) => item.trim()).filter(Boolean))];
+      await prisma.$transaction([
+        prisma.professionalSpecialty.deleteMany({ where: { professionalId } }),
+        ...specialties.map((specialty) =>
+          prisma.professionalSpecialty.create({
+            data: { professionalId, specialty },
+          }),
+        ),
+      ]);
+    }
+
+    return this.listProfessionals(organizationId).then((rows) =>
+      rows.find((row) => row.id === professionalId),
+    );
   }
 
   async upsertProfessional(organizationId: string, input: {

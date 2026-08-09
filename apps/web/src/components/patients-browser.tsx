@@ -334,28 +334,6 @@ export function PatientsBrowser() {
                               <Link role="menuitem" href={`/pacientes/${patientId}?tab=financeiro`}>Financeiro</Link>
                               <Link role="menuitem" href={`/pacientes/${patientId}?tab=documentos`}>Documentos</Link>
                               <Link role="menuitem" href={`/agenda?patientId=${patientId}&new=1`}>Agendar</Link>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setMenuOpenId(null);
-                                  const sourceId = window.prompt(
-                                    `Merge: informar UUID do paciente ORIGEM (será arquivado) que deve fundir em ${text(patient.fullName)}.`,
-                                  );
-                                  if (!sourceId?.trim()) return;
-                                  if (!window.confirm('Confirma merge? A origem será arquivada após mover vínculos.')) return;
-                                  void (async () => {
-                                    try {
-                                      await api.post(`/patients/${patientId}/merge`, { sourcePatientId: sourceId.trim() });
-                                      load();
-                                    } catch (cause) {
-                                      setError(cause instanceof ApiError ? cause.message : 'Falha no merge de pacientes.');
-                                    }
-                                  })();
-                                }}
-                              >
-                                Merge (origem → este)
-                              </button>
                             </div>
                           ) : null}
                         </div>

@@ -14,8 +14,18 @@ type ExamItem = {
   notes: string;
 };
 
-const emptyItem = (): ExamItem => ({
-  name: '',
+const EXAM_PRESETS = [
+  'Radiografia panorâmica',
+  'Radiografia periapical',
+  'Interproximal',
+  'Tomografia Cone Beam',
+  'Telerradiografia',
+  'Fotografias',
+  'Outro',
+] as const;
+
+const emptyItem = (name = ''): ExamItem => ({
+  name,
   clinicalIndication: '',
   laterality: '',
   notes: '',
@@ -60,7 +70,8 @@ export function ExamRequestEditor({
   const [professionalId, setProfessionalId] = useState('');
   const [clinicalQuestion, setClinicalQuestion] = useState('');
   const [urgency, setUrgency] = useState<'ROUTINE' | 'URGENT' | 'STAT'>('ROUTINE');
-  const [items, setItems] = useState<ExamItem[]>([emptyItem()]);
+  const [items, setItems] = useState<ExamItem[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [folderId, setFolderId] = useState('');
   const [notes, setNotes] = useState('');
   const [formError, setFormError] = useState('');
@@ -71,7 +82,8 @@ export function ExamRequestEditor({
     setProfessionalId(professionals[0]?.id ?? '');
     setClinicalQuestion('');
     setUrgency('ROUTINE');
-    setItems([emptyItem()]);
+    setItems([]);
+    setPickerOpen(false);
     setFolderId('');
     setNotes('');
     setFormError('');
@@ -79,6 +91,12 @@ export function ExamRequestEditor({
 
   function updateItem(index: number, patch: Partial<ExamItem>) {
     setItems((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function addExam(preset: string) {
+    const name = preset === 'Outro' ? '' : preset;
+    setItems((current) => [...current, emptyItem(name)]);
+    setPickerOpen(false);
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -209,11 +227,28 @@ export function ExamRequestEditor({
             <button
               type="button"
               className="button small"
-              onClick={() => setItems((current) => [...current, emptyItem()])}
+              onClick={() => setPickerOpen((current) => !current)}
             >
-              + Exame
+              + Adicionar exame
             </button>
           </header>
+          {items.length === 0 ? (
+            <p className="muted-note">Nenhum exame adicionado.</p>
+          ) : null}
+          {pickerOpen ? (
+            <div className="exam-picker-grid" role="listbox" aria-label="Tipos de exame">
+              {EXAM_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  className="button"
+                  onClick={() => addExam(preset)}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {items.map((item, index) => (
             <div key={index} className="mutation-form" style={{ border: '1px solid var(--border, #e5e7eb)', borderRadius: 8, padding: 10 }}>
               <label className="span-2">
@@ -223,6 +258,7 @@ export function ExamRequestEditor({
                   value={item.name}
                   onChange={(event) => updateItem(index, { name: event.target.value })}
                   placeholder="Ex.: Tomografia cone beam maxila"
+                  autoFocus={!item.name}
                 />
               </label>
               <label>
@@ -247,15 +283,13 @@ export function ExamRequestEditor({
                   onChange={(event) => updateItem(index, { notes: event.target.value })}
                 />
               </label>
-              {items.length > 1 ? (
-                <button
-                  type="button"
-                  className="button small"
-                  onClick={() => setItems((current) => current.filter((_, i) => i !== index))}
-                >
-                  Remover
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="button small"
+                onClick={() => setItems((current) => current.filter((_, i) => i !== index))}
+              >
+                Remover
+              </button>
             </div>
           ))}
         </div>
@@ -267,7 +301,7 @@ export function ExamRequestEditor({
         {(formError || error) ? <p className="form-error span-2" role="alert">{formError || error}</p> : null}
         <div className="form-actions span-2">
           <button type="button" className="button ghost" onClick={onClose} disabled={busy}>Cancelar</button>
-          <button type="submit" className="button primary" disabled={busy || !options.length}>
+          <button type="submit" className="button primary" disabled={busy || !options.length || items.length === 0}>
             {busy ? 'Gerando…' : 'Gerar solicitação'}
           </button>
         </div>

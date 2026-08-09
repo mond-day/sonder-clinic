@@ -14,6 +14,7 @@ import {
   initials,
   list,
   maskCpf,
+  nested,
   presentationLabel,
   statusTone,
   text,
@@ -23,6 +24,7 @@ import { useAuth } from './auth-provider';
 import { usePresentation } from './presentation-provider';
 import { useSelection } from './selection-provider';
 import { AnamnesisWorkspace } from '@/features/anamnesis/anamnesis-workspace';
+import { ClinicalEntryDetailModal } from '@/features/clinical/clinical-entry-detail-modal';
 import { OdontogramBoard } from '@/features/odontogram/odontogram-board';
 import { PatientDocumentWorkspace } from '@/features/documents/patient-document-workspace';
 import { PatientCarePanel } from '@/features/patients/patient-care-panel';
@@ -60,6 +62,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const [receivables, setReceivables] = useState<RecordValue[]>([]);
   const [odontogramConditions, setOdontogramConditions] = useState<RecordValue[]>([]);
   const [activeModal, setActiveModal] = useState<'evolution' | 'receive' | null>(null);
+  const [detailEntryId, setDetailEntryId] = useState<string | null>(null);
   const [receiveId, setReceiveId] = useState('');
   const [receiveMethod, setReceiveMethod] = useState('PIX');
   const [receiveAmount, setReceiveAmount] = useState('');
@@ -85,7 +88,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
       api.get<RecordValue[]>(`/treatment-plans?clinicId=${clinicId}&patientId=${patientId}`).catch(() => []),
       api.get<RecordValue[]>(`/patients/${patientId}/odontograms`).catch(() => []),
       canFinance
-        ? api.get<RecordValue[]>(`/receivables?clinicId=${clinicId}`).catch(() => [])
+        ? api.get<RecordValue[]>(`/receivables?clinicId=${clinicId}&patientId=${patientId}`).catch(() => [])
         : Promise.resolve([] as RecordValue[]),
       api.get<RecordValue[]>('/odontogram-conditions').catch(() => []),
     ])
@@ -94,7 +97,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
         setRecord(nextRecord);
         setPlans(list(nextPlans));
         setOdontograms(list(nextOdontograms));
-        setReceivables(list(nextReceivables).filter((item) => item.patientId === patientId));
+        setReceivables(list(nextReceivables));
         setOdontogramConditions(list(nextConditions));
         window.localStorage.setItem('sonder.selectedPatientId', patientId);
       })
@@ -107,7 +110,15 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const entries = list(record?.entries);
   const alerts = list(record?.alerts ?? patient?.alerts);
   const latestFindings = list(odontograms[0]?.findings);
-  const markedTeeth = new Set(latestFindings.map((item) => String(item.toothFdi)));
+  const findingsByToothFace = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const finding of latestFindings) {
+      const face = String(finding.face ?? '').toUpperCase();
+      const normalized = face === 'P' || face === 'L/P' ? 'L' : face === 'I' || face === 'O/I' ? 'O' : face || 'V';
+      map.set(`${finding.toothFdi}:${normalized}`, String(finding.status ?? 'EXISTING'));
+    }
+    return map;
+  }, [latestFindings]);
   const openReceivables = useMemo(
     () => receivables.filter((item) => !['PAID', 'CANCELLED'].includes(String(item.status))),
     [receivables],
@@ -124,10 +135,21 @@ export function PatientChart({ patientId }: { patientId: string }) {
     setFormError('');
     try {
       if (activeModal === 'evolution') {
+        const clinicalLink = String(data.get('clinicalLink') ?? '');
+        let treatmentId: string | undefined;
+        let treatmentItemId: string | undefined;
+        if (clinicalLink.startsWith('plan:')) {
+          treatmentId = clinicalLink.slice(5) || undefined;
+        } else if (clinicalLink.startsWith('item:')) {
+          const [, planId, itemId] = clinicalLink.split(':');
+          treatmentId = planId || undefined;
+          treatmentItemId = itemId || undefined;
+        }
         await api.post(`/patients/${patientId}/clinical-entries`, {
           clinicId, professionalId: String(data.get('professionalId')), type: 'EVOLUTION',
           renderedText: String(data.get('renderedText')), structuredData: {},
-          treatmentId: String(data.get('treatmentId') ?? '') || undefined,
+          treatmentId,
+          treatmentItemId,
           clinicalDate: new Date().toISOString(),
         });
       } else if (activeModal === 'receive') {
@@ -165,6 +187,14 @@ export function PatientChart({ patientId }: { patientId: string }) {
 
   return (
     <>
+      <ClinicalEntryDetailModal
+        open={Boolean(detailEntryId)}
+        entryId={detailEntryId}
+        professionals={professionals}
+        onClose={() => setDetailEntryId(null)}
+        onChanged={load}
+      />
+
       <Modal
         open={Boolean(activeModal)}
         title={activeModal === 'evolution' ? 'Nova evolução' : 'Receber pagamento'}
@@ -175,8 +205,24 @@ export function PatientChart({ patientId }: { patientId: string }) {
         <form className="mutation-form" onSubmit={submitModal}>
           {activeModal === 'evolution' ? (
             <>
-              <SearchableSelect name="professionalId" label="Profissional" required options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
-              <SearchableSelect name="treatmentId" label="Tratamento vinculado" placeholder="Sem tratamento específico" options={plans.map((item) => ({ value: String(item.id), label: text(item.title), description: presentationLabel(item.status) }))} />
+              <SearchableSelect name="professionalId" label="Profissional" required defaultValue={professionals[0]?.id ?? ''} options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
+              <SearchableSelect
+                name="clinicalLink"
+                label="Tratamento vinculado"
+                placeholder="Sem vínculo específico"
+                options={[
+                  ...plans.map((item) => ({
+                    value: `plan:${String(item.id)}`,
+                    label: text(item.title),
+                    description: `Plano · ${presentationLabel(item.status)}`,
+                  })),
+                  ...plans.flatMap((plan) => list(plan.items).map((item) => ({
+                    value: `item:${String(plan.id)}:${String(item.id)}`,
+                    label: text(nested(item, 'procedure').name, text(item.procedureName, 'Procedimento')),
+                    description: `${text(plan.title)} · ${presentationLabel(item.status)}`,
+                  }))),
+                ]}
+              />
               <label className="span-2">Evolução<textarea name="renderedText" required minLength={2} /></label>
             </>
           ) : null}
@@ -187,12 +233,12 @@ export function PatientChart({ patientId }: { patientId: string }) {
                   const id = event.target.value;
                   setReceiveId(id);
                   const row = openReceivables.find((item) => String(item.id) === id);
-                  setReceiveAmount(row ? String(row.netAmount ?? '') : '');
+                  setReceiveAmount(row ? String(row.outstandingAmount ?? row.netAmount ?? '') : '');
                 }}>
                   <option value="">Selecione</option>
                   {openReceivables.map((item) => (
                     <option key={String(item.id)} value={String(item.id)}>
-                      {text(item.description)} · {currency(item.netAmount)} · {dateOnly(item.dueDate)}
+                      {text(item.description)} · saldo {currency(item.outstandingAmount ?? item.netAmount)} · {dateOnly(item.dueDate)}
                     </option>
                   ))}
                 </select>
@@ -310,20 +356,47 @@ export function PatientChart({ patientId }: { patientId: string }) {
                 <div className="info-item"><small>Evoluções</small><strong>{entries.length}</strong></div>
               </div>
             </Panel>
-            <Panel title="Odontograma resumido" description="Última versão registrada" actions={<button className="button small" type="button" onClick={() => setTab('odontograma')}>Abrir</button>}>
-              <div className="odontogram-wrap">
+            <Panel title="Odontograma resumido" description="Última versão · 5 faces (V, L/P, M, D, O/I)" actions={<button className="button small" type="button" onClick={() => setTab('odontograma')}>Abrir</button>}>
+              <div className="odontogram-wrap compact-summary">
                 <div className="arch" aria-label="Odontograma resumido">
-                  {[18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28].map((tooth) => (
-                    <div key={tooth} className={`tooth ${markedTeeth.has(String(tooth)) ? 'selected' : ''}`}>
-                      <div className="tooth-number">{tooth}</div>
-                      <div className="tooth-shape">
-                        <button type="button" className={`face ${markedTeeth.has(String(tooth)) ? 'active' : ''}`} aria-hidden />
-                        <button type="button" className="face" aria-hidden />
-                        <button type="button" className="face" aria-hidden />
-                        <button type="button" className="face" aria-hidden />
+                  {[18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28].map((tooth) => {
+                    const faces = [
+                      { key: 'V', short: 'V' },
+                      { key: 'L', short: 'L/P' },
+                      { key: 'M', short: 'M' },
+                      { key: 'D', short: 'D' },
+                      { key: 'O', short: 'O/I' },
+                    ] as const;
+                    const hasAny = faces.some((face) => findingsByToothFace.has(`${tooth}:${face.key}`));
+                    return (
+                      <div key={tooth} className={`tooth ${hasAny ? 'selected' : ''}`}>
+                        <div className="tooth-number">{tooth}</div>
+                        <div className="tooth-shape five-faces" aria-label={`Dente ${tooth}`}>
+                          {faces.map((face) => {
+                            const status = findingsByToothFace.get(`${tooth}:${face.key}`);
+                            const tone = !status
+                              ? ''
+                              : ['COMPLETED', 'EXISTING'].includes(status.toUpperCase())
+                                ? 'done'
+                                : ['PLANNED', 'IN_PROGRESS'].includes(status.toUpperCase())
+                                  ? 'planned'
+                                  : 'active';
+                            return (
+                              <button
+                                key={face.key}
+                                type="button"
+                                className={`face face-${face.key.toLowerCase()} ${tone}`}
+                                aria-label={`Dente ${tooth} face ${face.short}`}
+                                onClick={() => setTab('odontograma')}
+                              >
+                                <span className="face-label">{face.short}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </Panel>
@@ -331,14 +404,19 @@ export function PatientChart({ patientId }: { patientId: string }) {
               {entries.length === 0 ? <EmptyState title="Sem evoluções" /> : (
                 <div className="clinical-timeline">
                   {entries.slice(0, 5).map((entry) => (
-                    <div className="clinical-timeline-item" key={String(entry.id)}>
+                    <button
+                      type="button"
+                      className="clinical-timeline-item clickable"
+                      key={String(entry.id)}
+                      onClick={() => setDetailEntryId(String(entry.id))}
+                    >
                       <div className="timeline-dot" />
                       <div className="timeline-copy">
                         <strong>{presentationLabel(entry.type)}</strong>
-                        <span>{text(entry.renderedText)}</span>
+                        <span>{text(entry.renderedText).slice(0, 120)}{text(entry.renderedText).length > 120 ? '…' : ''}</span>
                       </div>
                       <div className="timeline-date">{dateTime(entry.clinicalDate)}</div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -367,7 +445,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
               <Panel title="Resumo financeiro" description="Ocultado no modo atendimento" sensitive actions={<button className="button small" type="button" onClick={() => setTab('financeiro')}>Abrir</button>}>
                 <div className="summary-strip" style={{ gridTemplateColumns: '1fr 1fr' }}>
                   <div><small>Títulos</small><strong>{receivables.length}</strong></div>
-                  <div><small>Saldo líquido</small><strong>{currency(receivables.reduce((sum, item) => sum + Number(item.netAmount ?? 0), 0))}</strong></div>
+                  <div><small>Em aberto</small><strong>{currency(receivables.reduce((sum, item) => sum + Number(item.outstandingAmount ?? 0), 0))}</strong></div>
                 </div>
               </Panel>
             )}
@@ -412,14 +490,19 @@ export function PatientChart({ patientId }: { patientId: string }) {
           {entries.length === 0 ? <EmptyState title="Sem evoluções" /> : (
             <div className="clinical-timeline">
               {entries.map((entry) => (
-                <div className="clinical-timeline-item" key={String(entry.id)}>
+                <button
+                  type="button"
+                  className="clinical-timeline-item clickable"
+                  key={String(entry.id)}
+                  onClick={() => setDetailEntryId(String(entry.id))}
+                >
                   <div className="timeline-dot" />
                   <div className="timeline-copy">
-                    <strong>{presentationLabel(entry.type)}</strong>
-                    <span>{text(entry.renderedText)}</span>
+                    <strong>{presentationLabel(entry.type)} · {presentationLabel(entry.status)}</strong>
+                    <span>{text(entry.renderedText).slice(0, 140)}{text(entry.renderedText).length > 140 ? '…' : ''}</span>
                   </div>
                   <div className="timeline-date">{dateTime(entry.clinicalDate)}</div>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -431,19 +514,19 @@ export function PatientChart({ patientId }: { patientId: string }) {
           title="Financeiro do paciente"
           description="Cobranças vinculadas"
           sensitive
-          actions={<button className="button primary small" type="button" onClick={() => { setReceiveId(openReceivables[0] ? String(openReceivables[0].id) : ''); setReceiveAmount(openReceivables[0] ? String(openReceivables[0].netAmount) : ''); setActiveModal('receive'); }} disabled={!openReceivables.length}>＋ Receber</button>}
+          actions={<button className="button primary small" type="button" onClick={() => { setReceiveId(openReceivables[0] ? String(openReceivables[0].id) : ''); setReceiveAmount(openReceivables[0] ? String(openReceivables[0].outstandingAmount ?? openReceivables[0].netAmount) : ''); setActiveModal('receive'); }} disabled={!openReceivables.length}>＋ Receber</button>}
         >
           <div className="summary-strip">
             <div><small>Títulos</small><strong>{receivables.length}</strong></div>
-            <div><small>Líquido</small><strong>{currency(receivables.reduce((sum, item) => sum + Number(item.netAmount ?? 0), 0))}</strong></div>
-            <div><small>Pagos</small><strong>{receivables.filter((item) => item.status === 'PAID').length}</strong></div>
-            <div><small>Vencidos</small><strong>{receivables.filter((item) => item.status === 'OVERDUE').length}</strong></div>
+            <div><small>Em aberto</small><strong>{currency(receivables.reduce((sum, item) => sum + Number(item.outstandingAmount ?? 0), 0))}</strong></div>
+            <div><small>Recebido</small><strong>{currency(receivables.reduce((sum, item) => sum + Number(item.paidAmount ?? 0), 0))}</strong></div>
+            <div><small>Vencidos</small><strong>{receivables.filter((item) => String(item.effectiveStatus ?? item.status) === 'OVERDUE').length}</strong></div>
           </div>
           {receivables.length === 0 ? <EmptyState title="Sem títulos" /> : (
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
-                  <tr><th>Descrição</th><th>Vencimento</th><th>Valor</th><th>Status</th></tr>
+                  <tr><th>Descrição</th><th>Vencimento</th><th>Valor</th><th>Saldo</th><th>Status</th></tr>
                 </thead>
                 <tbody>
                   {receivables.map((item) => (
@@ -451,7 +534,8 @@ export function PatientChart({ patientId }: { patientId: string }) {
                       <td>{text(item.description)}</td>
                       <td>{dateOnly(item.dueDate)}</td>
                       <td>{currency(item.netAmount)}</td>
-                      <td><StatusBadge tone={statusTone(item.status)}>{presentationLabel(item.status)}</StatusBadge></td>
+                      <td>{currency(item.outstandingAmount ?? item.netAmount)}</td>
+                      <td><StatusBadge tone={statusTone(item.effectiveStatus ?? item.status)}>{presentationLabel(item.effectiveStatus ?? item.status)}</StatusBadge></td>
                     </tr>
                   ))}
                 </tbody>

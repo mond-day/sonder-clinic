@@ -2,6 +2,10 @@ export type LibrarySource = 'generated' | 'prescription' | 'upload';
 
 export type LibrarySegment = 'all' | 'generated' | 'uploads';
 
+export type DocumentsHomeTab = 'documents' | 'files';
+
+export type FileKindFilter = 'all' | 'photos' | 'radiographs' | 'pdfs' | 'videos' | 'other';
+
 export type DocumentFolder = {
   id: string;
   name: string;
@@ -154,13 +158,24 @@ export type DocumentFiltersState = {
 };
 
 export type DocumentModal =
+  | 'picker'
   | 'generate'
   | 'prescription'
   | 'certificate'
   | 'exam-request'
+  | 'consent'
+  | 'referral'
   | 'upload'
   | 'share'
   | null;
+
+export type NewDocumentKind =
+  | 'prescription'
+  | 'certificate'
+  | 'exam-request'
+  | 'generate'
+  | 'consent'
+  | 'referral';
 
 export type SelectedLibraryRef = {
   source: LibrarySource;
@@ -175,7 +190,8 @@ export function typeIcon(type: string, source: LibrarySource): string {
   if (value.includes('PDF')) return 'PDF';
   if (value === 'ATTESTATION') return 'AT';
   if (value === 'EXAM_REQUEST') return 'EX';
-  if (value === 'CONSENT') return 'TR';
+  if (value === 'CONSENT' || value === 'CONSENTIMENTO') return 'TR';
+  if (value === 'REFERRAL' || value === 'ENCAMINHAMENTO') return 'EN';
   return 'DOC';
 }
 

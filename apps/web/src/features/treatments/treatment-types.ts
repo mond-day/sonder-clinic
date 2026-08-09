@@ -92,7 +92,7 @@ export type TreatmentPlan = {
   revisions?: Array<{ id: string; version: number; createdAt: string }>;
 };
 
-export type TreatmentDetailTab = 'procedures' | 'sessions' | 'history' | 'notes';
+export type TreatmentDetailTab = 'procedures' | 'sessions' | 'evolutions' | 'history' | 'notes';
 
 export type TreatmentFiltersState = {
   search: string;

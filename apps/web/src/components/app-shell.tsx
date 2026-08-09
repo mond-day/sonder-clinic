@@ -150,6 +150,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         treatments: RecordValue[];
         labCases: RecordValue[];
         tasks: RecordValue[];
+        documents?: RecordValue[];
+        prescriptions?: RecordValue[];
       }>(`/search?clinicId=${clinicId}&q=${encodeURIComponent(query.trim())}`)
         .then((payload) => {
           const patients = list(payload.patients).map((item) => ({ ...item, _kind: 'patient' }));
@@ -177,7 +179,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             fullName: text(item.title),
             primaryPhone: text(item.status),
           }));
-          setResults([...patients, ...appointments, ...treatments, ...labCases, ...tasks].slice(0, 12));
+          const documents = list(payload.documents).map((item) => ({
+            ...item,
+            _kind: 'document',
+            fullName: text(item.name, 'Documento'),
+            primaryPhone: text(item.validationCode, text(item.status)),
+            href: item.patientId ? `/pacientes/${String(item.patientId)}?tab=documentos` : undefined,
+          }));
+          const prescriptions = list(payload.prescriptions).map((item) => ({
+            ...item,
+            _kind: 'prescription',
+            fullName: text(item.purpose, 'Prescrição'),
+            primaryPhone: text(item.validationCode, text(item.status)),
+            href: item.patientId ? `/pacientes/${String(item.patientId)}?tab=documentos` : undefined,
+          }));
+          setResults([...patients, ...appointments, ...treatments, ...labCases, ...tasks, ...documents, ...prescriptions].slice(0, 12));
         })
         .catch(() => setResults([]))
         .finally(() => setSearching(false));
@@ -324,9 +340,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       setQuery('');
                       const kind = String(item._kind ?? 'patient');
                       if (kind === 'appointment') router.push('/agenda');
-                      else if (kind === 'treatment') router.push(`/pacientes/${String(item.patientId ?? '')}`);
+                      else if (kind === 'treatment') router.push(`/pacientes/${String(item.patientId ?? '')}?tab=tratamentos`);
                       else if (kind === 'lab') router.push('/laboratorio');
                       else if (kind === 'task') router.push('/tarefas');
+                      else if (kind === 'document' || kind === 'prescription') {
+                        router.push(String(item.href ?? `/pacientes/${String(item.patientId ?? '')}?tab=documentos`));
+                      }
                       else router.push(`/pacientes/${String(item.id)}`);
                     }}
                   >

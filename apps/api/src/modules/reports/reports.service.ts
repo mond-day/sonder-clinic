@@ -2,6 +2,14 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { prisma } from '@sonder/database';
 import ExcelJS from 'exceljs';
 import { buildReportPdf } from '../../common/pdf';
+import {
+  buildReceivableFinanceView,
+  confirmedNetPaid,
+  money,
+  netPaidAmount,
+  netPayablePaid,
+  refundedTotal,
+} from '../operations/operations-finance.utils';
 
 export const REPORT_CATALOG = [
   { id: 'appointments', name: 'Agendamentos', domain: 'clinical', permission: 'report.view_clinical' },
@@ -248,23 +256,28 @@ export class ReportsService {
       case 'receivables': {
         const data = await prisma.receivable.findMany({
           where: { organizationId, ...clinicFilter, dueDate: { gte: period.from, lte: period.to } },
-          select: {
-            id: true, description: true, netAmount: true, dueDate: true, status: true, patientId: true,
-          },
+          include: { payments: { include: { refunds: true } } },
         });
         const patients = await prisma.patient.findMany({
           where: { id: { in: [...new Set(data.map((item) => item.patientId))] } },
           select: { id: true, fullName: true },
         });
         const patientMap = new Map(patients.map((item) => [item.id, item.fullName]));
-        rows = data.map((item) => ({
-          id: item.id,
-          description: item.description,
-          amount: Number(item.netAmount),
-          dueDate: item.dueDate.toISOString().slice(0, 10),
-          status: item.status,
-          patient: patientMap.get(item.patientId) ?? item.patientId,
-        }));
+        rows = data.map((item) => {
+          const finance = buildReceivableFinanceView(item);
+          return {
+            id: item.id,
+            description: item.description,
+            netAmount: Number(item.netAmount),
+            paidAmount: Number(finance.paidAmount),
+            refundedAmount: Number(finance.refundedAmount),
+            outstandingAmount: Number(finance.outstandingAmount),
+            amount: Number(finance.outstandingAmount),
+            dueDate: item.dueDate.toISOString().slice(0, 10),
+            status: finance.effectiveStatus,
+            patient: patientMap.get(item.patientId) ?? item.patientId,
+          };
+        });
         break;
       }
       case 'delinquency': {
@@ -275,9 +288,11 @@ export class ReportsService {
             status: { in: ['OPEN', 'PARTIALLY_PAID', 'OVERDUE'] },
             dueDate: { lt: new Date() },
           },
-          select: {
-            id: true, description: true, netAmount: true, dueDate: true, status: true, patientId: true,
-            payments: { where: { status: 'CONFIRMED' }, select: { amount: true } },
+          include: {
+            payments: {
+              where: { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'REFUNDED'] } },
+              include: { refunds: true },
+            },
           },
         });
         const patients = await prisma.patient.findMany({
@@ -285,28 +300,33 @@ export class ReportsService {
           select: { id: true, fullName: true },
         });
         const patientMap = new Map(patients.map((item) => [item.id, item.fullName]));
-        rows = data.map((item) => {
-          const paid = item.payments.reduce((acc, payment) => acc + Number(payment.amount), 0);
-          return {
-            id: item.id,
-            patient: patientMap.get(item.patientId) ?? item.patientId,
-            description: item.description,
-            balance: Number(item.netAmount) - paid,
-            dueDate: item.dueDate.toISOString().slice(0, 10),
-            status: item.status,
-          };
-        });
+        rows = data
+          .map((item) => {
+            const finance = buildReceivableFinanceView(item);
+            return {
+              id: item.id,
+              patient: patientMap.get(item.patientId) ?? item.patientId,
+              description: item.description,
+              balance: Number(finance.outstandingAmount),
+              paidAmount: Number(finance.paidAmount),
+              outstandingAmount: Number(finance.outstandingAmount),
+              dueDate: item.dueDate.toISOString().slice(0, 10),
+              status: finance.effectiveStatus,
+            };
+          })
+          .filter((item) => item.outstandingAmount > 0);
         break;
       }
       case 'revenues': {
         const data = await prisma.payment.findMany({
           where: {
-            status: 'CONFIRMED',
+            status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
             paidAt: { gte: period.from, lte: period.to },
             receivable: { organizationId, ...clinicFilter },
           },
           select: {
-            id: true, amount: true, method: true, paidAt: true,
+            id: true, amount: true, method: true, paidAt: true, status: true,
+            refunds: true,
             receivable: { select: { description: true, patientId: true } },
           },
         });
@@ -315,14 +335,22 @@ export class ReportsService {
           select: { id: true, fullName: true },
         });
         const patientMap = new Map(patients.map((item) => [item.id, item.fullName]));
-        rows = data.map((item) => ({
-          id: item.id,
-          amount: Number(item.amount),
-          method: item.method,
-          paidAt: item.paidAt?.toISOString() ?? null,
-          description: item.receivable.description,
-          patient: patientMap.get(item.receivable.patientId) ?? item.receivable.patientId,
-        }));
+        rows = data.map((item) => {
+          const refunded = Number(refundedTotal(item));
+          const net = Number(netPaidAmount(item));
+          return {
+            id: item.id,
+            originalAmount: Number(item.amount),
+            refundedAmount: refunded,
+            amount: net,
+            netAmount: net,
+            status: item.status,
+            method: item.method,
+            paidAt: item.paidAt?.toISOString() ?? null,
+            description: item.receivable.description,
+            patient: patientMap.get(item.receivable.patientId) ?? item.receivable.patientId,
+          };
+        });
         break;
       }
       case 'expenses': {
@@ -331,6 +359,7 @@ export class ReportsService {
         });
         const payables = await prisma.payable.findMany({
           where: { organizationId, ...clinicFilter, dueDate: { gte: period.from, lte: period.to } },
+          include: { payments: true },
         });
         rows = [
           ...expenses.map((item) => ({
@@ -340,34 +369,44 @@ export class ReportsService {
             dueDate: item.dueDate.toISOString().slice(0, 10),
             paidAt: item.paidAt?.toISOString() ?? null,
           })),
-          ...payables.map((item) => ({
-            source: 'payable',
-            description: item.description,
-            amount: Number(item.originalAmount),
-            dueDate: item.dueDate.toISOString().slice(0, 10),
-            status: item.status,
-          })),
+          ...payables.map((item) => {
+            const paidNet = item.payments.reduce(
+              (sum, payment) => sum.add(netPayablePaid(payment)),
+              money('0'),
+            );
+            return {
+              source: 'payable',
+              description: item.description,
+              amount: Number(item.originalAmount),
+              paidAmount: Number(paidNet),
+              outstandingAmount: Math.max(0, Number(item.originalAmount) - Number(paidNet)),
+              dueDate: item.dueDate.toISOString().slice(0, 10),
+              status: item.status,
+            };
+          }),
         ];
         break;
       }
       case 'cashflow': {
-        const payments = await prisma.payment.aggregate({
+        const payments = await prisma.payment.findMany({
           where: {
-            status: 'CONFIRMED',
+            status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
             paidAt: { gte: period.from, lte: period.to },
             receivable: { organizationId, ...clinicFilter },
           },
-          _sum: { amount: true },
+          include: { refunds: true },
         });
-        const payablePayments = await prisma.payablePayment.aggregate({
+        const payablePayments = await prisma.payablePayment.findMany({
           where: {
+            status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
             paidAt: { gte: period.from, lte: period.to },
             payable: { organizationId, ...clinicFilter },
           },
-          _sum: { amount: true },
         });
-        const inflow = Number(payments._sum.amount ?? 0);
-        const outflow = Number(payablePayments._sum.amount ?? 0);
+        const inflow = Number(confirmedNetPaid(payments));
+        const outflow = Number(
+          payablePayments.reduce((sum, payment) => sum.add(netPayablePaid(payment)), money('0')),
+        );
         rows = [
           { kind: 'inflow', amount: inflow },
           { kind: 'outflow', amount: outflow },

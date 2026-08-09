@@ -6,12 +6,16 @@ import { buildClinicalDocumentPdf } from '../../common/pdf';
 import { parseWithZod } from '../../common/zod-validation';
 import { CertificateService } from '../settings/certificate.service';
 import {
+  buildReceivableFinanceView,
   computePayableStatus,
   computePaymentRefundStatus,
   computeReceivableStatus,
   confirmedNetPaid,
   money,
+  netPayablePaid,
+  netPaidAmount,
   positiveMoney,
+  refundedTotal,
 } from './operations-finance.utils';
 import {
   createCostCenter as catalogCreateCostCenter,
@@ -425,7 +429,14 @@ export class OperationsService {
     });
   }
 
-  async approveTreatment(organizationId: string, actorId: string | undefined, id: string, itemIds: string[], expectedVersion?: number) {
+  async approveTreatment(
+    organizationId: string,
+    actorId: string | undefined,
+    id: string,
+    itemIds: string[],
+    expectedVersion?: number,
+    options?: { paymentMethod?: string; dueDate?: string },
+  ) {
     const plan = await prisma.treatmentPlan.findFirst({ where: { id, organizationId }, include: { items: true } });
     if (!plan) throw new NotFoundException('Plano de tratamento não encontrado.');
     if (plan.archivedAt) throw new ConflictException('Plano arquivado não pode ser aprovado.');
@@ -439,6 +450,13 @@ export class OperationsService {
     if (!itemIds.length || itemIds.some((itemId) => !validIds.has(itemId))) {
       throw new ConflictException('Item não pertence ao plano ou está cancelado.');
     }
+    const paymentMethod = options?.paymentMethod?.trim() || undefined;
+    if (!paymentMethod) {
+      throw new BadRequestException('Informe a forma de pagamento na aprovação.');
+    }
+    const dueDate = options?.dueDate
+      ? new Date(`${options.dueDate}T00:00:00Z`)
+      : new Date(Date.now() + 7 * 86400_000);
     return prisma.$transaction(async (tx) => {
       await tx.treatmentItem.updateMany({
         where: { id: { in: itemIds }, treatmentPlanId: id },
@@ -451,6 +469,28 @@ export class OperationsService {
       if (!canTransitionPlan(plan.status as TreatmentPlanStatus, nextStatus) && plan.status !== nextStatus) {
         this.requirePlanTransition(plan.status as TreatmentPlanStatus, nextStatus);
       }
+      const approvedNow = refreshed.filter((item) => itemIds.includes(item.id));
+      const receivableAmount = approvedNow.reduce(
+        (sum, item) => sum.add(item.total),
+        new Prisma.Decimal(0),
+      );
+      if (receivableAmount.gt(0)) {
+        await tx.receivable.create({
+          data: {
+            organizationId,
+            clinicId: plan.clinicId,
+            patientId: plan.patientId,
+            treatmentId: plan.id,
+            description: `Tratamento · ${plan.title}`,
+            originalAmount: receivableAmount,
+            discount: money('0'),
+            surcharge: money('0'),
+            netAmount: receivableAmount,
+            dueDate,
+            paymentMethod,
+          },
+        });
+      }
       const updated = await tx.treatmentPlan.update({
         where: { id },
         data: { status: nextStatus, version: { increment: 1 } },
@@ -460,14 +500,14 @@ export class OperationsService {
         treatmentPlanId: id,
         type: 'APPROVED',
         actorId,
-        payload: { itemIds, status: nextStatus },
+        payload: { itemIds, status: nextStatus, paymentMethod, receivableAmount: receivableAmount.toString() },
       });
       await this.auditTreatment(tx, {
         actorId,
         action: 'treatment.approve',
         entityId: id,
         clinicId: plan.clinicId,
-        changes: { itemIds, status: nextStatus },
+        changes: { itemIds, status: nextStatus, paymentMethod },
       });
       return updated;
     });
@@ -2147,14 +2187,43 @@ export class OperationsService {
     });
   }
 
-  receivables(organizationId: string, clinicId?: string) {
-    return prisma.receivable.findMany({
-      where: { organizationId, clinicId },
+  async receivables(organizationId: string, clinicId?: string, patientId?: string) {
+    const rows = await prisma.receivable.findMany({
+      where: {
+        organizationId,
+        ...(clinicId ? { clinicId } : {}),
+        ...(patientId ? { patientId } : {}),
+      },
       include: {
         payments: { include: { refunds: true } },
         treatment: { select: { id: true, title: true, status: true, total: true } },
       },
       orderBy: { dueDate: 'asc' },
+    });
+    const patientIds = [...new Set(rows.map((row) => row.patientId))];
+    const patients = patientIds.length
+      ? await prisma.patient.findMany({
+          where: { id: { in: patientIds }, organizationId },
+          select: { id: true, fullName: true },
+        })
+      : [];
+    const patientMap = new Map(patients.map((item) => [item.id, item]));
+    return rows.map((row) => {
+      const finance = buildReceivableFinanceView(row);
+      const displayStatus = finance.effectiveStatus === 'OVERDUE' && !['CANCELLED', 'PAID'].includes(row.status)
+        ? 'OVERDUE'
+        : row.status === 'PAID' || row.status === 'CANCELLED'
+          ? row.status
+          : finance.effectiveStatus;
+      return {
+        ...row,
+        patient: patientMap.get(row.patientId) ?? null,
+        paidAmount: finance.paidAmount,
+        refundedAmount: finance.refundedAmount,
+        outstandingAmount: finance.outstandingAmount,
+        effectiveStatus: finance.effectiveStatus,
+        status: displayStatus,
+      };
     });
   }
 
@@ -2737,11 +2806,16 @@ export class OperationsService {
         by: ['status'], where: { organizationId, ...clinicWhere, createdAt: dateRange },
         _sum: { total: true }, _count: true,
       }),
-      prisma.payment.aggregate({
-        where: { status: 'CONFIRMED', paidAt: dateRange, receivable: { organizationId, ...clinicWhere } },
-        _sum: { amount: true }, _count: true,
+      prisma.payment.findMany({
+        where: {
+          status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
+          paidAt: dateRange,
+          receivable: { organizationId, ...clinicWhere },
+        },
+        include: { refunds: true },
       }),
     ]);
+    const receivedNet = payments.reduce((sum, payment) => sum.add(netPaidAmount(payment)), money('0'));
     const professionals = await prisma.professional.findMany({
       where: { id: { in: [...new Set(commissionRows.map((item) => item.professionalId))] } },
       select: { id: true, name: true },
@@ -2784,7 +2858,11 @@ export class OperationsService {
         })),
       },
       patients: { new: newPatients, active: activePatients, inactive: inactivePatients, pendingReturns },
-      financial: { byStatus: financial, received: payments._sum.amount ?? 0, payments: payments._count },
+      financial: {
+        byStatus: financial,
+        received: receivedNet,
+        payments: payments.filter((p) => ['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(p.status)).length,
+      },
       treatments,
       commissions,
       communication,
@@ -3229,36 +3307,122 @@ export class OperationsService {
     });
   }
 
-  cashflow(organizationId: string, clinicId: string | undefined, from?: string, to?: string) {
+  async cashflow(organizationId: string, clinicId: string | undefined, from?: string, to?: string) {
     const periodFrom = from ? new Date(from) : new Date(Date.now() - 30 * 86400_000);
     const periodTo = to ? new Date(to) : new Date();
-    return Promise.all([
-      prisma.payment.aggregate({
+    const orgFilter = { organizationId, ...(clinicId ? { clinicId } : {}) };
+    const [inPayments, outPayments, refundsInPeriod] = await Promise.all([
+      prisma.payment.findMany({
         where: {
-          status: 'CONFIRMED',
+          status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
           paidAt: { gte: periodFrom, lte: periodTo },
-          receivable: { organizationId, ...(clinicId ? { clinicId } : {}) },
+          receivable: orgFilter,
         },
-        _sum: { amount: true },
+        select: { amount: true, method: true, paidAt: true, status: true, refunds: true },
       }),
-      prisma.payablePayment.aggregate({
+      prisma.payablePayment.findMany({
         where: {
+          status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
           paidAt: { gte: periodFrom, lte: periodTo },
-          payable: { organizationId, ...(clinicId ? { clinicId } : {}) },
+          payable: orgFilter,
         },
-        _sum: { amount: true },
+        select: { amount: true, method: true, paidAt: true, status: true, refundedAmount: true },
       }),
-    ]).then(([inflow, outflow]) => {
-      const inAmount = Number(inflow._sum.amount ?? 0);
-      const outAmount = Number(outflow._sum.amount ?? 0);
-      return {
-        from: periodFrom,
-        to: periodTo,
-        inflow: inAmount,
-        outflow: outAmount,
-        net: inAmount - outAmount,
-      };
+      prisma.refund.findMany({
+        where: {
+          createdAt: { gte: periodFrom, lte: periodTo },
+          payment: { receivable: orgFilter },
+        },
+        select: {
+          amount: true,
+          createdAt: true,
+          payment: { select: { paidAt: true } },
+        },
+      }),
+    ]);
+
+    const paymentNetRows = inPayments.map((row) => ({
+      amount: netPaidAmount(row),
+      method: row.method,
+      paidAt: row.paidAt,
+    }));
+    const payableNetRows = outPayments.map((row) => ({
+      amount: netPayablePaid(row),
+      method: row.method,
+      paidAt: row.paidAt,
+    }));
+
+    // Estornos de pagamentos feitos fora do período reduzem o caixa no dia do estorno.
+    const priorRefunds = refundsInPeriod.filter((refund) => {
+      const paidAt = refund.payment.paidAt;
+      return !paidAt || paidAt < periodFrom || paidAt > periodTo;
     });
+    const priorRefundTotal = priorRefunds.reduce((sum, row) => sum + Number(row.amount), 0);
+    const inflow = Math.max(
+      0,
+      paymentNetRows.reduce((sum, row) => sum + Number(row.amount), 0) - priorRefundTotal,
+    );
+    const outflow = payableNetRows.reduce((sum, row) => sum + Number(row.amount), 0);
+
+    const byMethod = (rows: Array<{ amount: Prisma.Decimal | number; method: string }>) => {
+      const map = new Map<string, number>();
+      for (const row of rows) {
+        const key = row.method || 'OUTRO';
+        map.set(key, (map.get(key) ?? 0) + Number(row.amount));
+      }
+      return [...map.entries()]
+        .map(([method, amount]) => ({ method, amount }))
+        .sort((a, b) => b.amount - a.amount);
+    };
+    const dayKey = (value: Date) => value.toISOString().slice(0, 10);
+    const sumByDay = (rows: Array<{ amount: Prisma.Decimal | number; paidAt: Date | null }>) => {
+      const map = new Map<string, number>();
+      for (const row of rows) {
+        if (!row.paidAt) continue;
+        const key = dayKey(row.paidAt);
+        map.set(key, (map.get(key) ?? 0) + Number(row.amount));
+      }
+      return map;
+    };
+    const refundDayMap = new Map<string, number>();
+    for (const refund of priorRefunds) {
+      const key = dayKey(refund.createdAt);
+      refundDayMap.set(key, (refundDayMap.get(key) ?? 0) + Number(refund.amount));
+    }
+    const inflowByDay = sumByDay(paymentNetRows);
+    const outflowByDay = sumByDay(payableNetRows);
+    const series: Array<{ date: string; inflow: number; outflow: number; net: number; balance: number }> = [];
+    const cursor = new Date(Date.UTC(
+      periodFrom.getUTCFullYear(),
+      periodFrom.getUTCMonth(),
+      periodFrom.getUTCDate(),
+    ));
+    const end = new Date(Date.UTC(
+      periodTo.getUTCFullYear(),
+      periodTo.getUTCMonth(),
+      periodTo.getUTCDate(),
+    ));
+    let balance = 0;
+    while (cursor.getTime() <= end.getTime()) {
+      const date = cursor.toISOString().slice(0, 10);
+      const dayIn = Math.max(0, (inflowByDay.get(date) ?? 0) - (refundDayMap.get(date) ?? 0));
+      const dayOut = outflowByDay.get(date) ?? 0;
+      const net = dayIn - dayOut;
+      balance += net;
+      series.push({ date, inflow: dayIn, outflow: dayOut, net, balance });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return {
+      from: periodFrom,
+      to: periodTo,
+      inflow,
+      outflow,
+      net: inflow - outflow,
+      inflowByMethod: byMethod(paymentNetRows),
+      outflowByMethod: byMethod(payableNetRows),
+      counts: { inflows: inPayments.length, outflows: outPayments.length },
+      series,
+    };
   }
 
   financeRecurrences(organizationId: string, clinicId?: string) {

@@ -106,7 +106,7 @@ export class ClinicalService {
   async addEntry(organizationId: string, patientId: string, input: z.infer<typeof clinicalEntrySchema>) {
     parseWithZod(clinicalEntrySchema, input);
     await Promise.all([
-      this.assertProfessional(organizationId, input.professionalId),
+      this.assertProfessional(organizationId, input.professionalId, input.clinicId),
       input.treatmentId
         ? prisma.treatmentPlan.findFirst({
             where: { id: input.treatmentId, organizationId, patientId },
@@ -159,6 +159,34 @@ export class ClinicalService {
       },
       include: { corrections: true, attachments: true },
     });
+  }
+
+  async deleteDraft(organizationId: string, id: string, actorId: string) {
+    const entry = await this.getEntry(organizationId, id);
+    if (entry.status !== 'DRAFT') {
+      throw new ConflictException('Somente rascunhos podem ser excluídos permanentemente.');
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.clinicalEntryAttachment.deleteMany({ where: { clinicalEntryId: id } });
+      await tx.clinicalEntryCorrection.deleteMany({ where: { clinicalEntryId: id } });
+      await tx.clinicalEntry.delete({ where: { id } });
+      await tx.auditEvent.create({
+        data: {
+          actorId,
+          action: 'clinical.draft_deleted',
+          entity: 'ClinicalEntry',
+          entityId: id,
+          clinicId: entry.record.clinicId,
+          changes: {
+            patientId: entry.record.patientId,
+            type: entry.type,
+            clinicalDate: entry.clinicalDate.toISOString(),
+          },
+          correlationId: cryptoRandomUuid(),
+        },
+      });
+    });
+    return { ok: true as const, id };
   }
 
   async addAttachment(organizationId: string, id: string, input: { patientMediaId: string; label?: string }) {
@@ -349,7 +377,7 @@ export class ClinicalService {
     await Promise.all([
       this.assertPatient(organizationId, patientId),
       this.assertClinic(organizationId, input.clinicId),
-      this.assertProfessional(organizationId, input.professionalId),
+      this.assertProfessional(organizationId, input.professionalId, input.clinicId),
     ]);
     const conditionCount = await prisma.odontogramCondition.count({
       where: { organizationId, active: true, id: { in: parsed.findings.map((finding) => finding.conditionId) } },
@@ -720,10 +748,19 @@ export class ClinicalService {
     if (!clinic) throw new NotFoundException('Clínica não encontrada.');
   }
 
-  private async assertProfessional(organizationId: string, professionalId: string) {
+  private async assertProfessional(organizationId: string, professionalId: string, clinicId?: string) {
     const professional = await prisma.professional.findFirst({
-      where: { id: professionalId, user: { organizationId }, status: 'ACTIVE' },
+      where: {
+        id: professionalId,
+        user: { organizationId },
+        status: 'ACTIVE',
+        ...(clinicId ? { clinicLinks: { some: { clinicId, active: true } } } : {}),
+      },
     });
-    if (!professional) throw new NotFoundException('Profissional não encontrado.');
+    if (!professional) {
+      throw new NotFoundException(
+        clinicId ? 'Profissional não vinculado à clínica.' : 'Profissional não encontrado.',
+      );
+    }
   }
 }

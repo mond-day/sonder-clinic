@@ -149,6 +149,12 @@ export class ClinicalController {
     return this.clinical.updateDraft(req.auth.organizationId, id, input);
   }
 
+  @Delete('clinical-entries/:id')
+  @RequirePermissions('medical_record.create')
+  deleteDraft(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.clinical.deleteDraft(req.auth.organizationId, id, req.auth.userId);
+  }
+
   @Post('clinical-entries/:id/attachments')
   @RequirePermissions('medical_record.create')
   addAttachment(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() input: AttachmentDto) {

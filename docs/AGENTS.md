@@ -52,7 +52,7 @@ Ver `.env.example`. Resumo:
 | Queue | `QUEUE_DRIVER=memory\|redis`, `REDIS_URL` |
 | SMTP | `SMTP_HOST` (password reset) |
 | OTEL | `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
-| Integrações | `*_MOCK` + credenciais |
+| Integrações | `*_MOCK` + credenciais; Google: `GOOGLE_CLIENT_ID`/`SECRET`/`REDIRECT_URI`/`CALENDAR_ID`; Evolution: `EVOLUTION_BASE_URL`/`API_KEY`/`INSTANCE` |
 
 ## Protótipos HTML
 

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
@@ -269,6 +269,38 @@ export class WorkspaceController {
     return this.workspace.addTaskComment(req.auth.organizationId, id, req.auth.userId, body.content);
   }
 
+  @Patch('tasks/:id/comments/:commentId')
+  @RequirePermissions('task.manage')
+  updateComment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+    @Body() body: { content: string },
+  ) {
+    return this.workspace.updateTaskComment(
+      req.auth.organizationId,
+      id,
+      commentId,
+      req.auth.userId,
+      body.content,
+    );
+  }
+
+  @Delete('tasks/:id/comments/:commentId')
+  @RequirePermissions('task.manage')
+  deleteComment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+  ) {
+    return this.workspace.deleteTaskComment(
+      req.auth.organizationId,
+      id,
+      commentId,
+      req.auth.userId,
+    );
+  }
+
   @Post('tasks/:id/attachments')
   @RequirePermissions('task.manage')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024, files: 1 } }))
@@ -288,6 +320,34 @@ export class WorkspaceController {
     @Param('attachmentId') attachmentId: string,
   ) {
     return this.workspace.removeTaskAttachment(req.auth.organizationId, id, attachmentId);
+  }
+
+  @Put('tasks/:id/recurrence')
+  @RequirePermissions('task.manage')
+  upsertTaskRecurrence(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: {
+      frequency: string;
+      interval?: number;
+      nextOccurrence?: string;
+      endsAt?: string | null;
+      active?: boolean;
+    },
+  ) {
+    return this.workspace.upsertTaskRecurrence(req.auth.organizationId, id, req.auth.userId, body);
+  }
+
+  @Get('tasks/:id/history')
+  @RequirePermissions('task.view')
+  taskHistory(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.workspace.taskHistory(req.auth.organizationId, id);
+  }
+
+  @Post('tasks/:id/recurrence/generate')
+  @RequirePermissions('task.manage')
+  generateTaskOccurrence(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.workspace.generateTaskOccurrence(req.auth.organizationId, id, req.auth.userId);
   }
 
   @Get('lab-cases')
@@ -324,6 +384,38 @@ export class WorkspaceController {
   @RequirePermissions('lab_case.manage')
   updateLabCaseStatus(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateLabCaseStatusDto) {
     return this.workspace.updateLabCaseStatus(req.auth.organizationId, req.auth.userId, id, body.status, body.notes);
+  }
+
+  @Patch('lab-cases/:id')
+  @RequirePermissions('lab_case.manage')
+  updateLabCase(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: {
+      description?: string;
+      laboratoryId?: string | null;
+      laboratoryName?: string;
+      professionalId?: string | null;
+      toothFdi?: string | null;
+      specialty?: string | null;
+      dueAt?: string | null;
+      cost?: string | null;
+      notes?: string | null;
+    },
+  ) {
+    return this.workspace.updateLabCase(req.auth.organizationId, req.auth.userId, id, body);
+  }
+
+  @Post('lab-cases/:id/attachments')
+  @RequirePermissions('lab_case.manage')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 25 * 1024 * 1024, files: 1 } }))
+  addLabCaseAttachment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @UploadedFile() file: { originalname: string; size: number; buffer: Buffer; mimetype: string },
+    @Body('kind') kind?: string,
+  ) {
+    return this.workspace.addLabCaseAttachment(req.auth.organizationId, id, req.auth.userId, file, kind || 'OTHER');
   }
 
   @Get('lab-cases/:id/history')

@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { createDecipheriv } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
 import { z } from 'zod';
 import { assertSmtpConfigured, sendMail } from '../../common/mail';
@@ -29,6 +30,106 @@ const sendManualSchema = z.object({
   category: z.string().trim().max(60).optional(),
   variables: z.record(z.string(), z.string()).optional(),
 });
+
+export type EvolutionConfig = { baseUrl: string; apiKey: string; instance: string };
+
+function pickString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+/** Resolve Evolution a partir de env + configuration (+ credentials opcionais). */
+export function resolveEvolutionConfig(
+  channelConfiguration: unknown,
+  credentials?: Record<string, string>,
+): EvolutionConfig | null {
+  const settings =
+    channelConfiguration && typeof channelConfiguration === 'object' && !Array.isArray(channelConfiguration)
+      ? (channelConfiguration as Record<string, unknown>)
+      : {};
+  const creds = credentials ?? {};
+  const baseUrl = pickString(
+    process.env.EVOLUTION_BASE_URL,
+    creds.baseUrl,
+    creds.EVOLUTION_BASE_URL,
+    creds.BASE_URL,
+    settings.baseUrl,
+    settings.EVOLUTION_BASE_URL,
+    settings.BASE_URL,
+  ).replace(/\/+$/, '');
+  const apiKey = pickString(
+    process.env.EVOLUTION_API_KEY,
+    creds.apiKey,
+    creds.EVOLUTION_API_KEY,
+    creds.API_KEY,
+    settings.apiKey,
+    settings.EVOLUTION_API_KEY,
+    settings.API_KEY,
+  );
+  const instance = pickString(
+    process.env.EVOLUTION_INSTANCE,
+    creds.instance,
+    creds.instanceName,
+    creds.EVOLUTION_INSTANCE,
+    settings.instance,
+    settings.instanceName,
+    settings.EVOLUTION_INSTANCE,
+  );
+  if (!baseUrl || !apiKey || !instance) return null;
+  return { baseUrl, apiKey, instance };
+}
+
+function decryptCredentialsPayload(payload: string): Record<string, string> {
+  const keyValue = process.env.ENCRYPTION_MASTER_KEY;
+  if (!keyValue || !/^[a-f0-9]{64}$/i.test(keyValue)) {
+    throw new Error('ENCRYPTION_MASTER_KEY inválida.');
+  }
+  const [ivValue, tagValue, encryptedValue] = payload.split('.');
+  if (!ivValue || !tagValue || !encryptedValue) {
+    throw new Error('Credencial Evolution criptografada inválida.');
+  }
+  const decipher = createDecipheriv(
+    'aes-256-gcm',
+    Buffer.from(keyValue, 'hex'),
+    Buffer.from(ivValue, 'base64url'),
+  );
+  decipher.setAuthTag(Buffer.from(tagValue, 'base64url'));
+  const parsed: unknown = JSON.parse(
+    Buffer.concat([
+      decipher.update(Buffer.from(encryptedValue, 'base64url')),
+      decipher.final(),
+    ]).toString('utf8'),
+  );
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Credencial Evolution inválida.');
+  }
+  return Object.fromEntries(
+    Object.entries(parsed).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0,
+    ),
+  );
+}
+
+async function sendEvolutionWhatsApp(config: EvolutionConfig, number: string, text: string) {
+  const response = await fetch(
+    `${config.baseUrl}/message/sendText/${encodeURIComponent(config.instance)}`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        apikey: config.apiKey,
+      },
+      body: JSON.stringify({ number, text }),
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  if (!response.ok) {
+    const detail = (await response.text()).replace(/\s+/g, ' ').trim().slice(0, 300);
+    throw new Error(`Evolution respondeu HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+  }
+}
 
 export function renderMessageTemplate(
   content: string,
@@ -151,7 +252,8 @@ async function assertConsentIfNeeded(input: {
 /**
  * Envio manual controlado.
  * EMAIL → SMTP real (falha se SMTP_HOST ausente).
- * WHATSAPP/SMS → stub honesto (registra FAILED se Evolution MOCK/ausente).
+ * WHATSAPP → Evolution real se EVOLUTION_MOCK=false + baseUrl/apiKey/instance (env, canal ou conexão).
+ * SMS → stub honesto (FAILED).
  */
 export async function sendManualMessage(
   organizationId: string,
@@ -250,24 +352,66 @@ export async function sendManualMessage(
       });
     }
 
-    // WHATSAPP / SMS — stub honesto
+    // WHATSAPP / SMS
     const evolutionMock = (process.env.EVOLUTION_MOCK ?? 'true').toLowerCase() === 'true';
-    const evolutionReady = Boolean(process.env.EVOLUTION_BASE_URL?.trim() && process.env.EVOLUTION_API_KEY?.trim());
-    if (evolutionMock || !evolutionReady) {
-      const reason = evolutionMock
-        ? 'WhatsApp/SMS não enviado: EVOLUTION_MOCK=true (stub). Delivery marcada como FAILED.'
-        : 'WhatsApp/SMS não enviado: configure EVOLUTION_BASE_URL e EVOLUTION_API_KEY.';
-      return prisma.messageDelivery.update({
-        where: { id: delivery.id },
-        data: { status: 'FAILED', error: reason },
-      });
+    if (channel.type === 'WHATSAPP') {
+      let config = resolveEvolutionConfig(channel.configuration);
+      if (!config && channel.clinicId) {
+        const connection = await prisma.integrationConnection.findFirst({
+          where: {
+            clinicId: channel.clinicId,
+            provider: 'EVOLUTION',
+            status: 'ACTIVE',
+            encryptedCredentials: { not: null },
+          },
+          select: { encryptedCredentials: true, configuration: true },
+        });
+        if (connection?.encryptedCredentials) {
+          try {
+            const creds = decryptCredentialsPayload(connection.encryptedCredentials);
+            config = resolveEvolutionConfig(connection.configuration, creds);
+          } catch {
+            config = null;
+          }
+        }
+      }
+      if (evolutionMock || !config) {
+        const reason = evolutionMock
+          ? 'WhatsApp não enviado: EVOLUTION_MOCK=true (stub). Delivery marcada como FAILED.'
+          : 'WhatsApp não enviado: configure EVOLUTION_BASE_URL, EVOLUTION_API_KEY e EVOLUTION_INSTANCE (env, canal ou integração Evolution).';
+        return prisma.messageDelivery.update({
+          where: { id: delivery.id },
+          data: { status: 'FAILED', error: reason },
+        });
+      }
+      const digits = recipient.replace(/\D/g, '');
+      const withCountry = digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
+      if (withCountry.length < 10) {
+        return prisma.messageDelivery.update({
+          where: { id: delivery.id },
+          data: { status: 'FAILED', error: 'Telefone inválido para WhatsApp.' },
+        });
+      }
+      try {
+        await sendEvolutionWhatsApp(config, withCountry, rendered);
+        return prisma.messageDelivery.update({
+          where: { id: delivery.id },
+          data: { status: 'SENT', sentAt: new Date(), error: null },
+        });
+      } catch (sendError) {
+        const detail = sendError instanceof Error ? sendError.message : 'Falha Evolution.';
+        return prisma.messageDelivery.update({
+          where: { id: delivery.id },
+          data: { status: 'FAILED', error: detail },
+        });
+      }
     }
 
     return prisma.messageDelivery.update({
       where: { id: delivery.id },
       data: {
         status: 'FAILED',
-        error: 'Evolution configurada, mas envio outbound ainda não está implementado no adapter (stub honesto).',
+        error: 'Canal SMS outbound ainda não implementado (stub honesto).',
       },
     });
   } catch (error) {

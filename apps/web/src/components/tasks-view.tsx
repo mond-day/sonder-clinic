@@ -9,6 +9,7 @@ import { useAuth } from './auth-provider';
 import { useSelection } from './selection-provider';
 import { useWorkspace } from './workspace-provider';
 import { Modal } from './modal';
+import { MultiSelect } from './multi-select';
 import { Disclosure, PageHeader, Panel } from './ui';
 import { SearchableSelect } from './searchable-select';
 
@@ -84,6 +85,12 @@ export function TasksView() {
   const [formMessage, setFormMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [inlineForm, setInlineForm] = useState<'checklist' | 'comment' | 'participants' | null>(null);
+  const [checklistDraft, setChecklistDraft] = useState('');
+  const [commentDraft, setCommentDraft] = useState('');
+  const [participantDraft, setParticipantDraft] = useState<string[]>([]);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentDraft, setEditingCommentDraft] = useState('');
 
   const load = useCallback(() => {
     if (!clinicId) return;
@@ -241,7 +248,16 @@ export function TasksView() {
             ? (editingTask ? 'Edite título, prazo, responsável e classificação.' : 'Visualização da tarefa. Status pode ser alterado a qualquer momento.')
             : 'Preencha os campos e salve sem perder o contexto do quadro.'
         }
-        onClose={() => { setFormOpen(false); setSelectedTask(null); setEditingTask(false); setFormError(''); }}
+        closeOnBackdrop={false}
+        onClose={() => {
+          setFormOpen(false);
+          setSelectedTask(null);
+          setEditingTask(false);
+          setFormError('');
+          setInlineForm(null);
+          setEditingCommentId(null);
+          setEditingCommentDraft('');
+        }}
       >
           <form className="mutation-form" key={String(selectedTask?.id ?? 'new')} onSubmit={save}>
             {selectedTask ? (
@@ -288,27 +304,56 @@ export function TasksView() {
                       className="button small"
                       disabled={busy}
                       onClick={() => {
-                        const title = window.prompt('Novo item do checklist');
-                        if (!title?.trim()) return;
-                        void (async () => {
-                          setBusy(true);
-                          try {
-                            await api.post(`/tasks/${String(selectedTask.id)}/checklist`, { title: title.trim() });
-                            load();
-                            const refreshed = await api.get<RecordValue[]>(`/tasks?clinicId=${clinicId}`);
-                            const next = list(refreshed).find((item) => String(item.id) === String(selectedTask.id));
-                            if (next) setSelectedTask(next);
-                          } catch (cause) {
-                            setFormError(cause instanceof ApiError ? cause.message : 'Falha no checklist.');
-                          } finally {
-                            setBusy(false);
-                          }
-                        })();
+                        setInlineForm((current) => (current === 'checklist' ? null : 'checklist'));
+                        setChecklistDraft('');
                       }}
                     >
                       + Item
                     </button>
                   </header>
+                  {inlineForm === 'checklist' ? (
+                    <div className="inline-compose">
+                      <input
+                        value={checklistDraft}
+                        onChange={(event) => setChecklistDraft(event.target.value)}
+                        placeholder="Descreva o item…"
+                        aria-label="Novo item do checklist"
+                        autoFocus
+                      />
+                      <div className="heading-actions" style={{ marginLeft: 0 }}>
+                        <button
+                          type="button"
+                          className="button small primary"
+                          disabled={busy || !checklistDraft.trim()}
+                          onClick={() => {
+                            const title = checklistDraft.trim();
+                            if (!title) return;
+                            void (async () => {
+                              setBusy(true);
+                              try {
+                                await api.post(`/tasks/${String(selectedTask.id)}/checklist`, { title });
+                                setChecklistDraft('');
+                                setInlineForm(null);
+                                load();
+                                const refreshed = await api.get<RecordValue[]>(`/tasks?clinicId=${clinicId}`);
+                                const next = list(refreshed).find((item) => String(item.id) === String(selectedTask.id));
+                                if (next) setSelectedTask(next);
+                              } catch (cause) {
+                                setFormError(cause instanceof ApiError ? cause.message : 'Falha no checklist.');
+                              } finally {
+                                setBusy(false);
+                              }
+                            })();
+                          }}
+                        >
+                          Confirmar
+                        </button>
+                        <button type="button" className="button small" onClick={() => { setInlineForm(null); setChecklistDraft(''); }}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   {list(selectedTask.checklist).length === 0 ? (
                     <p className="muted-note">Nenhum item ainda.</p>
                   ) : (
@@ -370,30 +415,60 @@ export function TasksView() {
                       className="button small"
                       disabled={busy}
                       onClick={() => {
-                        const options = professionals
-                          .map((p) => `${p.name} (${p.userId})`)
-                          .join('\n');
-                        const userId = window.prompt(`ID do usuário participante:\n${options.slice(0, 400)}`);
-                        if (!userId?.trim()) return;
-                        void (async () => {
-                          setBusy(true);
-                          try {
-                            const next = await api.post<RecordValue>(`/tasks/${String(selectedTask.id)}/participants`, {
-                              userId: userId.trim(),
-                            });
-                            setSelectedTask(next);
-                            load();
-                          } catch (cause) {
-                            setFormError(cause instanceof ApiError ? cause.message : 'Falha ao adicionar participante.');
-                          } finally {
-                            setBusy(false);
-                          }
-                        })();
+                        setInlineForm((current) => (current === 'participants' ? null : 'participants'));
+                        setParticipantDraft([]);
                       }}
                     >
                       + Participante
                     </button>
                   </header>
+                  {inlineForm === 'participants' ? (
+                    <div className="inline-compose">
+                      <MultiSelect
+                        label="Profissionais"
+                        placeholder="Selecione um ou mais…"
+                        values={participantDraft}
+                        onChange={setParticipantDraft}
+                        options={professionals
+                          .filter((item) => {
+                            const existing = new Set(list(selectedTask.participants).map((row) => String(row.userId)));
+                            return item.userId && !existing.has(item.userId);
+                          })
+                          .map((item) => ({ value: item.userId, label: item.name }))}
+                      />
+                      <div className="heading-actions" style={{ marginLeft: 0 }}>
+                        <button
+                          type="button"
+                          className="button small primary"
+                          disabled={busy || !participantDraft.length}
+                          onClick={() => {
+                            void (async () => {
+                              setBusy(true);
+                              try {
+                                let next = selectedTask;
+                                for (const userId of participantDraft) {
+                                  next = await api.post<RecordValue>(`/tasks/${String(selectedTask.id)}/participants`, { userId });
+                                }
+                                setSelectedTask(next);
+                                setParticipantDraft([]);
+                                setInlineForm(null);
+                                load();
+                              } catch (cause) {
+                                setFormError(cause instanceof ApiError ? cause.message : 'Falha ao adicionar participante.');
+                              } finally {
+                                setBusy(false);
+                              }
+                            })();
+                          }}
+                        >
+                          Confirmar
+                        </button>
+                        <button type="button" className="button small" onClick={() => { setInlineForm(null); setParticipantDraft([]); }}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   {list(selectedTask.participants).length === 0 ? (
                     <p className="muted-note">Sem participantes extras.</p>
                   ) : (
@@ -434,39 +509,170 @@ export function TasksView() {
                       className="button small"
                       disabled={busy}
                       onClick={() => {
-                        const content = window.prompt('Comentário');
-                        if (!content?.trim()) return;
-                        void (async () => {
-                          setBusy(true);
-                          try {
-                            const next = await api.post<RecordValue>(`/tasks/${String(selectedTask.id)}/comments`, {
-                              content: content.trim(),
-                            });
-                            setSelectedTask(next);
-                            load();
-                          } catch (cause) {
-                            setFormError(cause instanceof ApiError ? cause.message : 'Falha ao comentar.');
-                          } finally {
-                            setBusy(false);
-                          }
-                        })();
+                        setInlineForm((current) => (current === 'comment' ? null : 'comment'));
+                        setCommentDraft('');
                       }}
                     >
                       + Comentário
                     </button>
                   </header>
+                  {inlineForm === 'comment' ? (
+                    <div className="inline-compose">
+                      <textarea
+                        value={commentDraft}
+                        onChange={(event) => setCommentDraft(event.target.value)}
+                        placeholder="Escreva um comentário…"
+                        aria-label="Novo comentário"
+                        rows={3}
+                        autoFocus
+                      />
+                      <div className="heading-actions" style={{ marginLeft: 0 }}>
+                        <button
+                          type="button"
+                          className="button small primary"
+                          disabled={busy || !commentDraft.trim()}
+                          onClick={() => {
+                            const content = commentDraft.trim();
+                            if (!content) return;
+                            void (async () => {
+                              setBusy(true);
+                              try {
+                                const next = await api.post<RecordValue>(`/tasks/${String(selectedTask.id)}/comments`, { content });
+                                setSelectedTask(next);
+                                setCommentDraft('');
+                                setInlineForm(null);
+                                load();
+                              } catch (cause) {
+                                setFormError(cause instanceof ApiError ? cause.message : 'Falha ao comentar.');
+                              } finally {
+                                setBusy(false);
+                              }
+                            })();
+                          }}
+                        >
+                          Confirmar
+                        </button>
+                        <button type="button" className="button small" onClick={() => { setInlineForm(null); setCommentDraft(''); }}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   {list(selectedTask.comments).length === 0 ? (
                     <p className="muted-note">Nenhum comentário.</p>
                   ) : (
                     <div className="settings-list">
-                      {list(selectedTask.comments).map((row) => (
-                        <div className="settings-row" key={String(row.id)}>
-                          <div>
-                            <strong>{text(nested(row, 'author').name, 'Usuário')}</strong>
-                            <span>{text(row.content)}</span>
+                      {list(selectedTask.comments).map((row) => {
+                        const commentId = String(row.id);
+                        const isEditing = editingCommentId === commentId;
+                        const isAuthor = user?.id && String(row.authorId) === user.id;
+                        const edited = Boolean(row.editedAt);
+                        return (
+                          <div className="settings-row" key={commentId}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <strong>
+                                {text(nested(row, 'author').name, 'Usuário')}
+                                {edited ? <span className="muted-note"> · editado</span> : null}
+                              </strong>
+                              {isEditing ? (
+                                <div className="inline-compose" style={{ marginTop: 6 }}>
+                                  <textarea
+                                    value={editingCommentDraft}
+                                    onChange={(event) => setEditingCommentDraft(event.target.value)}
+                                    rows={3}
+                                    aria-label="Editar comentário"
+                                    autoFocus
+                                  />
+                                  <div className="heading-actions" style={{ marginLeft: 0 }}>
+                                    <button
+                                      type="button"
+                                      className="button small primary"
+                                      disabled={busy || !editingCommentDraft.trim()}
+                                      onClick={() => {
+                                        const content = editingCommentDraft.trim();
+                                        if (!content) return;
+                                        void (async () => {
+                                          setBusy(true);
+                                          try {
+                                            const next = await api.patch<RecordValue>(
+                                              `/tasks/${String(selectedTask.id)}/comments/${commentId}`,
+                                              { content },
+                                            );
+                                            setSelectedTask(next);
+                                            setEditingCommentId(null);
+                                            setEditingCommentDraft('');
+                                            load();
+                                          } catch (cause) {
+                                            setFormError(cause instanceof ApiError ? cause.message : 'Falha ao editar comentário.');
+                                          } finally {
+                                            setBusy(false);
+                                          }
+                                        })();
+                                      }}
+                                    >
+                                      Salvar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="button small"
+                                      onClick={() => { setEditingCommentId(null); setEditingCommentDraft(''); }}
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span>{text(row.content)}</span>
+                              )}
+                            </div>
+                            {!isEditing ? (
+                              <div className="heading-actions" style={{ marginLeft: 0 }}>
+                                {isAuthor ? (
+                                  <button
+                                    type="button"
+                                    className="button small"
+                                    disabled={busy}
+                                    onClick={() => {
+                                      setEditingCommentId(commentId);
+                                      setEditingCommentDraft(text(row.content, ''));
+                                      setInlineForm(null);
+                                    }}
+                                  >
+                                    Editar
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="button small"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    void (async () => {
+                                      setBusy(true);
+                                      try {
+                                        const next = await api.delete<RecordValue>(
+                                          `/tasks/${String(selectedTask.id)}/comments/${commentId}`,
+                                        );
+                                        setSelectedTask(next);
+                                        if (editingCommentId === commentId) {
+                                          setEditingCommentId(null);
+                                          setEditingCommentDraft('');
+                                        }
+                                        load();
+                                      } catch (cause) {
+                                        setFormError(cause instanceof ApiError ? cause.message : 'Falha ao excluir comentário.');
+                                      } finally {
+                                        setBusy(false);
+                                      }
+                                    })();
+                                  }}
+                                >
+                                  Excluir
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>

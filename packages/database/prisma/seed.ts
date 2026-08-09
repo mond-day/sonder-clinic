@@ -80,6 +80,11 @@ async function main(): Promise<void> {
     update: { name: user.name },
     create: { userId: user.id, name: user.name, croNumber: '12345', croState: 'MT' },
   });
+  await prisma.professionalClinic.upsert({
+    where: { professionalId_clinicId: { professionalId: professional.id, clinicId: clinic.id } },
+    update: { active: true },
+    create: { professionalId: professional.id, clinicId: clinic.id, active: true },
+  });
   await seedAnamnesisCatalogs(prisma, organization.id);
   const conditions: Array<[string, string, string]> = [
     ['HEALTHY', 'Hígido', '#78A890'], ['CARIES', 'Cárie', '#B93A3A'],

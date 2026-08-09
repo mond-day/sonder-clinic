@@ -57,6 +57,13 @@ export const certificateSchema = z
         path: ['cidAuthorized'],
       });
     }
+    if (value.cidAuthorized && !value.cid?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Informe o CID autorizado.',
+        path: ['cid'],
+      });
+    }
   });
 
 export const examRequestItemSchema = z.object({
@@ -72,6 +79,31 @@ export const examRequestSchema = z.object({
   clinicalQuestion: z.string().trim().optional(),
   urgency: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
   items: z.array(examRequestItemSchema).min(1, 'Inclua ao menos um exame.'),
+  notes: z.string().trim().optional(),
+  folderId: z.string().uuid().optional().or(z.literal('')),
+});
+
+export const consentSchema = z.object({
+  templateId: z.string().uuid().optional().or(z.literal('')),
+  professionalId: z.string().uuid('Selecione o profissional.'),
+  treatmentId: z.string().uuid().optional().or(z.literal('')),
+  procedureSummary: z.string().trim().min(3, 'Descreva o procedimento.'),
+  risks: z.string().trim().min(3, 'Informe os riscos.'),
+  alternatives: z.string().trim().optional(),
+  patientAcknowledged: z.boolean().refine((value) => value === true, {
+    message: 'Confirme que o paciente foi informado.',
+  }),
+  notes: z.string().trim().optional(),
+  folderId: z.string().uuid().optional().or(z.literal('')),
+});
+
+export const referralSchema = z.object({
+  templateId: z.string().uuid().optional().or(z.literal('')),
+  professionalId: z.string().uuid('Selecione o profissional.'),
+  specialty: z.string().trim().optional(),
+  recipientName: z.string().trim().optional(),
+  clinicalReason: z.string().trim().min(3, 'Informe o motivo clínico.'),
+  urgency: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
   notes: z.string().trim().optional(),
   folderId: z.string().uuid().optional().or(z.literal('')),
 });
@@ -96,4 +128,6 @@ export type GenerateDocumentInput = z.infer<typeof generateDocumentSchema>;
 export type PrescriptionInput = z.infer<typeof prescriptionSchema>;
 export type CertificateInput = z.infer<typeof certificateSchema>;
 export type ExamRequestInput = z.infer<typeof examRequestSchema>;
+export type ConsentInput = z.infer<typeof consentSchema>;
+export type ReferralInput = z.infer<typeof referralSchema>;
 export type ShareInput = z.infer<typeof shareSchema>;

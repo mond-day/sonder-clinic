@@ -18,8 +18,21 @@ const appointmentSchema = z.object({
   reminderEnabled: z.boolean().optional(),
   reminderLeadMinutes: z.union([
     z.number().int().min(15).max(10080),
-    z.array(z.number().int().min(15).max(10080)).min(1).max(5),
+    // [] é aceito quando reminderEnabled===false (defesa para clientes legados).
+    z.array(z.number().int().min(15).max(10080)).max(5),
   ]).optional(),
+}).superRefine((value, ctx) => {
+  if (
+    Array.isArray(value.reminderLeadMinutes)
+    && value.reminderLeadMinutes.length === 0
+    && value.reminderEnabled !== false
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Informe ao menos uma antecedência de lembrete, ou desative o lembrete.',
+      path: ['reminderLeadMinutes'],
+    });
+  }
 });
 
 export type AppointmentInput = {
@@ -108,6 +121,7 @@ export class SchedulingService {
         include: appointmentInclude,
       });
       await this.configureReminder(transaction, organizationId, created.id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
+      await this.enqueueCalendarSync(transaction, created.id, 'UPSERT');
       return transaction.appointment.findUniqueOrThrow({ where: { id: created.id }, include: appointmentInclude });
     }, { isolationLevel: 'Serializable' });
   }
@@ -149,6 +163,7 @@ export class SchedulingService {
         include: appointmentInclude,
       });
       await this.configureReminder(transaction, organizationId, id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
+      await this.enqueueCalendarSync(transaction, id, 'UPSERT');
       if (input.status === 'COMPLETED' && appointment.status !== 'COMPLETED') {
         await transaction.outboxEvent.create({
           data: {
@@ -175,9 +190,13 @@ export class SchedulingService {
     if (!appointment) throw new NotFoundException('Agendamento não encontrado.');
     if (appointment.status === 'CANCELLED') return appointment;
     if (appointment.status === 'COMPLETED') throw new ConflictException('Consulta concluída não pode ser cancelada.');
-    return prisma.appointment.update({
-      where: { id },
-      data: { status: 'CANCELLED', version: { increment: 1 } },
+    return prisma.$transaction(async (transaction) => {
+      const cancelled = await transaction.appointment.update({
+        where: { id },
+        data: { status: 'CANCELLED', version: { increment: 1 } },
+      });
+      await this.enqueueCalendarSync(transaction, id, 'DELETE');
+      return cancelled;
     });
   }
 
@@ -217,7 +236,15 @@ export class SchedulingService {
       prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId, status: 'ACTIVE' }, select: { id: true } }),
       prisma.unit.findFirst({ where: { id: input.unitId, clinicId: input.clinicId, status: 'ACTIVE' }, select: { id: true } }),
       prisma.patient.findFirst({ where: { id: input.patientId, organizationId, status: { not: 'ARCHIVED' } }, select: { id: true } }),
-      prisma.professional.findFirst({ where: { id: input.professionalId, user: { organizationId }, status: 'ACTIVE' }, select: { id: true } }),
+      prisma.professional.findFirst({
+        where: {
+          id: input.professionalId,
+          user: { organizationId },
+          status: 'ACTIVE',
+          clinicLinks: { some: { clinicId: input.clinicId, active: true } },
+        },
+        select: { id: true },
+      }),
       input.chairId ? prisma.chair.findFirst({ where: { id: input.chairId, unitId: input.unitId, status: 'ACTIVE', isSchedulingEnabled: true }, select: { id: true } }) : Promise.resolve({ id: 'optional' }),
       input.tagIds?.length
         ? prisma.agendaTag.count({ where: { id: { in: input.tagIds }, organizationId, clinicId: input.clinicId, active: true } })
@@ -226,6 +253,21 @@ export class SchedulingService {
     if (!clinic || !unit || !patient || !professional || !chair || tagCount !== new Set(input.tagIds ?? []).size) {
       throw new NotFoundException('Clínica, unidade, paciente, profissional ou cadeira inválidos.');
     }
+  }
+
+  private async enqueueCalendarSync(
+    transaction: Prisma.TransactionClient,
+    appointmentId: string,
+    action: 'UPSERT' | 'DELETE',
+  ) {
+    await transaction.outboxEvent.create({
+      data: {
+        aggregateType: 'Appointment',
+        aggregateId: appointmentId,
+        eventType: 'appointment.calendar-sync.requested',
+        payload: { appointmentId, action },
+      },
+    });
   }
 
   private async configureReminder(

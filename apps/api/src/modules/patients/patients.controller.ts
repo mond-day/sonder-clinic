@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUUID, Length, MinLength } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
@@ -73,6 +73,12 @@ class MergePatientDto {
   @IsUUID() sourcePatientId!: string;
 }
 
+class DismissDuplicateDto {
+  @IsUUID() patientIdA!: string;
+  @IsUUID() patientIdB!: string;
+  @IsOptional() @IsString() reason?: string;
+}
+
 class PreferenceDto {
   @IsString() @MinLength(2) channel!: string;
   @IsString() @MinLength(2) category!: string;
@@ -119,6 +125,24 @@ export class PatientsController {
     });
   }
 
+  @Get('patients/duplicates')
+  @RequirePermissions('patient.view', 'organization.manage')
+  listDuplicates(@Req() request: AuthenticatedRequest, @Query('clinicId') clinicId?: string) {
+    return this.patients.listDuplicates(request.auth.organizationId, clinicId);
+  }
+
+  @Post('patients/duplicates/dismiss')
+  @RequirePermissions('patient.archive', 'organization.manage')
+  dismissDuplicate(@Req() request: AuthenticatedRequest, @Body() body: DismissDuplicateDto) {
+    return this.patients.dismissDuplicate(
+      request.auth.organizationId,
+      request.auth.userId,
+      body.patientIdA,
+      body.patientIdB,
+      body.reason,
+    );
+  }
+
   @Post('patients')
   @RequirePermissions('patient.create')
   create(@Req() request: AuthenticatedRequest, @Body() input: CreatePatientDto) {
@@ -135,6 +159,19 @@ export class PatientsController {
   @RequirePermissions('patient.view')
   find(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.patients.find(request.auth.organizationId, id);
+  }
+
+  @Get('patients/:id/merge-preview')
+  @RequirePermissions('patient.archive', 'organization.manage')
+  mergePreview(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('sourcePatientId') sourcePatientId?: string,
+  ) {
+    if (!sourcePatientId) {
+      throw new BadRequestException('sourcePatientId é obrigatório.');
+    }
+    return this.patients.previewMerge(request.auth.organizationId, id, sourcePatientId);
   }
 
   @Post('patients/:id/archive')

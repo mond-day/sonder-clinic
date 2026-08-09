@@ -12,6 +12,8 @@ const focusableSelector = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+let modalStack: symbol[] = [];
+
 export function Modal({
   open,
   title,
@@ -27,19 +29,25 @@ export function Modal({
   children: React.ReactNode;
   onClose(): void;
   closeOnBackdrop?: boolean;
-  size?: 'small' | 'medium' | 'large';
+  size?: 'small' | 'medium' | 'large' | 'xlarge';
 }) {
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const stackIdRef = useRef(Symbol('modal'));
 
   useEffect(() => {
     if (!open) return;
+    const stackId = stackIdRef.current;
+    modalStack.push(stackId);
+    const depth = modalStack.length;
     previousFocusRef.current = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const dialog = dialogRef.current;
+    const backdrop = dialog?.parentElement as HTMLElement | null;
+    if (backdrop) backdrop.style.zIndex = String(100 + depth);
     window.setTimeout(() => {
       const target = (dialog?.querySelector('[autofocus]') as HTMLElement | null)
         ?? (dialog?.querySelector(focusableSelector) as HTMLElement | null)
@@ -47,7 +55,12 @@ export function Modal({
       target?.focus();
     });
 
+    function isTopModal() {
+      return modalStack[modalStack.length - 1] === stackId;
+    }
+
     function handleKeyDown(event: KeyboardEvent) {
+      if (!isTopModal()) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         onClose();
@@ -75,7 +88,8 @@ export function Modal({
     document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = previousOverflow;
+      modalStack = modalStack.filter((id) => id !== stackId);
+      document.body.style.overflow = modalStack.length ? 'hidden' : previousOverflow;
       previousFocusRef.current?.focus();
     };
   }, [onClose, open]);
@@ -85,7 +99,9 @@ export function Modal({
     <div
       className="modal-backdrop"
       onMouseDown={(event) => {
-        if (closeOnBackdrop && event.target === event.currentTarget) onClose();
+        if (closeOnBackdrop && event.target === event.currentTarget && modalStack[modalStack.length - 1] === stackIdRef.current) {
+          onClose();
+        }
       }}
     >
       <div

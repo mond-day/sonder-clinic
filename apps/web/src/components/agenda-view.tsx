@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Plus, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { APPOINTMENT_DURATIONS, nearestDurationMinutes } from '@/lib/duration';
-import { list, nested, statusTone, text, timeOnly, type RecordValue } from '@/lib/format';
+import { appointmentEventTone, list, nested, statusTone, text, timeOnly, type RecordValue } from '@/lib/format';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
 import { MetricCard, PageHeader, Panel, StatusBadge } from './ui';
@@ -15,8 +15,10 @@ import { MultiSelect } from './multi-select';
 import { SearchableSelect } from './searchable-select';
 
 type Mode = 'day' | 'week' | 'chairs';
+type AgendaViewType = 'calendar' | 'list';
 
-const eventTones = ['teal', 'blue', 'amber', 'purple', 'green'] as const;
+const AGENDA_VIEW_KEY = 'centerClinic.agenda.view';
+
 const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 const statusLabels: Record<string, string> = {
@@ -28,6 +30,16 @@ const statusLabels: Record<string, string> = {
   CANCELLED: 'Cancelado',
   NO_SHOW: 'Falta',
 };
+
+const statusLegend: Array<{ status: string; tone: ReturnType<typeof appointmentEventTone> }> = [
+  { status: 'SCHEDULED', tone: 'blue' },
+  { status: 'CONFIRMED', tone: 'green' },
+  { status: 'CHECKED_IN', tone: 'teal' },
+  { status: 'IN_PROGRESS', tone: 'purple' },
+  { status: 'COMPLETED', tone: 'gray' },
+  { status: 'CANCELLED', tone: 'red' },
+  { status: 'NO_SHOW', tone: 'amber' },
+];
 
 function startOfDay(reference: Date) {
   const date = new Date(reference);
@@ -65,6 +77,7 @@ export function AgendaView() {
   const units = clinic?.units ?? [];
 
   const [mode, setMode] = useState<Mode>('week');
+  const [viewType, setViewType] = useState<AgendaViewType>('calendar');
   const [reference, setReference] = useState(() => startOfDay(new Date()));
   const [appointments, setAppointments] = useState<RecordValue[]>([]);
   const [patients, setPatients] = useState<RecordValue[]>([]);
@@ -81,6 +94,24 @@ export function AgendaView() {
   const [professionalFilter, setProfessionalFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [unitFilter, setUnitFilter] = useState('');
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(AGENDA_VIEW_KEY);
+      if (stored === 'calendar' || stored === 'list') setViewType(stored);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  function changeViewType(next: AgendaViewType) {
+    setViewType(next);
+    try {
+      window.localStorage.setItem(AGENDA_VIEW_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  }
 
   const range = useMemo(() => {
     if (mode === 'week') {
@@ -121,14 +152,6 @@ export function AgendaView() {
       setFormOpen(true);
     }
   }, [searchParams]);
-
-  const toneByProfessional = useMemo(() => {
-    const map = new Map<string, (typeof eventTones)[number]>();
-    professionals.forEach((professional, index) => {
-      map.set(professional.id, eventTones[index % eventTones.length] ?? 'teal');
-    });
-    return map;
-  }, [professionals]);
 
   const visible = useMemo(() => appointments.filter((item) => {
     if (professionalFilter && item.professionalId !== professionalFilter) return false;
@@ -202,12 +225,56 @@ export function AgendaView() {
   const chairs = useMemo(() => units.flatMap((unit) => unit.chairs), [units]);
   const hideUnitChair = units.length <= 1 && chairs.length <= 1;
 
+  const filterBar = filtersOpen ? (
+    <div className="filters">
+      <select
+        className="filter-select"
+        aria-label="Filtrar por profissional"
+        value={professionalFilter}
+        onChange={(event) => setProfessionalFilter(event.target.value)}
+      >
+        <option value="">Todos os profissionais</option>
+        {professionals.map((professional) => (
+          <option key={professional.id} value={professional.id}>{professional.name}</option>
+        ))}
+      </select>
+      <select
+        className="filter-select"
+        aria-label="Filtrar por unidade"
+        value={unitFilter}
+        onChange={(event) => setUnitFilter(event.target.value)}
+      >
+        <option value="">Todas as unidades</option>
+        {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
+      </select>
+      <select
+        className="filter-select"
+        aria-label="Filtrar por status"
+        value={statusFilter}
+        onChange={(event) => setStatusFilter(event.target.value)}
+      >
+        <option value="">Todos os status</option>
+        {Object.entries(statusLabels).map(([value, label]) => (
+          <option key={value} value={value}>{label}</option>
+        ))}
+      </select>
+      <button
+        className="button"
+        type="button"
+        onClick={() => { setProfessionalFilter(''); setStatusFilter(''); setUnitFilter(''); }}
+      >Limpar filtros</button>
+    </div>
+  ) : null;
+
   async function updateAppointmentStatus(status: string) {
     if (!selectedAppointment) return;
     setStatusSaving(true);
     setFormError('');
     try {
       const reminders = list(selectedAppointment.reminders);
+      const reminderLeads = reminders
+        .map((item) => Number(item.leadMinutes))
+        .filter((value) => Number.isFinite(value) && value > 0);
       await api.put(`/appointments/${String(selectedAppointment.id)}`, {
         clinicId,
         unitId: String(selectedAppointment.unitId),
@@ -222,7 +289,8 @@ export function AgendaView() {
           .map((item) => String(nested(item, 'tag').id || item.tagId || ''))
           .filter(Boolean),
         reminderEnabled: reminders.length > 0,
-        reminderLeadMinutes: reminders.map((item) => Number(item.leadMinutes)).filter((value) => Number.isFinite(value) && value > 0),
+        // Espelha o form de save: nunca enviar []. Sem leads → 1440.
+        reminderLeadMinutes: reminderLeads.length ? reminderLeads : 1440,
       });
       setSelectedAppointment({ ...selectedAppointment, status });
       load();
@@ -455,11 +523,23 @@ export function AgendaView() {
           </form>
         ) : null}
       </Modal>
-      <Panel
-        title={title}
-        description={`${clinic?.tradeName ?? 'Unidade'} · ${professionalFilter ? text(professionals.find((item) => item.id === professionalFilter)?.name) : 'Todos os profissionais'}`}
-        actions={
-          <div className="head-actions">
+      <div className="agenda-view-bar">
+        <div className="segmented" role="group" aria-label="Visualização da agenda">
+          <button
+            type="button"
+            className={viewType === 'calendar' ? 'active' : ''}
+            aria-pressed={viewType === 'calendar'}
+            onClick={() => changeViewType('calendar')}
+          >Calendário</button>
+          <button
+            type="button"
+            className={viewType === 'list' ? 'active' : ''}
+            aria-pressed={viewType === 'list'}
+            onClick={() => changeViewType('list')}
+          >Lista</button>
+        </div>
+        <div className="head-actions">
+          {viewType === 'calendar' ? (
             <div className="segmented" role="group" aria-label="Modo de visualização">
               <button
                 type="button"
@@ -480,53 +560,19 @@ export function AgendaView() {
                 onClick={() => setMode('chairs')}
               >Cadeiras</button>
             </div>
-            <div className="segmented" role="group" aria-label="Navegar no período">
-              <button type="button" onClick={() => shift(-1)} aria-label="Período anterior"><ChevronLeft size={15} /></button>
-              <button type="button" onClick={() => shift(1)} aria-label="Próximo período"><ChevronRight size={15} /></button>
-            </div>
+          ) : null}
+          <div className="segmented" role="group" aria-label="Navegar no período">
+            <button type="button" onClick={() => shift(-1)} aria-label="Período anterior"><ChevronLeft size={15} /></button>
+            <button type="button" onClick={() => shift(1)} aria-label="Próximo período"><ChevronRight size={15} /></button>
           </div>
-        }
+        </div>
+      </div>
+      {viewType === 'calendar' ? (
+      <Panel
+        title={title}
+        description={`${clinic?.tradeName ?? 'Unidade'} · ${professionalFilter ? text(professionals.find((item) => item.id === professionalFilter)?.name) : 'Todos os profissionais'}`}
       >
-        {filtersOpen && (
-          <div className="filters">
-            <select
-              className="filter-select"
-              aria-label="Filtrar por profissional"
-              value={professionalFilter}
-              onChange={(event) => setProfessionalFilter(event.target.value)}
-            >
-              <option value="">Todos os profissionais</option>
-              {professionals.map((professional) => (
-                <option key={professional.id} value={professional.id}>{professional.name}</option>
-              ))}
-            </select>
-            <select
-              className="filter-select"
-              aria-label="Filtrar por unidade"
-              value={unitFilter}
-              onChange={(event) => setUnitFilter(event.target.value)}
-            >
-              <option value="">Todas as unidades</option>
-              {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
-            </select>
-            <select
-              className="filter-select"
-              aria-label="Filtrar por status"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-            >
-              <option value="">Todos os status</option>
-              {Object.entries(statusLabels).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-            <button
-              className="button"
-              type="button"
-              onClick={() => { setProfessionalFilter(''); setStatusFilter(''); setUnitFilter(''); }}
-            >Limpar filtros</button>
-          </div>
-        )}
+        {filterBar}
         {loading && <div className="state-message">Carregando agenda…</div>}
         {!loading && columns.length === 0 && (
           <div className="state-message">
@@ -561,9 +607,11 @@ export function AgendaView() {
                         {slot.map((item) => {
                           const patient = nested(item, 'patient');
                           const professional = nested(item, 'professional');
-                          const tone = toneByProfessional.get(String(item.professionalId)) ?? 'teal';
-                          const isCancelled = ['CANCELLED', 'NO_SHOW'].includes(String(item.status));
-                          const label = `${timeOnly(item.startAt)} ${text(patient.fullName, 'Paciente')} · ${text(professional.name)} · ${statusLabels[String(item.status)] ?? text(item.status)}`;
+                          const status = String(item.status);
+                          const tone = appointmentEventTone(status);
+                          const isCancelled = ['CANCELLED', 'NO_SHOW'].includes(status);
+                          const statusLabel = statusLabels[status] ?? text(status);
+                          const label = `${timeOnly(item.startAt)} ${text(patient.fullName, 'Paciente')} · ${text(professional.name)} · ${statusLabel}`;
                           return (
                             <button
                               key={String(item.id)}
@@ -573,7 +621,7 @@ export function AgendaView() {
                               aria-label={label}
                               onClick={() => { setSelectedAppointment(item); setEditingAppointment(false); setFormError(''); }}
                             >
-                              <small>{timeOnly(item.startAt)} · {text(professional.name).split(' ')[0]}</small>
+                              <small>{timeOnly(item.startAt)} · {statusLabel}</small>
                               <strong>{text(patient.fullName, 'Paciente')}</strong>
                             </button>
                           );
@@ -586,16 +634,22 @@ export function AgendaView() {
             </div>
           </div>
         )}
-        <div className="agenda-legend">
-          {professionals.map((professional) => (
-            <span key={professional.id}>
-              <i style={{ background: `var(--${toneByProfessional.get(professional.id) === 'teal' ? 'accent' : toneByProfessional.get(professional.id)})` }} />
-              {professional.name}
+        <div className="agenda-legend" aria-label="Legenda por status">
+          {statusLegend.map(({ status, tone }) => (
+            <span key={status}>
+              <i className={`legend-swatch ${tone}`} />
+              {statusLabels[status]}
             </span>
           ))}
         </div>
       </Panel>
-      <Panel title="Lista do período" description="Mesma consulta da grade, em formato tabular para leitura rápida.">
+      ) : (
+      <Panel
+        title="Lista do período"
+        description={`${clinic?.tradeName ?? 'Unidade'} · ${title} · ${professionalFilter ? text(professionals.find((item) => item.id === professionalFilter)?.name) : 'Todos os profissionais'}`}
+      >
+        {filterBar}
+        {loading && <div className="state-message">Carregando agenda…</div>}
         {!loading && visible.length === 0 && (
           <div className="state-message">Nenhum atendimento no período selecionado.</div>
         )}
@@ -647,6 +701,7 @@ export function AgendaView() {
           </div>
         )}
       </Panel>
+      )}
     </>
   );
 }

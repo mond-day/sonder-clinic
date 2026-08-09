@@ -290,6 +290,9 @@ export function defaultFolderNameForTemplateType(type: string): string {
     case 'CONSENT':
     case 'CONSENTIMENTO':
       return 'Termos e consentimentos';
+    case 'REFERRAL':
+    case 'ENCAMINHAMENTO':
+      return 'Encaminhamentos';
     default:
       return 'Documentos clínicos';
   }

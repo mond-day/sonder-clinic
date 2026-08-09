@@ -276,6 +276,7 @@ model Organization {
   roles        Role[]
   agendaTags   AgendaTag[]
   laboratories Laboratory[]
+  duplicateDismissals PatientDuplicateDismissal[]
 }
 
 model Clinic {
@@ -300,6 +301,7 @@ model Clinic {
   agendaTags     AgendaTag[]
   laboratories   Laboratory[]
   payables       Payable[]
+  professionalLinks ProfessionalClinic[]
 
   @@index([organizationId])
 }
@@ -314,6 +316,7 @@ model Unit {
   clinic       Clinic        @relation(fields: [clinicId], references: [id])
   chairs       Chair[]
   appointments Appointment[]
+  professionalLinks ProfessionalUnit[]
 
   @@index([clinicId])
 }
@@ -444,6 +447,46 @@ model Professional {
   appointments     Appointment[]
   returnAlerts     ReturnAlert[]
   labCases         LabCase[]
+  clinicLinks      ProfessionalClinic[]
+  unitLinks        ProfessionalUnit[]
+  specialties      ProfessionalSpecialty[]
+}
+
+model ProfessionalClinic {
+  id             String       @id @default(uuid()) @db.Uuid
+  professionalId String       @db.Uuid
+  clinicId       String       @db.Uuid
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  clinic         Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@unique([professionalId, clinicId])
+  @@index([clinicId, active])
+}
+
+model ProfessionalUnit {
+  id             String       @id @default(uuid()) @db.Uuid
+  professionalId String       @db.Uuid
+  unitId         String       @db.Uuid
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  unit           Unit         @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([professionalId, unitId])
+  @@index([unitId, active])
+}
+
+model ProfessionalSpecialty {
+  id             String       @id @default(uuid()) @db.Uuid
+  professionalId String       @db.Uuid
+  specialty      String
+  createdAt      DateTime     @default(now())
+  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@unique([professionalId, specialty])
+  @@index([specialty])
 }
 
 model Patient {
@@ -469,10 +512,29 @@ model Patient {
   returnAlerts   ReturnAlert[]
   tasks          Task[]
   labCases       LabCase[]
+  duplicateDismissalsLow  PatientDuplicateDismissal[] @relation("DuplicateDismissalLow")
+  duplicateDismissalsHigh PatientDuplicateDismissal[] @relation("DuplicateDismissalHigh")
 
   @@unique([organizationId, cpf])
   @@unique([organizationId, passportNumber])
   @@index([organizationId, fullName])
+}
+
+/// Par de pacientes marcado como "não são duplicados" (ordem lexicográfica dos IDs).
+model PatientDuplicateDismissal {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  patientIdLow   String       @db.Uuid
+  patientIdHigh  String       @db.Uuid
+  dismissedById  String       @db.Uuid
+  reason         String?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  patientLow     Patient      @relation("DuplicateDismissalLow", fields: [patientIdLow], references: [id], onDelete: Cascade)
+  patientHigh    Patient      @relation("DuplicateDismissalHigh", fields: [patientIdHigh], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, patientIdLow, patientIdHigh])
+  @@index([organizationId, createdAt])
 }
 
 model PatientClinic {
@@ -528,25 +590,27 @@ model Appointment {
   chairId        String?           @db.Uuid
   startAt        DateTime
   endAt          DateTime
-  status         AppointmentStatus @default(SCHEDULED)
-  source         String            @default("INTERNAL")
-  notes          String?
-  category       String?
-  version        Int               @default(1)
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  clinic         Clinic            @relation(fields: [clinicId], references: [id])
-  unit           Unit              @relation(fields: [unitId], references: [id])
-  patient        Patient           @relation(fields: [patientId], references: [id])
-  professional   Professional      @relation(fields: [professionalId], references: [id])
-  chair          Chair?            @relation(fields: [chairId], references: [id])
-  tags           AppointmentTag[]
-  reminders      AppointmentReminder[]
-  statusEvents   AppointmentStatusEvent[]
+  status                   AppointmentStatus @default(SCHEDULED)
+  source                   String            @default("INTERNAL")
+  notes                    String?
+  category                 String?
+  externalCalendarEventId  String?
+  version                  Int               @default(1)
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  clinic                   Clinic            @relation(fields: [clinicId], references: [id])
+  unit                     Unit              @relation(fields: [unitId], references: [id])
+  patient                  Patient           @relation(fields: [patientId], references: [id])
+  professional             Professional      @relation(fields: [professionalId], references: [id])
+  chair                    Chair?            @relation(fields: [chairId], references: [id])
+  tags                     AppointmentTag[]
+  reminders                AppointmentReminder[]
+  statusEvents             AppointmentStatusEvent[]
 
   @@index([organizationId, startAt])
   @@index([professionalId, startAt, endAt])
   @@index([chairId, startAt, endAt])
+  @@index([externalCalendarEventId])
 }
 
 model AppointmentStatusEvent {
@@ -651,6 +715,8 @@ model Task {
   labCaseId      String?              @db.Uuid
   createdById    String?              @db.Uuid
   completedAt    DateTime?
+  sourceTaskId   String?              @db.Uuid
+  occurrenceKey  String?              @unique
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
   clinic         Clinic               @relation(fields: [clinicId], references: [id])
@@ -660,8 +726,21 @@ model Task {
   comments       TaskComment[]
   attachments    TaskAttachment[]
   recurrence     TaskRecurrence?
+  activities     TaskActivity[]
 
   @@index([organizationId, clinicId, status, dueAt])
+}
+
+model TaskActivity {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  actorId   String?  @db.Uuid
+  type      String
+  payload   Json     @default("{}")
+  createdAt DateTime @default(now())
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
 }
 
 model TaskChecklistItem {

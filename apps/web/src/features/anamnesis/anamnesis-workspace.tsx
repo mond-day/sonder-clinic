@@ -212,12 +212,11 @@ export function AnamnesisWorkspace({
           <div className="template-picker">
             {templates.map((template) => (
               <button key={template.id} type="button" className="template-picker-item" disabled={busy} onClick={() => void start(template)}>
-                <strong>{audienceLabel[template.audience] ?? template.audience}</strong>
-                <span>{template.name}</span>
-                <StatusBadge tone="green">{statusLabel(template.status)}</StatusBadge>
+                <strong>{template.name}</strong>
+                <span>{audienceLabel[template.audience] ?? template.audience}{template.version ? ` · v${template.version}` : ''}</span>
               </button>
             ))}
-            {!templates.length ? <EmptyState title="Nenhum modelo publicado" description="Publique modelos em Configurações → Anamnese." /> : null}
+            {!templates.length ? <EmptyState title="Nenhum modelo disponível" description="Publique modelos em Configurações → Anamnese." /> : null}
           </div>
         </Modal>
         <div className="anamnesis-home-head">

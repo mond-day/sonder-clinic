@@ -13,11 +13,12 @@ import {
 } from './prescription-item-editor';
 
 function toDraftItems(raw: unknown): DraftPrescriptionItem[] {
-  if (!Array.isArray(raw) || !raw.length) return [blankPrescriptionItem()];
+  if (!Array.isArray(raw) || !raw.length) return [];
   return raw.map((row) => {
     const item = row as PrescriptionItem;
     return {
       key: crypto.randomUUID(),
+      kind: 'medication' as const,
       medicationName: item.medicationName ?? '',
       quantity: item.quantity ?? '1',
       dosage: item.dosage ?? item.instructions ?? '',
@@ -66,9 +67,13 @@ export function PrescriptionEditor({
   const [purpose, setPurpose] = useState('Receita simples');
   const [folderId, setFolderId] = useState('');
   const [protocolId, setProtocolId] = useState('');
-  const [items, setItems] = useState<DraftPrescriptionItem[]>([blankPrescriptionItem()]);
+  const [items, setItems] = useState<DraftPrescriptionItem[]>([]);
   const [notes, setNotes] = useState('');
   const [formError, setFormError] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [savingProtocol, setSavingProtocol] = useState(false);
+  const [protocolName, setProtocolName] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -76,31 +81,57 @@ export function PrescriptionEditor({
     setPurpose('Receita simples');
     setFolderId('');
     setProtocolId('');
-    setItems([blankPrescriptionItem()]);
+    setItems([]);
     setNotes('');
     setFormError('');
+    setPickerOpen(false);
+    setFocusKey(null);
+    setSavingProtocol(false);
+    setProtocolName('');
   }, [open, professionals]);
 
   function applyProtocol(id: string) {
     setProtocolId(id);
     const protocol = protocols.find((row) => row.id === id);
     if (!protocol) {
-      setItems([blankPrescriptionItem()]);
+      setItems([]);
       return;
     }
     setPurpose(protocol.purpose);
     setItems(toDraftItems(protocol.items));
+    setFocusKey(null);
+  }
+
+  function addKind(kind: DraftPrescriptionItem['kind']) {
+    const next = blankPrescriptionItem(kind);
+    setItems((current) => [...current, next]);
+    setFocusKey(next.key);
+    setPickerOpen(false);
   }
 
   function cleanItems(): PrescriptionItem[] {
-    return items.map(({ key: _key, ...rest }) => ({
-      ...rest,
-      instructions: [rest.instructions, notes].filter(Boolean).join(' ').trim() || undefined,
-    }));
+    return items.map(({ key: _key, kind: _kind, ...rest }) => {
+      if (_kind === 'free_text') {
+        return {
+          ...rest,
+          dosage: rest.dosage?.trim() || rest.instructions?.trim() || '—',
+          quantity: rest.quantity?.trim() || '—',
+          instructions: [rest.instructions, notes].filter(Boolean).join(' ').trim() || undefined,
+        };
+      }
+      return {
+        ...rest,
+        instructions: [rest.instructions, notes].filter(Boolean).join(' ').trim() || undefined,
+      };
+    });
   }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (savingProtocol) {
+      await confirmSaveProtocol();
+      return;
+    }
     const parsed = prescriptionSchema.safeParse({
       professionalId,
       purpose,
@@ -121,7 +152,7 @@ export function PrescriptionEditor({
     });
   }
 
-  async function handleSaveProtocol() {
+  function beginSaveProtocol() {
     const parsed = prescriptionSchema.safeParse({
       professionalId,
       purpose,
@@ -132,24 +163,40 @@ export function PrescriptionEditor({
       setFormError(parsed.error.issues[0]?.message ?? 'Dados inválidos.');
       return;
     }
-    const name = window.prompt('Nome do protocolo', parsed.data.purpose);
-    if (!name?.trim()) return;
+    setProtocolName(parsed.data.purpose);
+    setSavingProtocol(true);
+    setFormError('');
+  }
+
+  async function confirmSaveProtocol() {
+    const parsed = prescriptionSchema.safeParse({
+      professionalId,
+      purpose,
+      folderId,
+      items: cleanItems(),
+    });
+    if (!parsed.success || !protocolName.trim()) {
+      setFormError(parsed.success ? 'Informe o nome do protocolo.' : (parsed.error.issues[0]?.message ?? 'Dados inválidos.'));
+      return;
+    }
     setFormError('');
     await onSaveProtocol({
-      name: name.trim(),
+      name: protocolName.trim(),
       purpose: parsed.data.purpose,
       professionalId: parsed.data.professionalId,
       items: parsed.data.items,
     });
+    setSavingProtocol(false);
   }
 
   return (
     <Modal
       open={open}
       title="Nova prescrição"
-      description="Itens estruturados; assinatura e PDF usam conteúdo congelado no servidor."
+      description="Composição progressiva — adicione itens sob demanda."
       onClose={onClose}
       size="large"
+      closeOnBackdrop={false}
     >
       <form className="mutation-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>
@@ -168,7 +215,7 @@ export function PrescriptionEditor({
           <input required minLength={3} value={purpose} onChange={(event) => setPurpose(event.target.value)} />
         </label>
         <label>
-          Protocolo salvo
+          Usar protocolo
           <select value={protocolId} onChange={(event) => applyProtocol(event.target.value)}>
             <option value="">Nenhum</option>
             {protocols.map((protocol) => (
@@ -189,19 +236,33 @@ export function PrescriptionEditor({
         <div className="span-2 prescription-items-head">
           <div>
             <strong>Itens da prescrição</strong>
-            <p>Adicione medicamentos, exames ou orientações estruturadas.</p>
+            <p>Nenhum formulário de item aparece até você adicionar.</p>
           </div>
           <button
             type="button"
             className="button soft small"
-            onClick={() => setItems((current) => [...current, blankPrescriptionItem()])}
+            onClick={() => setPickerOpen((current) => !current)}
           >
-            ＋ Adicionar item
+            ＋ Adicionar à prescrição
           </button>
         </div>
+
+        {pickerOpen ? (
+          <div className="span-2 exam-picker-grid" role="listbox" aria-label="Tipo de item da prescrição">
+            <button type="button" className="button" onClick={() => addKind('medication')}>Medicamento</button>
+            <button type="button" className="button" onClick={() => addKind('exam')}>Exame</button>
+            <button type="button" className="button" onClick={() => addKind('free_text')}>Texto livre</button>
+          </div>
+        ) : null}
+
         <div className="span-2">
-          <PrescriptionItemEditor items={items} onChange={setItems} />
+          {items.length === 0 ? (
+            <p className="muted-note">Nenhum item adicionado</p>
+          ) : (
+            <PrescriptionItemEditor items={items} onChange={setItems} focusKey={focusKey} />
+          )}
         </div>
+
         <label className="span-2">
           Orientações adicionais
           <textarea
@@ -211,15 +272,42 @@ export function PrescriptionEditor({
             placeholder="Recomendações gerais aplicadas aos itens."
           />
         </label>
+
+        {savingProtocol ? (
+          <label className="span-2">
+            Nome do protocolo
+            <input
+              required
+              minLength={2}
+              value={protocolName}
+              onChange={(event) => setProtocolName(event.target.value)}
+              autoFocus
+            />
+          </label>
+        ) : null}
+
         {(formError || error) ? <p className="form-error span-2" role="alert">{formError || error}</p> : null}
         <div className="form-actions span-2">
           <button type="button" className="button ghost" onClick={onClose} disabled={busy}>Cancelar</button>
-          <button type="button" className="button soft" disabled={busy} onClick={() => void handleSaveProtocol()}>
-            Salvar protocolo
-          </button>
-          <button type="submit" className="button primary" disabled={busy}>
-            {busy ? 'Gerando…' : 'Gerar prescrição'}
-          </button>
+          {savingProtocol ? (
+            <>
+              <button type="button" className="button soft" disabled={busy} onClick={() => setSavingProtocol(false)}>
+                Voltar
+              </button>
+              <button type="submit" className="button primary" disabled={busy || protocolName.trim().length < 2}>
+                Confirmar protocolo
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="button soft" disabled={busy || !items.length} onClick={beginSaveProtocol}>
+                Salvar como protocolo
+              </button>
+              <button type="submit" className="button primary" disabled={busy || !items.length}>
+                {busy ? 'Gerando…' : 'Gerar prescrição'}
+              </button>
+            </>
+          )}
         </div>
       </form>
     </Modal>

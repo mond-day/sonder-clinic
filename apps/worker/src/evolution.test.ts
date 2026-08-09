@@ -6,6 +6,11 @@ afterEach(() => {
 });
 
 describe('Evolution adapter', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
   it('exige URL, chave e instância antes de enviar', () => {
     expect(
       readEvolutionConfiguration(
@@ -13,6 +18,17 @@ describe('Evolution adapter', () => {
         {},
       ),
     ).toBeNull();
+  });
+
+  it('aceita fallback de process.env.EVOLUTION_*', () => {
+    vi.stubEnv('EVOLUTION_BASE_URL', 'https://env-evo');
+    vi.stubEnv('EVOLUTION_API_KEY', 'env-secret');
+    vi.stubEnv('EVOLUTION_INSTANCE', 'env-instance');
+    expect(readEvolutionConfiguration({}, {})).toEqual({
+      baseUrl: 'https://env-evo',
+      apiKey: 'env-secret',
+      instance: 'env-instance',
+    });
   });
 
   it('envia texto pelo endpoint v2 sem expor a chave no corpo', async () => {

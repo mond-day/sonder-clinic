@@ -12,6 +12,11 @@ import {
   updatePatientGuardian,
   upsertCommunicationPreference,
 } from './patients-guardians-merge.utils';
+import {
+  dismissPatientDuplicate,
+  listPatientDuplicates,
+  previewPatientMerge,
+} from './patients-duplicates.utils';
 
 const patientDataSchema = z.object({
   fullName: z.string().trim().min(3),
@@ -207,6 +212,24 @@ export class PatientsService {
     return mergePatients(organizationId, actorId, targetPatientId, sourcePatientId);
   }
 
+  listDuplicates(organizationId: string, clinicId?: string) {
+    return listPatientDuplicates(organizationId, clinicId);
+  }
+
+  dismissDuplicate(
+    organizationId: string,
+    actorId: string,
+    patientIdA: string,
+    patientIdB: string,
+    reason?: string,
+  ) {
+    return dismissPatientDuplicate(organizationId, actorId, patientIdA, patientIdB, reason);
+  }
+
+  previewMerge(organizationId: string, targetPatientId: string, sourcePatientId: string) {
+    return previewPatientMerge(organizationId, targetPatientId, sourcePatientId);
+  }
+
   listPreferences(organizationId: string, patientId: string) {
     return listCommunicationPreferences(organizationId, patientId);
   }
@@ -221,9 +244,15 @@ export class PatientsService {
 
   async globalSearch(organizationId: string, query: string, clinicId?: string, permissions: string[] = []) {
     const q = query.trim();
-    if (q.length < 2) return { patients: [], appointments: [], treatments: [], labCases: [], tasks: [] };
+    if (q.length < 2) {
+      return {
+        patients: [], appointments: [], treatments: [], labCases: [], tasks: [],
+        documents: [], prescriptions: [],
+      };
+    }
     const can = (code: string) => permissions.includes(code) || permissions.includes('organization.manage');
-    const [patients, appointments, treatments, labCases, tasks] = await Promise.all([
+    const canClinicalDocs = can('document.view') || can('medical_record.view');
+    const [patients, appointments, treatments, labCases, tasks, documents, prescriptions] = await Promise.all([
       can('patient.view')
         ? prisma.patient.findMany({
             where: {
@@ -285,7 +314,7 @@ export class PatientsService {
                 { laboratoryName: { contains: q, mode: 'insensitive' } },
               ],
             },
-            select: { id: true, code: true, description: true, status: true },
+            select: { id: true, code: true, description: true, status: true, patientId: true },
             take: 5,
             orderBy: { createdAt: 'desc' },
           })
@@ -305,7 +334,151 @@ export class PatientsService {
             orderBy: { updatedAt: 'desc' },
           })
         : Promise.resolve([]),
+      canClinicalDocs
+        ? prisma.generatedDocument.findMany({
+            where: {
+              organizationId,
+              ...(clinicId ? { clinicId } : {}),
+              OR: [
+                { validationCode: { contains: q, mode: 'insensitive' } },
+                { template: { name: { contains: q, mode: 'insensitive' } } },
+              ],
+            },
+            select: {
+              id: true,
+              status: true,
+              validationCode: true,
+              patientId: true,
+              template: { select: { name: true, type: true } },
+            },
+            take: 5,
+            orderBy: { generatedAt: 'desc' },
+          })
+        : Promise.resolve([]),
+      canClinicalDocs
+        ? prisma.prescription.findMany({
+            where: {
+              organizationId,
+              ...(clinicId ? { clinicId } : {}),
+              OR: [
+                { purpose: { contains: q, mode: 'insensitive' } },
+                { validationCode: { contains: q, mode: 'insensitive' } },
+              ],
+            },
+            select: {
+              id: true,
+              purpose: true,
+              status: true,
+              validationCode: true,
+              patientId: true,
+              items: true,
+            },
+            take: 8,
+            orderBy: { createdAt: 'desc' },
+          })
+        : Promise.resolve([]),
     ]);
-    return { patients, appointments, treatments, labCases, tasks };
+
+    const documentPatientIds = [...new Set((documents as Array<{ patientId: string }>).map((d) => d.patientId))];
+    const prescriptionPatientIds = [...new Set((prescriptions as Array<{ patientId: string }>).map((d) => d.patientId))];
+    const nameIds = [...new Set([...documentPatientIds, ...prescriptionPatientIds])];
+    const patientNames = nameIds.length
+      ? await prisma.patient.findMany({
+          where: { id: { in: nameIds }, organizationId },
+          select: { id: true, fullName: true },
+        })
+      : [];
+    const nameMap = new Map(patientNames.map((p) => [p.id, p.fullName]));
+
+    // Enrich documents with patient name match on query when possible
+    const docsWithNames = (documents as Array<{
+      id: string;
+      status: string;
+      validationCode: string;
+      patientId: string;
+      template: { name: string; type: string } | null;
+    }>).map((doc) => ({
+      id: doc.id,
+      name: doc.template?.name ?? 'Documento',
+      type: doc.template?.type ?? null,
+      status: doc.status,
+      validationCode: doc.validationCode,
+      patientId: doc.patientId,
+      patientName: nameMap.get(doc.patientId),
+    }));
+
+    // Also match patient name for documents if query looks like a name
+    let extraDocs: typeof docsWithNames = [];
+    if (canClinicalDocs && docsWithNames.length < 5) {
+      const matchedPatients = await prisma.patient.findMany({
+        where: {
+          organizationId,
+          fullName: { contains: q, mode: 'insensitive' },
+          clinics: clinicId ? { some: { clinicId } } : undefined,
+        },
+        select: { id: true, fullName: true },
+        take: 5,
+      });
+      if (matchedPatients.length) {
+        const more = await prisma.generatedDocument.findMany({
+          where: {
+            organizationId,
+            ...(clinicId ? { clinicId } : {}),
+            patientId: { in: matchedPatients.map((p) => p.id) },
+            id: { notIn: docsWithNames.map((d) => d.id) },
+          },
+          select: {
+            id: true,
+            status: true,
+            validationCode: true,
+            patientId: true,
+            template: { select: { name: true, type: true } },
+          },
+          take: 5 - docsWithNames.length,
+          orderBy: { generatedAt: 'desc' },
+        });
+        const pmap = new Map(matchedPatients.map((p) => [p.id, p.fullName]));
+        extraDocs = more.map((doc) => ({
+          id: doc.id,
+          name: doc.template?.name ?? 'Documento',
+          type: doc.template?.type ?? null,
+          status: doc.status,
+          validationCode: doc.validationCode,
+          patientId: doc.patientId,
+          patientName: pmap.get(doc.patientId),
+        }));
+      }
+    }
+
+    const filteredPrescriptions = (prescriptions as Array<{
+      id: string;
+      purpose: string;
+      status: string;
+      validationCode: string | null;
+      patientId: string;
+      items: unknown;
+    }>).filter((row) => {
+      if (row.purpose.toLowerCase().includes(q.toLowerCase())) return true;
+      if (row.validationCode?.toLowerCase().includes(q.toLowerCase())) return true;
+      const items = Array.isArray(row.items) ? row.items : [];
+      return items.some((item) => {
+        if (!item || typeof item !== 'object') return false;
+        const name = String((item as { medicationName?: string }).medicationName ?? '');
+        return name.toLowerCase().includes(q.toLowerCase());
+      });
+    }).slice(0, 5).map(({ items: _items, ...rest }) => ({
+      ...rest,
+      patientName: nameMap.get(rest.patientId),
+    }));
+
+    return {
+      patients,
+      appointments,
+      treatments,
+      labCases,
+      tasks,
+      documents: [...docsWithNames, ...extraDocs].slice(0, 5),
+      prescriptions: filteredPrescriptions,
+    };
   }
 }

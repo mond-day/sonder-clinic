@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
-import { list, text, type RecordValue } from '@/lib/format';
+import { currency, dateOnly, list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { useSelection } from './selection-provider';
 import { EmptyState, ErrorState, MetricCard, PageHeader, Panel, Skeleton, StatusBadge } from './ui';
 
@@ -29,6 +29,54 @@ const DOMAIN_LABELS: Record<string, string> = {
   admin: 'Administrativo',
 };
 
+const COLUMN_LABELS: Record<string, string> = {
+  professionalName: 'Profissional',
+  professionalId: 'Profissional',
+  patientName: 'Paciente',
+  patientId: 'Paciente',
+  clinicName: 'Clínica',
+  clinicId: 'Clínica',
+  procedureName: 'Procedimento',
+  procedureId: 'Procedimento',
+  treatmentTitle: 'Tratamento',
+  status: 'Status',
+  amount: 'Valor',
+  total: 'Total',
+  count: 'Quantidade',
+  quantity: 'Quantidade',
+  paidAt: 'Pago em',
+  dueDate: 'Vencimento',
+  createdAt: 'Criado em',
+  completedAt: 'Concluído em',
+  occurredAt: 'Ocorrido em',
+  method: 'Forma de Pagamento',
+  paymentMethod: 'Forma de Pagamento',
+  description: 'Descrição',
+  category: 'Categoria',
+  type: 'Tipo',
+  outstandingAmount: 'Saldo em aberto',
+  paidAmount: 'Valor recebido',
+  refundedAmount: 'Valor estornado',
+  originalAmount: 'Valor original',
+  netAmount: 'Valor líquido',
+  conversionRate: 'Taxa de conversão',
+  production: 'Produção',
+  commission: 'Comissão',
+  name: 'Nome',
+  title: 'Título',
+  period: 'Período',
+};
+
+const HIDDEN_COLUMNS = new Set([
+  'id',
+  'organizationId',
+  'correlationId',
+  'idempotencyKey',
+  'actorId',
+  'userId',
+  'version',
+]);
+
 function domainLabel(domain: string) {
   return DOMAIN_LABELS[domain.toLowerCase()] ?? domain;
 }
@@ -39,6 +87,42 @@ function domainTone(domain: string): 'amber' | 'green' | 'blue' | 'gray' {
   if (key === 'clinical') return 'green';
   if (key === 'operational' || key === 'operations') return 'blue';
   return 'gray';
+}
+
+function columnLabel(key: string) {
+  if (COLUMN_LABELS[key]) return COLUMN_LABELS[key];
+  if (key.endsWith('Id')) return COLUMN_LABELS[key] ?? key.replace(/Id$/, '');
+  return key
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/^\w/, (c) => c.toUpperCase());
+}
+
+function visibleColumns(rows: RecordValue[]) {
+  const keys = Object.keys(rows[0] ?? {});
+  return keys.filter((key) => {
+    if (HIDDEN_COLUMNS.has(key)) return false;
+    if (key.endsWith('Id') && !COLUMN_LABELS[key]) return false;
+    return true;
+  });
+}
+
+function cellValue(key: string, value: unknown) {
+  if (value == null || value === '') return '—';
+  if (key === 'status' || key === 'type' || key === 'category' || key === 'method' || key === 'paymentMethod') {
+    return presentationLabel(value);
+  }
+  if (/(amount|total|production|commission|net|fee)/i.test(key) && !Number.isNaN(Number(value))) {
+    return currency(value);
+  }
+  if (/(At|Date|period)$/i.test(key) || key.includes('date')) {
+    const asDate = dateOnly(value);
+    return asDate === '—' ? text(value) : asDate;
+  }
+  if (typeof value === 'number' && /rate|percent|pct/i.test(key)) {
+    return `${(value * (value <= 1 ? 100 : 1)).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`;
+  }
+  return text(value);
 }
 
 export function ReportsView() {
@@ -74,6 +158,7 @@ export function ReportsView() {
   }, [catalog]);
 
   const selectedReport = catalog.find((item) => item.id === selected);
+  const columns = useMemo(() => visibleColumns(rows), [rows]);
 
   useEffect(() => {
     setLoading(true);
@@ -111,7 +196,8 @@ export function ReportsView() {
         const anchor = document.createElement('a');
         anchor.href = url;
         const extension = format === 'pdf' ? 'pdf' : format === 'xlsx' ? 'xlsx' : 'csv';
-        anchor.download = `${selected}.${extension}`;
+        const safeName = (selectedReport?.name ?? selected).replace(/\s+/g, '-').toLowerCase();
+        anchor.download = `${safeName}.${extension}`;
         anchor.click();
         URL.revokeObjectURL(url);
       }
@@ -120,7 +206,7 @@ export function ReportsView() {
     } finally {
       setRunning(false);
     }
-  }, [bounds, clinicId, selected]);
+  }, [bounds, clinicId, selected, selectedReport?.name]);
 
   useEffect(() => {
     if (!clinicId || !selected || loading) return;
@@ -139,10 +225,9 @@ export function ReportsView() {
         title="Relatórios"
         description="Catálogo clínico, financeiro e operacional com exportação CSV/XLSX/PDF."
       />
-      <div className="metric-grid">
-        <MetricCard label="Relatórios" value={catalog.length} />
-        <MetricCard label="Selecionado" value={selectedReport?.name ?? '—'} />
-        <MetricCard label="Linhas" value={rows.length} />
+      <div className="metric-grid compact">
+        <MetricCard label="Relatórios disponíveis" value={catalog.length} />
+        <MetricCard label="Linhas na prévia" value={rows.length} />
         <MetricCard label="Período" value={PERIODS.find((item) => item.id === period)?.label ?? period} />
       </div>
       {error ? <ErrorState description={error} onRetry={() => void run()} /> : null}
@@ -203,16 +288,16 @@ export function ReportsView() {
         >
           {rows.length ? (
             <div className="table-wrap">
-              <table>
+              <table className="data-table">
                 <thead>
                   <tr>
-                    {Object.keys(rows[0] ?? {}).map((key) => <th key={key}>{key}</th>)}
+                    {columns.map((key) => <th key={key}>{columnLabel(key)}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {rows.slice(0, 50).map((row, index) => (
                     <tr key={index}>
-                      {Object.keys(rows[0] ?? {}).map((key) => <td key={key}>{text(row[key])}</td>)}
+                      {columns.map((key) => <td key={key}>{cellValue(key, row[key])}</td>)}
                     </tr>
                   ))}
                 </tbody>

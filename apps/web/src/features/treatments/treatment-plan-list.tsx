@@ -18,8 +18,8 @@ export function TreatmentPlanList({
   if (!plans.length) {
     return (
       <EmptyState
-        title="Nenhum plano encontrado"
-        description="Ajuste a busca/filtro ou crie um novo tratamento."
+        title="Nenhum plano neste filtro"
+        description="Ajuste a busca ou crie um novo tratamento pelo botão acima."
       />
     );
   }

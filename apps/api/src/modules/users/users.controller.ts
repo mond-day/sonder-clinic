@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsArray, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
@@ -136,8 +136,8 @@ export class UsersController {
 
   @Get('professionals')
   @RequirePermissions('user.view', 'clinic.view')
-  listProfessionals(@Req() req: AuthenticatedRequest) {
-    return this.users.listProfessionals(req.auth.organizationId);
+  listProfessionals(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) {
+    return this.users.listProfessionals(req.auth.organizationId, clinicId);
   }
 
   @Post('professionals')
@@ -150,6 +150,16 @@ export class UsersController {
   @RequirePermissions('user.manage')
   updateProfessional(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateProfessionalDto) {
     return this.users.updateProfessional(req.auth.organizationId, id, body);
+  }
+
+  @Put('professionals/:id/scope')
+  @RequirePermissions('user.manage', 'clinic.manage')
+  setProfessionalScope(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: { clinicIds?: string[]; unitIds?: string[]; specialties?: string[] },
+  ) {
+    return this.users.setProfessionalScope(req.auth.organizationId, id, body);
   }
 
   @Get('roles')

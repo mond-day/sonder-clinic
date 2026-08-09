@@ -359,7 +359,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         <label>Paciente<select name="patientId" required><option value="">Selecione</option>{patientOptions}</select></label>
         <label>Descrição<input name="description" required /></label><label>Valor<input name="originalAmount" inputMode="decimal" required /></label>
         <label>Vencimento<input name="dueDate" type="date" required /></label>
-        <label>Forma de pagamento prevista
+        <label>Forma de Pagamento
           <select name="paymentMethod" defaultValue="">
             <option value="">Não informado</option>
             {PAYMENT_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}
@@ -374,9 +374,16 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         if (!parsed) return;
         void run(() => api.post(`/receivables/${parsed.receivableId}/payments`, { amount: parsed.amount, method: parsed.method }, { 'Idempotency-Key': crypto.randomUUID() }), 'Recebimento registrado.', event.currentTarget);
       }}>
-        <label className="span-2">Título<select name="receivableId" required><option value="">Selecione</option>{receivables.filter((item) => !['PAID', 'CANCELLED'].includes(String(item.status))).map((item) => <option key={String(item.id)} value={String(item.id)}>{String(item.description)} · R$ {String(item.netAmount)}</option>)}</select></label>
+        <label className="span-2">Título<select name="receivableId" required onChange={(event) => {
+          const row = receivables.find((item) => String(item.id) === event.target.value);
+          const form = event.currentTarget.form;
+          const amountInput = form?.elements.namedItem('amount');
+          if (amountInput && amountInput instanceof HTMLInputElement && row) {
+            amountInput.value = String(row.outstandingAmount ?? row.netAmount ?? '');
+          }
+        }}><option value="">Selecione</option>{receivables.filter((item) => !['PAID', 'CANCELLED'].includes(String(item.status))).map((item) => <option key={String(item.id)} value={String(item.id)}>{String(item.description)} · saldo R$ {String(item.outstandingAmount ?? item.netAmount)}</option>)}</select></label>
         <label>Valor recebido<input name="amount" inputMode="decimal" required /></label>
-        <label>Método
+        <label>Forma de Pagamento
           <select name="method" defaultValue="PIX" required>
             {PAYMENT_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}
           </select>

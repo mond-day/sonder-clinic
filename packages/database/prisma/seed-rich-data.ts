@@ -93,6 +93,20 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
   const professionals: Array<{ id: string; name: string; specialty: string }> = [
     { id: context.adminProfessional.id, name: 'Daymond Lucas', specialty: 'Clínica geral' },
   ];
+  await prisma.professionalClinic.upsert({
+    where: {
+      professionalId_clinicId: {
+        professionalId: context.adminProfessional.id,
+        clinicId: context.clinic.id,
+      },
+    },
+    update: { active: true },
+    create: {
+      professionalId: context.adminProfessional.id,
+      clinicId: context.clinic.id,
+      active: true,
+    },
+  });
   for (const item of usersData) {
     const user = await prisma.user.upsert({
       where: { organizationId_email: { organizationId, email: item.email } },
@@ -124,6 +138,23 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
         },
       });
       professionals.push({ id: professional.id, name: professional.name, specialty: item.professional.specialty });
+      await prisma.professionalClinic.upsert({
+        where: { professionalId_clinicId: { professionalId: professional.id, clinicId: context.clinic.id } },
+        update: { active: true },
+        create: { professionalId: professional.id, clinicId: context.clinic.id, active: true },
+      });
+      if (item.professional.specialty) {
+        await prisma.professionalSpecialty.upsert({
+          where: {
+            professionalId_specialty: {
+              professionalId: professional.id,
+              specialty: item.professional.specialty,
+            },
+          },
+          update: {},
+          create: { professionalId: professional.id, specialty: item.professional.specialty },
+        });
+      }
     }
   }
 

@@ -2,9 +2,21 @@ import { createDecipheriv } from 'node:crypto';
 import { prisma } from '@sonder/database';
 import { isWithinAllowedHours, nextAllowedWindowStart } from './allowed-hours';
 import { readEvolutionConfiguration, sendEvolutionText } from './evolution';
+import {
+  decryptIntegrationCredentials,
+  deleteCalendarEvent,
+  encryptIntegrationCredentials,
+  ensureAccessToken,
+  isGoogleCalendarMock,
+  readCalendarId,
+  readTokens,
+  resolveGoogleOAuth,
+  upsertCalendarEvent,
+} from './google-calendar';
 
 const WHATSAPP_REMINDER_EVENT = 'appointment.whatsapp-reminder.requested';
 const APPOINTMENT_COMPLETED_EVENT = 'appointment.completed';
+const CALENDAR_SYNC_EVENT = 'appointment.calendar-sync.requested';
 const MAX_ATTEMPTS = 5;
 
 type OutboxEvent = {
@@ -197,6 +209,10 @@ async function processEvent(event: OutboxEvent): Promise<'done' | 'deferred'> {
     await processWhatsAppReminder(event);
     return 'done';
   }
+  if (event.eventType === CALENDAR_SYNC_EVENT) {
+    await processCalendarSync(event);
+    return 'done';
+  }
   if (event.eventType === APPOINTMENT_COMPLETED_EVENT) {
     return processAppointmentCompleted(event);
   }
@@ -205,6 +221,141 @@ async function processEvent(event: OutboxEvent): Promise<'done' | 'deferred'> {
     data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
   });
   return 'done';
+}
+
+async function processCalendarSync(event: OutboxEvent): Promise<void> {
+  const payload = (event.payload ?? {}) as { appointmentId?: string; action?: 'UPSERT' | 'DELETE' };
+  const appointmentId = payload.appointmentId ?? event.aggregateId;
+  const action = payload.action === 'DELETE' ? 'DELETE' : 'UPSERT';
+
+  const appointment = await prisma.appointment.findUnique({
+    where: { id: appointmentId },
+    include: {
+      patient: { select: { fullName: true, preferredName: true } },
+      professional: { select: { name: true } },
+      clinic: { select: { tradeName: true } },
+      unit: { select: { timezone: true } },
+    },
+  });
+  if (!appointment) {
+    await prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: {
+        processedAt: new Date(),
+        attempts: { increment: 1 },
+        lastError: 'Agendamento não encontrado; sync descartado.',
+      },
+    });
+    return;
+  }
+
+  if (isGoogleCalendarMock()) {
+    await prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: {
+        processedAt: new Date(),
+        attempts: { increment: 1 },
+        lastError: 'Google Calendar MOCK=true; sync não executado.',
+      },
+    });
+    return;
+  }
+
+  const connection = await prisma.integrationConnection.findFirst({
+    where: {
+      clinicId: appointment.clinicId,
+      provider: 'GOOGLE_CALENDAR',
+      status: 'ACTIVE',
+      encryptedCredentials: { not: null },
+    },
+  });
+  if (!connection?.encryptedCredentials) {
+    await prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: {
+        processedAt: new Date(),
+        attempts: { increment: 1 },
+        lastError: 'Google Calendar não configurado para a clínica.',
+      },
+    });
+    return;
+  }
+
+  let credentials = decryptIntegrationCredentials(connection.encryptedCredentials);
+  const oauth = resolveGoogleOAuth(credentials);
+  if (!oauth || !readTokens(credentials)) {
+    await prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: {
+        processedAt: new Date(),
+        attempts: { increment: 1 },
+        lastError: 'Google Calendar sem OAuth completo (refresh_token).',
+      },
+    });
+    return;
+  }
+
+  const fresh = await ensureAccessToken(oauth, credentials);
+  if (fresh.refreshed) {
+    credentials = fresh.credentials;
+    await prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { encryptedCredentials: encryptIntegrationCredentials(credentials) },
+    });
+  }
+
+  const calendarId = readCalendarId(connection.configuration);
+  const patientName = appointment.patient.preferredName ?? appointment.patient.fullName;
+
+  if (action === 'DELETE' || ['CANCELLED', 'NO_SHOW'].includes(appointment.status)) {
+    if (appointment.externalCalendarEventId) {
+      await deleteCalendarEvent(fresh.accessToken, calendarId, appointment.externalCalendarEventId);
+      await prisma.appointment.update({
+        where: { id: appointment.id },
+        data: { externalCalendarEventId: null },
+      });
+    }
+  } else {
+    const eventId = await upsertCalendarEvent({
+      accessToken: fresh.accessToken,
+      calendarId,
+      eventId: appointment.externalCalendarEventId,
+      summary: `${patientName} · ${appointment.professional.name}`,
+      description: [
+        `Clínica: ${appointment.clinic.tradeName}`,
+        appointment.category ? `Categoria: ${appointment.category}` : null,
+        appointment.notes ? `Obs: ${appointment.notes}` : null,
+        `Sonder appointmentId=${appointment.id}`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      startAt: appointment.startAt,
+      endAt: appointment.endAt,
+      timeZone: appointment.unit.timezone || 'America/Cuiaba',
+      appointmentId: appointment.id,
+    });
+    if (eventId !== appointment.externalCalendarEventId) {
+      await prisma.appointment.update({
+        where: { id: appointment.id },
+        data: { externalCalendarEventId: eventId },
+      });
+    }
+  }
+
+  await prisma.$transaction([
+    prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { lastSyncAt: new Date() },
+    }),
+    prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: {
+        processedAt: new Date(),
+        attempts: { increment: 1 },
+        lastError: null,
+      },
+    }),
+  ]);
 }
 
 async function processAppointmentCompleted(event: OutboxEvent): Promise<'done' | 'deferred'> {

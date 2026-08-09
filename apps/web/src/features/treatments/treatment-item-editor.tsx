@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Modal } from '@/components/modal';
 import type { Professional } from '@/components/selection-provider';
 import { treatmentItemDraftSchema } from './treatment-schemas';
@@ -17,6 +17,7 @@ export function TreatmentItemEditor({
   error,
   onClose,
   onSubmit,
+  variant = 'modal',
 }: {
   open: boolean;
   mode: 'create' | 'edit';
@@ -28,9 +29,16 @@ export function TreatmentItemEditor({
   error: string;
   onClose: () => void;
   onSubmit: (input: Omit<DraftItemInput, 'key'>) => Promise<void>;
+  variant?: 'modal' | 'drawer';
 }) {
   const [formError, setFormError] = useState('');
   const [procedureId, setProcedureId] = useState(item?.procedureId ?? '');
+
+  useEffect(() => {
+    if (!open) return;
+    setProcedureId(item?.procedureId ?? '');
+    setFormError('');
+  }, [item?.procedureId, open]);
 
   const selectedProcedure = useMemo(
     () => procedures.find((row) => row.id === procedureId),
@@ -77,6 +85,93 @@ export function TreatmentItemEditor({
     });
   }
 
+  if (!open) return null;
+
+  const form = (
+    <form
+      className="mutation-form"
+      onSubmit={(event) => void handleSubmit(event)}
+      key={item?.id ?? 'new-item'}
+    >
+      <label className="span-2">
+        Procedimento
+        <select
+          name="procedureId"
+          required
+          defaultValue={item?.procedureId ?? ''}
+          onChange={(event) => setProcedureId(event.target.value)}
+        >
+          <option value="">Selecione</option>
+          {procedures.map((procedure) => (
+            <option key={procedure.id} value={procedure.id}>{procedure.name}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Profissional
+        <select name="professionalId" required defaultValue={item?.professionalId ?? defaultProfessionalId ?? ''}>
+          {professionals.map((professional) => (
+            <option key={professional.id} value={professional.id}>{professional.name}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Quantidade
+        <input name="quantity" type="number" min={1} defaultValue={item?.quantity ?? 1} required />
+      </label>
+      <label>
+        Dente / região
+        <input name="toothFdi" defaultValue={item?.toothFdi ?? ''} placeholder={selectedProcedure?.requiresTooth ? 'Obrigatório' : 'Opcional'} />
+      </label>
+      <label>
+        Face
+        <input name="face" defaultValue={item?.face ?? ''} placeholder={selectedProcedure?.requiresFace ? 'Obrigatório' : 'Opcional'} />
+      </label>
+      <label>
+        Valor unitário
+        <input name="unitPrice" inputMode="decimal" required defaultValue={String(item?.unitPrice ?? '0')} />
+      </label>
+      <label>
+        Desconto
+        <input name="discount" inputMode="decimal" defaultValue={String(item?.discount ?? '0')} />
+      </label>
+      <label>
+        Sessões planejadas
+        <input
+          name="plannedSessions"
+          type="number"
+          min={1}
+          defaultValue={item?.plannedSessions ?? selectedProcedure?.defaultSessions ?? 1}
+          required
+        />
+      </label>
+      <label className="check-field">
+        <input type="checkbox" name="urgent" defaultChecked={Boolean(item?.urgent)} />
+        Urgente
+      </label>
+      {(error || formError) ? <p className="form-error span-2" role="alert">{formError || error}</p> : null}
+      <div className="form-actions span-2">
+        <button type="button" className="button" onClick={onClose} disabled={busy}>Cancelar</button>
+        <button type="submit" className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
+      </div>
+    </form>
+  );
+
+  if (variant === 'drawer') {
+    return (
+      <aside className="treatment-procedure-drawer" aria-label={mode === 'create' ? 'Adicionar procedimento' : 'Editar procedimento'}>
+        <header className="treatment-procedure-drawer-head">
+          <div>
+            <h3>{mode === 'create' ? 'Adicionar procedimento' : 'Editar procedimento'}</h3>
+            <p>Valores finais são recalculados no servidor.</p>
+          </div>
+          <button type="button" className="button ghost small" onClick={onClose}>Fechar</button>
+        </header>
+        {form}
+      </aside>
+    );
+  }
+
   return (
     <Modal
       open={open}
@@ -85,73 +180,7 @@ export function TreatmentItemEditor({
       onClose={onClose}
       size="large"
     >
-      <form
-        className="mutation-form"
-        onSubmit={(event) => void handleSubmit(event)}
-        key={item?.id ?? 'new-item'}
-      >
-        <label className="span-2">
-          Procedimento
-          <select
-            name="procedureId"
-            required
-            defaultValue={item?.procedureId ?? ''}
-            onChange={(event) => setProcedureId(event.target.value)}
-          >
-            <option value="">Selecione</option>
-            {procedures.map((procedure) => (
-              <option key={procedure.id} value={procedure.id}>{procedure.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Profissional
-          <select name="professionalId" required defaultValue={item?.professionalId ?? defaultProfessionalId ?? ''}>
-            {professionals.map((professional) => (
-              <option key={professional.id} value={professional.id}>{professional.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Quantidade
-          <input name="quantity" type="number" min={1} defaultValue={item?.quantity ?? 1} required />
-        </label>
-        <label>
-          Dente / região
-          <input name="toothFdi" defaultValue={item?.toothFdi ?? ''} placeholder={selectedProcedure?.requiresTooth ? 'Obrigatório' : 'Opcional'} />
-        </label>
-        <label>
-          Face
-          <input name="face" defaultValue={item?.face ?? ''} placeholder={selectedProcedure?.requiresFace ? 'Obrigatório' : 'Opcional'} />
-        </label>
-        <label>
-          Valor unitário
-          <input name="unitPrice" inputMode="decimal" required defaultValue={String(item?.unitPrice ?? '0')} />
-        </label>
-        <label>
-          Desconto
-          <input name="discount" inputMode="decimal" defaultValue={String(item?.discount ?? '0')} />
-        </label>
-        <label>
-          Sessões planejadas
-          <input
-            name="plannedSessions"
-            type="number"
-            min={1}
-            defaultValue={item?.plannedSessions ?? selectedProcedure?.defaultSessions ?? 1}
-            required
-          />
-        </label>
-        <label className="check-field">
-          <input type="checkbox" name="urgent" defaultChecked={Boolean(item?.urgent)} />
-          Urgente
-        </label>
-        {(error || formError) ? <p className="form-error span-2" role="alert">{formError || error}</p> : null}
-        <div className="form-actions span-2">
-          <button type="button" className="button" onClick={onClose} disabled={busy}>Cancelar</button>
-          <button type="submit" className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
-        </div>
-      </form>
+      {form}
     </Modal>
   );
 }

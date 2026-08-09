@@ -1,9 +1,28 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
 import { storageStatus } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
+import {
+  buildGoogleAuthorizeUrl,
+  ensureFreshAccessToken,
+  exchangeGoogleAuthCode,
+  getGoogleCalendarEvent,
+  isGoogleCalendarMock,
+  mergeTokenCredentials,
+  readCalendarId,
+  resolveGoogleCalendarWebhookToken,
+  resolveGoogleCalendarWebhookUrl,
+  resolveGoogleOAuthCredentials,
+  signOAuthState,
+  stopGoogleCalendarChannel,
+  testGoogleCalendarAccess,
+  tokensFromCredentials,
+  verifyGoogleWebhookHeaders,
+  verifyOAuthState,
+  watchGoogleCalendarEvents,
+} from './google-calendar.utils';
 
 const envSchema = z.object({
   NIBO_MOCK: z.string().default('true'),
@@ -96,7 +115,7 @@ export class IntegrationsService {
     const credentials = this.decryptForAdapter(connection.encryptedCredentials);
     const provider = connection.provider as Provider | 'GOOGLE_CALENDAR' | 'OPENAI';
     if (provider === 'GOOGLE_CALENDAR') {
-      return this.googleCalendarOauthStatus(organizationId, id, credentials);
+      return this.probeGoogleCalendarLive(id, credentials, connection.configuration);
     }
     const mock = (process.env[`${provider}_MOCK`] ?? 'true').toLowerCase() === 'true';
     if (mock) {
@@ -129,23 +148,22 @@ export class IntegrationsService {
   }
 
   /**
-   * Superfície honesta do OAuth Google Calendar (A38).
-   * Sem clientId/secret → stub explícito. Com credenciais → ainda PARTIAL (fluxo OAuth/sync bidirecional não implementado).
+   * Status honesto do OAuth Google Calendar (A38 / Fatia 4).
+   * Sem clientId/secret/redirect → disabled. Com OAuth (refresh_token) → ready para sync.
    */
   googleCalendarOauthStatus(
     organizationId?: string,
     connectionId?: string,
     connectionCredentials?: Record<string, string>,
+    configuration?: unknown,
   ) {
     void organizationId;
-    const envMock = (process.env.GOOGLE_CALENDAR_MOCK ?? 'true').toLowerCase() === 'true';
-    const envClientId = process.env.GOOGLE_CLIENT_ID?.trim();
-    const envClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
-    const clientId = connectionCredentials?.clientId?.trim() || envClientId;
-    const clientSecret = connectionCredentials?.clientSecret?.trim() || envClientSecret;
-    const hasCredentials = Boolean(clientId && clientSecret);
+    const envMock = isGoogleCalendarMock();
+    const oauth = resolveGoogleOAuthCredentials(connectionCredentials);
+    const tokens = connectionCredentials ? tokensFromCredentials(connectionCredentials) : null;
+    const calendarId = readCalendarId(configuration);
 
-    if (envMock || !hasCredentials) {
+    if (envMock) {
       return {
         success: false,
         provider: 'GOOGLE_CALENDAR' as const,
@@ -153,25 +171,59 @@ export class IntegrationsService {
         enabled: false,
         oauthReady: false,
         syncBidirectional: false,
-        status: 'PARTIAL_STUB',
-        mode: envMock ? 'mock' : 'missing_credentials',
-        message: envMock
-          ? 'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true). OAuth e sync bidirecional não estão disponíveis — não declarar GO.'
-          : 'Google Calendar sem credenciais. Configure clientId/clientSecret na conexão ou GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET. OAuth ainda é stub (A38).',
+        calendarId,
+        status: 'DISABLED_MOCK',
+        mode: 'mock',
+        message:
+          'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true). Defina MOCK=false + GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI e conclua OAuth para habilitar.',
+      };
+    }
+
+    if (!oauth) {
+      return {
+        success: false,
+        provider: 'GOOGLE_CALENDAR' as const,
+        connectionId: connectionId ?? null,
+        enabled: false,
+        oauthReady: false,
+        syncBidirectional: false,
+        calendarId,
+        status: 'MISSING_CREDENTIALS',
+        mode: 'missing_credentials',
+        message:
+          'Google Calendar sem credenciais. Configure clientId/clientSecret na conexão e GOOGLE_REDIRECT_URI (ou GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI no env).',
+      };
+    }
+
+    if (!tokens?.refreshToken) {
+      return {
+        success: false,
+        provider: 'GOOGLE_CALENDAR' as const,
+        connectionId: connectionId ?? null,
+        enabled: true,
+        oauthReady: false,
+        syncBidirectional: false,
+        calendarId,
+        status: 'OAUTH_PENDING',
+        mode: 'credentials_present',
+        message:
+          'Credenciais OAuth presentes, mas falta consentimento (refresh_token). Use "Iniciar OAuth" e autorize no Google.',
       };
     }
 
     return {
-      success: false,
+      success: true,
       provider: 'GOOGLE_CALENDAR' as const,
       connectionId: connectionId ?? null,
       enabled: true,
-      oauthReady: false,
-      syncBidirectional: false,
-      status: 'PARTIAL_STUB',
-      mode: 'credentials_present',
+      oauthReady: true,
+      syncBidirectional: true,
+      calendarId,
+      status: 'READY',
+      mode: 'live',
       message:
-        'Credenciais presentes, mas o fluxo OAuth (consentimento + refresh token) e a sincronização bidirecional ainda não estão implementados. Status PARTIAL — não declarar GO.',
+        'Google Calendar OAuth pronto. Sync: clinic→Google (outbox); Google→clinic via pull-sync e webhook push se GOOGLE_CALENDAR_WEBHOOK_URL estiver configurada.',
+      webhookConfigured: Boolean(resolveGoogleCalendarWebhookUrl()),
     };
   }
 
@@ -180,14 +232,396 @@ export class IntegrationsService {
       where: { id: connectionId, clinic: { organizationId }, provider: 'GOOGLE_CALENDAR' },
     });
     if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
+    if (connection.status === 'DISABLED') {
+      throw new BadRequestException('Reative a integração antes de iniciar o OAuth.');
+    }
     const credentials = connection.encryptedCredentials
       ? this.decryptForAdapter(connection.encryptedCredentials)
       : {};
-    const status = this.googleCalendarOauthStatus(organizationId, connectionId, credentials);
-    // Nunca simular redirect OAuth bem-sucedido.
-    throw new BadRequestException(
-      `${status.message} Endpoint /integrations/:id/oauth/start existe como superfície; implemente o consentimento Google antes de usar em produção.`,
-    );
+    if (isGoogleCalendarMock()) {
+      throw new BadRequestException(
+        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true). Defina MOCK=false para iniciar OAuth.',
+      );
+    }
+    const oauth = resolveGoogleOAuthCredentials(credentials);
+    if (!oauth) {
+      throw new BadRequestException(
+        'Configure clientId/clientSecret na conexão e GOOGLE_REDIRECT_URI no ambiente antes do OAuth.',
+      );
+    }
+    const state = signOAuthState(connectionId, process.env.ENCRYPTION_MASTER_KEY!);
+    const authorizeUrl = buildGoogleAuthorizeUrl(oauth, state);
+    const prev =
+      connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
+        ? { ...(connection.configuration as Record<string, unknown>) }
+        : {};
+    await prisma.integrationConnection.update({
+      where: { id: connectionId },
+      data: {
+        configuration: {
+          ...prev,
+          pendingOauthState: state,
+          pendingOauthAt: new Date().toISOString(),
+        } as Prisma.InputJsonValue,
+      },
+    });
+    return {
+      success: true,
+      provider: 'GOOGLE_CALENDAR' as const,
+      connectionId,
+      authorizeUrl,
+      message: 'Abra authorizeUrl para conceder acesso ao Google Calendar.',
+    };
+  }
+
+  async handleGoogleOauthCallback(code: string | undefined, state: string | undefined) {
+    if (!code?.trim() || !state?.trim()) {
+      throw new BadRequestException('Callback Google incompleto: informe code e state.');
+    }
+    const masterKey = process.env.ENCRYPTION_MASTER_KEY;
+    if (!masterKey || !/^[a-f0-9]{64}$/i.test(masterKey)) {
+      throw new BadRequestException('ENCRYPTION_MASTER_KEY inválida no servidor.');
+    }
+    const verified = verifyOAuthState(state, masterKey);
+    if (!verified) {
+      throw new BadRequestException('State OAuth inválido ou expirado.');
+    }
+    const connection = await prisma.integrationConnection.findFirst({
+      where: { id: verified.connectionId, provider: 'GOOGLE_CALENDAR' },
+      include: { clinic: { select: { organizationId: true, tradeName: true } } },
+    });
+    if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
+    const config =
+      connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
+        ? (connection.configuration as Record<string, unknown>)
+        : {};
+    if (config.pendingOauthState && config.pendingOauthState !== state) {
+      throw new BadRequestException('State OAuth não corresponde ao início desta autorização.');
+    }
+    const baseCredentials = connection.encryptedCredentials
+      ? this.decryptForAdapter(connection.encryptedCredentials)
+      : {};
+    const oauth = resolveGoogleOAuthCredentials(baseCredentials);
+    if (!oauth) {
+      throw new BadRequestException('Credenciais OAuth ausentes na conexão.');
+    }
+    const tokens = await exchangeGoogleAuthCode(oauth, code.trim());
+    const encryptedCredentials = this.encrypt(mergeTokenCredentials(baseCredentials, tokens));
+    const { pendingOauthState: _pending, pendingOauthAt: _at, ...restConfig } = config;
+    await prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: {
+        encryptedCredentials,
+        status: 'ACTIVE',
+        lastSyncAt: new Date(),
+        configuration: {
+          ...restConfig,
+          calendarId: readCalendarId(config),
+          oauthConnectedAt: new Date().toISOString(),
+        } as Prisma.InputJsonValue,
+      },
+    });
+    const webUrl = (process.env.WEB_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    return {
+      success: true,
+      connectionId: connection.id,
+      redirectTo: `${webUrl}/configuracoes?integration=GOOGLE_CALENDAR&oauth=ok`,
+      message: 'OAuth Google Calendar concluído. Tokens armazenados criptografados.',
+    };
+  }
+
+  async pullGoogleCalendarSync(organizationId: string, connectionId: string) {
+    const connection = await prisma.integrationConnection.findFirst({
+      where: { id: connectionId, clinic: { organizationId }, provider: 'GOOGLE_CALENDAR' },
+    });
+    if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
+    if (isGoogleCalendarMock()) {
+      throw new BadRequestException('Google Calendar em MOCK — pull-sync desabilitado.');
+    }
+    if (!connection.encryptedCredentials) {
+      throw new BadRequestException('Conexão sem credenciais.');
+    }
+    let credentials = this.decryptForAdapter(connection.encryptedCredentials);
+    const oauth = resolveGoogleOAuthCredentials(credentials);
+    if (!oauth || !tokensFromCredentials(credentials)) {
+      throw new BadRequestException('Conclua o OAuth antes do pull-sync.');
+    }
+    const fresh = await ensureFreshAccessToken(oauth, credentials);
+    if (fresh.refreshed) {
+      credentials = fresh.credentials;
+      await prisma.integrationConnection.update({
+        where: { id: connection.id },
+        data: { encryptedCredentials: this.encrypt(credentials) },
+      });
+    }
+    const calendarId = readCalendarId(connection.configuration);
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        clinicId: connection.clinicId,
+        organizationId,
+        externalCalendarEventId: { not: null },
+        status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+      },
+      select: { id: true, startAt: true, endAt: true, externalCalendarEventId: true, version: true },
+      take: 200,
+    });
+    let updated = 0;
+    let checked = 0;
+    for (const appointment of appointments) {
+      if (!appointment.externalCalendarEventId) continue;
+      checked += 1;
+      const remote = await getGoogleCalendarEvent(
+        fresh.accessToken,
+        calendarId,
+        appointment.externalCalendarEventId,
+      );
+      if (!remote) continue;
+      const startChanged = remote.startAt.getTime() !== appointment.startAt.getTime();
+      const endChanged = remote.endAt.getTime() !== appointment.endAt.getTime();
+      if (!startChanged && !endChanged) continue;
+      if (remote.endAt <= remote.startAt) continue;
+      await prisma.appointment.update({
+        where: { id: appointment.id },
+        data: {
+          startAt: remote.startAt,
+          endAt: remote.endAt,
+          version: { increment: 1 },
+          source: 'GOOGLE_CALENDAR',
+        },
+      });
+      updated += 1;
+    }
+    await prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { lastSyncAt: new Date() },
+    });
+    return {
+      success: true,
+      connectionId,
+      checked,
+      updated,
+      message: `Pull-sync: ${updated} agendamento(s) atualizado(s) de ${checked} evento(s) vinculados.`,
+    };
+  }
+
+  async registerGoogleCalendarWatch(organizationId: string, connectionId: string) {
+    const connection = await prisma.integrationConnection.findFirst({
+      where: { id: connectionId, clinic: { organizationId }, provider: 'GOOGLE_CALENDAR' },
+    });
+    if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
+    if (isGoogleCalendarMock()) {
+      throw new BadRequestException('Google Calendar em MOCK — webhook watch desabilitado.');
+    }
+    const webhookUrl = resolveGoogleCalendarWebhookUrl();
+    if (!webhookUrl) {
+      throw new BadRequestException(
+        'Defina GOOGLE_CALENDAR_WEBHOOK_URL (HTTPS público) para registrar o canal push.',
+      );
+    }
+    if (!connection.encryptedCredentials) {
+      throw new BadRequestException('Conexão sem credenciais.');
+    }
+    let credentials = this.decryptForAdapter(connection.encryptedCredentials);
+    const oauth = resolveGoogleOAuthCredentials(credentials);
+    if (!oauth || !tokensFromCredentials(credentials)) {
+      throw new BadRequestException('Conclua o OAuth antes de registrar o webhook.');
+    }
+    const fresh = await ensureFreshAccessToken(oauth, credentials);
+    if (fresh.refreshed) {
+      credentials = fresh.credentials;
+      await prisma.integrationConnection.update({
+        where: { id: connection.id },
+        data: { encryptedCredentials: this.encrypt(credentials) },
+      });
+    }
+    const config =
+      connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
+        ? { ...(connection.configuration as Record<string, unknown>) }
+        : {};
+    const prevChannelId = typeof config.webhookChannelId === 'string' ? config.webhookChannelId : '';
+    const prevResourceId = typeof config.webhookResourceId === 'string' ? config.webhookResourceId : '';
+    if (prevChannelId && prevResourceId) {
+      try {
+        await stopGoogleCalendarChannel(fresh.accessToken, prevChannelId, prevResourceId);
+      } catch {
+        /* canal já expirado — segue registro */
+      }
+    }
+    const channelId = randomUUID();
+    const token =
+      resolveGoogleCalendarWebhookToken(config)
+      || randomBytes(24).toString('hex');
+    const calendarId = readCalendarId(config);
+    const watch = await watchGoogleCalendarEvents(fresh.accessToken, calendarId, {
+      channelId,
+      address: webhookUrl,
+      token,
+    });
+    await prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: {
+        configuration: {
+          ...config,
+          calendarId,
+          webhookChannelId: watch.channelId,
+          webhookResourceId: watch.resourceId,
+          webhookChannelToken: token,
+          webhookExpiration: watch.expiration ?? null,
+          webhookRegisteredAt: new Date().toISOString(),
+        } as Prisma.InputJsonValue,
+        lastSyncAt: new Date(),
+      },
+    });
+    return {
+      success: true,
+      connectionId,
+      channelId: watch.channelId,
+      resourceId: watch.resourceId,
+      expiration: watch.expiration,
+      webhookUrl,
+      message:
+        'Canal push registrado. Google notificará mudanças; o servidor responde com pull-sync. Renove o canal antes da expiration (~7 dias).',
+    };
+  }
+
+  async handleGoogleCalendarWebhook(headers: {
+    channelId?: string;
+    channelToken?: string;
+    resourceId?: string;
+    resourceState?: string;
+    messageNumber?: string;
+  }) {
+    const verified = verifyGoogleWebhookHeaders({
+      channelId: headers.channelId,
+      channelToken: headers.channelToken,
+      resourceState: headers.resourceState,
+    });
+    if (!verified.ok) {
+      throw new BadRequestException(verified.reason ?? 'Webhook Google inválido.');
+    }
+
+    const channelId = headers.channelId!.trim();
+    const connections = await prisma.integrationConnection.findMany({
+      where: { provider: 'GOOGLE_CALENDAR', status: 'ACTIVE' },
+      include: { clinic: { select: { organizationId: true } } },
+      take: 200,
+    });
+    const match = connections.find((row) => {
+      const cfg =
+        row.configuration && typeof row.configuration === 'object' && !Array.isArray(row.configuration)
+          ? (row.configuration as Record<string, unknown>)
+          : {};
+      return cfg.webhookChannelId === channelId;
+    });
+    if (!match) {
+      return { success: true, ignored: true, message: 'Canal desconhecido — ACK sem sync.' };
+    }
+
+    const cfg =
+      match.configuration && typeof match.configuration === 'object' && !Array.isArray(match.configuration)
+        ? (match.configuration as Record<string, unknown>)
+        : {};
+    const expectedToken = resolveGoogleCalendarWebhookToken(cfg);
+    const tokenCheck = verifyGoogleWebhookHeaders({
+      channelId,
+      channelToken: headers.channelToken,
+      resourceState: headers.resourceState,
+      expectedToken: expectedToken || undefined,
+    });
+    if (!tokenCheck.ok) {
+      throw new BadRequestException(tokenCheck.reason ?? 'Token do canal inválido.');
+    }
+
+    const eventId = [
+      channelId,
+      headers.resourceId ?? '',
+      headers.messageNumber ?? headers.resourceState ?? 'notify',
+    ].join(':');
+    const payloadHash = createHash('sha256')
+      .update(JSON.stringify({
+        channelId,
+        resourceId: headers.resourceId ?? null,
+        resourceState: headers.resourceState ?? null,
+        messageNumber: headers.messageNumber ?? null,
+      }))
+      .digest('hex');
+
+    try {
+      await prisma.webhookReceipt.create({
+        data: {
+          provider: 'GOOGLE_CALENDAR',
+          eventId: eventId.slice(0, 190),
+          payloadHash,
+          status: 'PENDING',
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return { success: true, duplicate: true, message: 'Webhook já processado.' };
+      }
+      throw error;
+    }
+
+    if (tokenCheck.syncOnly) {
+      await prisma.webhookReceipt.update({
+        where: { provider_eventId: { provider: 'GOOGLE_CALENDAR', eventId: eventId.slice(0, 190) } },
+        data: { status: 'SUCCEEDED', processedAt: new Date() },
+      });
+      return { success: true, syncOnly: true, message: 'Handshake sync ACK.' };
+    }
+
+    try {
+      const result = await this.pullGoogleCalendarSync(match.clinic.organizationId, match.id);
+      await prisma.webhookReceipt.update({
+        where: { provider_eventId: { provider: 'GOOGLE_CALENDAR', eventId: eventId.slice(0, 190) } },
+        data: { status: 'SUCCEEDED', processedAt: new Date() },
+      });
+      return {
+        success: true,
+        connectionId: match.id,
+        pull: result,
+        message: 'Notify processado com pull-sync.',
+      };
+    } catch (error) {
+      await prisma.webhookReceipt.update({
+        where: { provider_eventId: { provider: 'GOOGLE_CALENDAR', eventId: eventId.slice(0, 190) } },
+        data: { status: 'FAILED', processedAt: new Date() },
+      });
+      throw error;
+    }
+  }
+
+  /** Usado por test-connection quando já há refresh_token. */
+  async probeGoogleCalendarLive(connectionId: string, credentials: Record<string, string>, configuration: unknown) {
+    const status = this.googleCalendarOauthStatus(undefined, connectionId, credentials, configuration);
+    if (!status.oauthReady) return status;
+    const oauth = resolveGoogleOAuthCredentials(credentials)!;
+    const fresh = await ensureFreshAccessToken(oauth, credentials);
+    if (fresh.refreshed) {
+      await prisma.integrationConnection.update({
+        where: { id: connectionId },
+        data: { encryptedCredentials: this.encrypt(fresh.credentials), lastSyncAt: new Date() },
+      });
+    }
+    const calendarId = readCalendarId(configuration);
+    const probe = await testGoogleCalendarAccess(fresh.accessToken, calendarId);
+    if (probe.success) {
+      await prisma.integrationConnection.update({
+        where: { id: connectionId },
+        data: { lastSyncAt: new Date(), status: 'ACTIVE' },
+      });
+    }
+    return {
+      ...probe,
+      provider: 'GOOGLE_CALENDAR' as const,
+      connectionId,
+      enabled: true,
+      oauthReady: true,
+      syncBidirectional: true,
+      calendarId,
+      status: probe.success ? 'READY' : 'ERROR',
+      mode: 'live',
+    };
   }
 
   async save(organizationId: string, actorId: string, input: SaveConnectionInput) {
@@ -195,12 +629,51 @@ export class IntegrationsService {
     if (!clinic) throw new NotFoundException('Clínica não encontrada.');
     const provider = input.provider;
     const schema = providerCredentials[provider] as z.ZodType<Record<string, string>>;
-    const credentials = parseWithZod(schema, input.credentials);
+    let credentials = parseWithZod(schema, input.credentials);
     const scopeType = input.scopeType ?? process.env.INTEGRATION_SCOPE_DEFAULT ?? 'CLINIC';
     const scopeId = input.scopeId ?? input.clinicId;
+
+    if (provider === 'GOOGLE_CALENDAR') {
+      const existing = await prisma.integrationConnection.findUnique({
+        where: {
+          clinicId_provider_scopeType_scopeId: {
+            clinicId: input.clinicId, provider, scopeType, scopeId,
+          },
+        },
+        select: { encryptedCredentials: true },
+      });
+      if (existing?.encryptedCredentials) {
+        const previous = this.decryptForAdapter(existing.encryptedCredentials);
+        const tokens = tokensFromCredentials(previous);
+        if (tokens) {
+          credentials = mergeTokenCredentials(credentials, tokens);
+        }
+      }
+    }
+
     const encryptedCredentials = this.encrypt(credentials);
 
     return prisma.$transaction(async (tx) => {
+      const existingRow = await tx.integrationConnection.findUnique({
+        where: {
+          clinicId_provider_scopeType_scopeId: {
+            clinicId: input.clinicId, provider, scopeType, scopeId,
+          },
+        },
+        select: { configuration: true },
+      });
+      const prevConfig =
+        existingRow?.configuration && typeof existingRow.configuration === 'object' && !Array.isArray(existingRow.configuration)
+          ? (existingRow.configuration as Record<string, unknown>)
+          : {};
+      const nextConfiguration = {
+        ...prevConfig,
+        ...(input.configuration ?? {}),
+      };
+      // Não reintroduzir state OAuth pendente ao salvar credenciais.
+      delete nextConfiguration.pendingOauthState;
+      delete nextConfiguration.pendingOauthAt;
+
       const connection = await tx.integrationConnection.upsert({
         where: {
           clinicId_provider_scopeType_scopeId: {
@@ -209,7 +682,7 @@ export class IntegrationsService {
         },
         update: {
           encryptedCredentials,
-          configuration: json(input.configuration ?? {}),
+          configuration: json(nextConfiguration),
           status: 'ACTIVE',
         },
         create: {

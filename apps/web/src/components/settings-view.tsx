@@ -35,6 +35,7 @@ import {
   OutboxDeadLetterPanel,
   PriceTablesAdminPanel,
 } from '@/features/settings/settings-catalog-panels';
+import { PatientDuplicatesPanel } from '@/features/patients/patient-duplicates-panel';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
 import { useWorkspace } from './workspace-provider';
@@ -45,6 +46,7 @@ type SectionKey =
   | 'overview'
   | 'anamnesis'
   | 'units'
+  | 'duplicates'
   | 'procedures'
   | 'returns'
   | 'finance'
@@ -66,6 +68,7 @@ const sections: Array<{
   { key: 'overview', label: 'Visão geral', description: 'Todas as áreas de configuração da clínica.', icon: ShieldCheck },
   { key: 'anamnesis', label: 'Anamnese (modelos)', description: 'Editor visual drag-and-drop de seções e perguntas.', icon: ClipboardList },
   { key: 'units', label: 'Unidades, consultórios e equipe', description: 'Estrutura física, cadeiras e profissionais ativos.', icon: Building2 },
+  { key: 'duplicates', label: 'Pacientes duplicados', description: 'Saneamento cadastral assistido com preview de merge.', icon: ClipboardList },
   { key: 'procedures', label: 'Procedimentos e especialidades', description: 'Catálogo clínico que alimenta agenda e planos.', icon: Stethoscope },
   { key: 'returns', label: 'Retornos automáticos', description: 'Fila de contato e regras de retorno pós-atendimento.', icon: RefreshCcw },
   { key: 'finance', label: 'Financeiro e comissões', description: 'Contas, categorias, taxas e regras de repasse.', icon: CircleDollarSign },
@@ -368,12 +371,33 @@ export function SettingsView() {
   async function startGoogleOauth(id: string) {
     setIntegrationMenuId(null);
     try {
-      await api.post(`/integrations/${id}/oauth/start`, {});
-      window.alert('OAuth iniciado (inesperado — fluxo ainda é stub).');
+      const result = await api.post<{ authorizeUrl?: string; message?: string }>(
+        `/integrations/${id}/oauth/start`,
+        {},
+      );
+      if (result.authorizeUrl) {
+        window.open(result.authorizeUrl, '_blank', 'noopener,noreferrer');
+        setError('');
+        return;
+      }
+      setError(result.message ?? 'OAuth Google Calendar não retornou authorizeUrl.');
     } catch (cause) {
       const message = cause instanceof ApiError ? cause.message : 'OAuth Google Calendar indisponível.';
       setError(message);
-      window.alert(message);
+    }
+  }
+
+  async function pullGoogleCalendarSync(id: string) {
+    setIntegrationMenuId(null);
+    try {
+      const result = await api.post<{ message?: string; updated?: number }>(
+        `/integrations/${id}/calendar/pull-sync`,
+        {},
+      );
+      setError(result.message ?? 'Pull-sync concluído.');
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Pull-sync Google Calendar falhou.');
     }
   }
 
@@ -657,6 +681,12 @@ export function SettingsView() {
             </Panel>
           )}
 
+          {section === 'duplicates' && (
+            <Panel title={activeLabel} description="Merge fora da listagem operacional de pacientes.">
+              <PatientDuplicatesPanel clinicId={clinicId} />
+            </Panel>
+          )}
+
           {section === 'procedures' && (
             <Panel
               title={activeLabel}
@@ -918,7 +948,8 @@ export function SettingsView() {
               description="Provedores com formulário específico (Nibo, pagamentos, WhatsApp, agenda e IA)."
             >
               <p className="muted-note" style={{ padding: '0 14px' }}>
-                Google Calendar permanece PARTIAL (A38): sem OAuth/sync bidirecional. Sem credenciais o teste falha de forma explícita — não declarar GO.
+                Google Calendar: defina GOOGLE_CALENDAR_MOCK=false + clientId/secret + GOOGLE_REDIRECT_URI, salve a conexão e use Iniciar OAuth.
+                Sem credenciais o teste falha de forma explícita. Sync clinic→Google no worker; Google→clinic via Pull sync.
               </p>
               {loading && <div className="state-message">Carregando integrações…</div>}
               {!loading && integrations.length === 0 && (
@@ -982,13 +1013,22 @@ export function SettingsView() {
                                     Testar conexão
                                   </button>
                                   {text(item.provider) === 'GOOGLE_CALENDAR' ? (
-                                    <button
-                                      type="button"
-                                      role="menuitem"
-                                      onClick={() => void startGoogleOauth(String(item.id))}
-                                    >
-                                      Iniciar OAuth (stub)
-                                    </button>
+                                    <>
+                                      <button
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => void startGoogleOauth(String(item.id))}
+                                      >
+                                        Iniciar OAuth
+                                      </button>
+                                      <button
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => void pullGoogleCalendarSync(String(item.id))}
+                                      >
+                                        Pull sync (Google → agenda)
+                                      </button>
+                                    </>
                                   ) : null}
                                   <button
                                     type="button"

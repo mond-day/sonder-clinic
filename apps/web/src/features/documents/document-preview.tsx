@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState, type ReactNode } from 'react';
 import { dateOnly, dateTime, presentationLabel, statusTone, text } from '@/lib/format';
 import { EmptyState, Skeleton, StatusBadge } from '@/components/ui';
 import type {
@@ -10,6 +11,8 @@ import type {
   Prescription,
   PrescriptionItem,
 } from './document-types';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
 
 function asItems(raw: unknown): PrescriptionItem[] {
   if (!Array.isArray(raw)) return [];
@@ -39,6 +42,7 @@ export function DocumentPreview({
   history,
   loading,
   busy,
+  patientId,
   patientName,
   patientCpfMasked,
   professionalName,
@@ -60,6 +64,7 @@ export function DocumentPreview({
   history: DocumentEvent[];
   loading: boolean;
   busy: boolean;
+  patientId: string;
   patientName: string;
   patientCpfMasked: string;
   professionalName: (id?: string | null) => string;
@@ -145,27 +150,22 @@ export function DocumentPreview({
 
   if (selectedMeta.source === 'upload' && media) {
     const file = media.file;
+    const mime = String(file?.mimeType ?? '').toLowerCase();
+    const isImage = mime.startsWith('image/') || ['image/jpeg', 'image/png', 'image/webp'].includes(mime);
+    const isPdf = mime === 'application/pdf' || media.type?.toUpperCase().includes('PDF');
+    const isVideo = mime.startsWith('video/');
     return (
-      <div className="document-preview-panel">
-        {toolbar}
-        {actionError ? <p className="form-error detail-error" role="alert">{actionError}</p> : null}
-        <div className="preview-wrap">
-          <div className="file-preview">
-            <div className="big-icon">{typeLabel(media.type)}</div>
-            <h2>{text(media.displayName, file?.originalName)}</h2>
-            <p>{text(media.notes, 'Arquivo armazenado no prontuário do paciente.')}</p>
-            <p>
-              <strong>Tipo:</strong> {presentationLabel(media.type)}
-              {' · '}
-              <strong>Tamanho:</strong> {formatBytes(file?.sizeBytes)}
-              {' · '}
-              <strong>AV:</strong> {presentationLabel(file?.antivirusStatus)}
-              {' · '}
-              <strong>Enviado:</strong> {dateOnly(media.createdAt)}
-            </p>
-          </div>
-        </div>
-      </div>
+      <MediaPreviewPanel
+        toolbar={toolbar}
+        actionError={actionError}
+        media={media}
+        file={file}
+        patientId={patientId}
+        mediaId={String(media.id)}
+        isImage={isImage}
+        isPdf={Boolean(isPdf)}
+        isVideo={isVideo}
+      />
     );
   }
 
@@ -310,6 +310,119 @@ function DocumentHistoryInline({ events }: { events: DocumentEvent[] }) {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function MediaPreviewPanel({
+  toolbar,
+  actionError,
+  media,
+  file,
+  patientId,
+  mediaId,
+  isImage,
+  isPdf,
+  isVideo,
+}: {
+  toolbar: ReactNode;
+  actionError: string;
+  media: PatientMedia;
+  file?: PatientMedia['file'];
+  patientId: string;
+  mediaId: string;
+  isImage: boolean;
+  isPdf: boolean;
+  isVideo: boolean;
+}) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [loadError, setLoadError] = useState('');
+  const [lightbox, setLightbox] = useState(false);
+
+  useEffect(() => {
+    if (!patientId || !mediaId || (!isImage && !isPdf && !isVideo)) return;
+    let revoked = false;
+    let created: string | null = null;
+    (async () => {
+      try {
+        const response = await fetch(`${API_URL}/patients/${patientId}/media/${mediaId}/download`, {
+          credentials: 'include',
+        });
+        if (!response.ok) throw new Error('Falha ao carregar prévia autenticada.');
+        const blob = await response.blob();
+        created = URL.createObjectURL(blob);
+        if (!revoked) setObjectUrl(created);
+      } catch (error) {
+        if (!revoked) setLoadError(error instanceof Error ? error.message : 'Prévia indisponível.');
+      }
+    })();
+    return () => {
+      revoked = true;
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [patientId, mediaId, isImage, isPdf, isVideo]);
+
+  return (
+    <div className="document-preview-panel">
+      {toolbar}
+      {actionError ? <p className="form-error detail-error" role="alert">{actionError}</p> : null}
+      <div className="preview-wrap">
+        {isImage && objectUrl ? (
+          <div className="media-inline-preview">
+            <div className="media-preview-controls" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+              <button type="button" className="button ghost small" onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}>−</button>
+              <span>{Math.round(zoom * 100)}%</span>
+              <button type="button" className="button ghost small" onClick={() => setZoom((z) => Math.min(3, z + 0.25))}>+</button>
+              <button type="button" className="button soft small" onClick={() => setLightbox(true)}>Ampliar</button>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={objectUrl}
+              alt={text(media.displayName, file?.originalName)}
+              style={{ objectFit: 'contain', maxWidth: '100%', maxHeight: 420, transform: `scale(${zoom})`, transformOrigin: 'center top' }}
+            />
+            {lightbox ? (
+              <div
+                className="media-lightbox"
+                role="dialog"
+                onClick={() => setLightbox(false)}
+                style={{
+                  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+                  display: 'grid', placeItems: 'center', zIndex: 80,
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={objectUrl} alt="" style={{ objectFit: 'contain', maxWidth: '95vw', maxHeight: '90vh' }} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {isPdf && objectUrl ? (
+          <iframe title="Prévia PDF" src={objectUrl} style={{ width: '100%', minHeight: 480, border: 0 }} />
+        ) : null}
+        {isVideo && objectUrl ? (
+          <video controls src={objectUrl} style={{ width: '100%', maxHeight: 420 }}>
+            <track kind="captions" />
+          </video>
+        ) : null}
+        {(!isImage && !isPdf && !isVideo) || loadError || (!objectUrl && (isImage || isPdf || isVideo)) ? (
+          <div className="file-preview">
+            <div className="big-icon">{typeLabel(media.type)}</div>
+            <h2>{text(media.displayName, file?.originalName)}</h2>
+            <p>{loadError || text(media.notes, 'Arquivo armazenado no prontuário do paciente.')}</p>
+            <p>
+              <strong>Tipo:</strong> {presentationLabel(media.type)}
+              {' · '}
+              <strong>Tamanho:</strong> {formatBytes(file?.sizeBytes)}
+              {' · '}
+              <strong>AV:</strong> {presentationLabel(file?.antivirusStatus)}
+              {' · '}
+              <strong>Enviado:</strong> {dateOnly(media.createdAt)}
+            </p>
+          </div>
+        ) : null}
       </div>
     </div>
   );

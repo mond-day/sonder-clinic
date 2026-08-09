@@ -51,6 +51,7 @@ export function CertificateEditor({
   const [days, setDays] = useState(1);
   const [startTime, setStartTime] = useState('14:00');
   const [endTime, setEndTime] = useState('15:30');
+  const [includeCid, setIncludeCid] = useState(false);
   const [cid, setCid] = useState('');
   const [cidAuthorized, setCidAuthorized] = useState(false);
   const [notes, setNotes] = useState('');
@@ -66,6 +67,7 @@ export function CertificateEditor({
     setDays(1);
     setStartTime('14:00');
     setEndTime('15:30');
+    setIncludeCid(false);
     setCid('');
     setCidAuthorized(false);
     setNotes('O paciente deverá permanecer afastado de suas atividades pelo período informado para recuperação adequada.');
@@ -83,8 +85,8 @@ export function CertificateEditor({
       days,
       startTime,
       endTime,
-      cid,
-      cidAuthorized,
+      cid: includeCid ? cid : '',
+      cidAuthorized: includeCid ? cidAuthorized : false,
       notes,
       folderId,
     });
@@ -94,6 +96,10 @@ export function CertificateEditor({
     }
     if (!parsed.data.templateId) {
       setFormError('Nenhum modelo publicado disponível para atestado.');
+      return;
+    }
+    if (includeCid && !parsed.data.cid?.trim()) {
+      setFormError('Informe o CID ou desative Incluir CID.');
       return;
     }
 
@@ -117,7 +123,7 @@ export function CertificateEditor({
       endTime: parsed.data.mode === 'hours' ? parsed.data.endTime : undefined,
     };
 
-    if (parsed.data.cid?.trim()) {
+    if (includeCid && parsed.data.cid?.trim()) {
       clinicalContent.cid = parsed.data.cid.trim();
       clinicalContent.cidConsent = {
         authorized: true,
@@ -197,20 +203,37 @@ export function CertificateEditor({
             </label>
           </>
         ) : null}
-        <label>
-          CID (opcional)
-          <input value={cid} onChange={(event) => setCid(event.target.value)} placeholder="Ex.: K04.7" />
+        <label className="check-field span-2">
+          <input
+            type="checkbox"
+            checked={includeCid}
+            onChange={(event) => {
+              const next = event.target.checked;
+              setIncludeCid(next);
+              if (!next) {
+                setCid('');
+                setCidAuthorized(false);
+              }
+            }}
+          />
+          Incluir CID
         </label>
-        <label>
-          Autorização do paciente
-          <select
-            value={cidAuthorized ? 'yes' : 'no'}
-            onChange={(event) => setCidAuthorized(event.target.value === 'yes')}
-          >
-            <option value="no">Não incluir CID</option>
-            <option value="yes">Autorização coletada</option>
-          </select>
-        </label>
+        {includeCid ? (
+          <>
+            <label>
+              CID
+              <input value={cid} onChange={(event) => setCid(event.target.value)} placeholder="Ex.: K04.7" required={includeCid} />
+            </label>
+            <label className="check-field">
+              <input
+                type="checkbox"
+                checked={cidAuthorized}
+                onChange={(event) => setCidAuthorized(event.target.checked)}
+              />
+              Autorização do paciente coletada
+            </label>
+          </>
+        ) : null}
         <label>
           Pasta
           <select value={folderId} onChange={(event) => setFolderId(event.target.value)}>

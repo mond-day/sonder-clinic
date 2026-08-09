@@ -137,7 +137,7 @@ export function DashboardView() {
               <div>
                 <strong>Financeiro</strong>
                 <small>
-                  {pendingFinance.length} em aberto · {currency(pendingFinance.reduce((sum, item) => sum + Number(item.netAmount ?? 0), 0))}
+                  {pendingFinance.length} em aberto · {currency(pendingFinance.reduce((sum, item) => sum + Number(item.outstandingAmount ?? item.netAmount ?? 0), 0))}
                 </small>
               </div>
               <ArrowRight size={16} />
@@ -155,11 +155,11 @@ export function DashboardView() {
             <div className="info-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <div className="info-item">
                 <small>Em aberto</small>
-                <strong>{currency(pendingFinance.reduce((sum, item) => sum + Number(item.netAmount ?? 0), 0))}</strong>
+                <strong>{currency(pendingFinance.reduce((sum, item) => sum + Number(item.outstandingAmount ?? item.netAmount ?? 0), 0))}</strong>
               </div>
               <div className="info-item">
                 <small>Vencidos</small>
-                <strong>{currency(overdue.reduce((sum, item) => sum + Number(item.netAmount ?? 0), 0))}</strong>
+                <strong>{currency(overdue.reduce((sum, item) => sum + Number(item.outstandingAmount ?? item.netAmount ?? 0), 0))}</strong>
               </div>
             </div>
           </Panel>

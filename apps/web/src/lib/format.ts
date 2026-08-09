@@ -68,10 +68,34 @@ export function hasPermission(permissions: string[] | undefined, ...required: st
 export function statusTone(status: unknown): 'green' | 'amber' | 'red' | 'blue' | 'gray' | 'purple' {
   const value = String(status ?? '').toUpperCase();
   if (['CONFIRMED', 'PAID', 'SIGNED', 'COMPLETED', 'ACTIVE', 'APPROVED', 'DELIVERED'].includes(value)) return 'green';
-  if (['SCHEDULED', 'PENDING', 'PLANNED', 'IN_PROGRESS', 'PARTIAL'].includes(value)) return 'amber';
-  if (['OVERDUE', 'CANCELLED', 'FAILED', 'NO_SHOW', 'ARCHIVED'].includes(value)) return 'red';
-  if (['ARRIVED', 'WAITING', 'DRAFT'].includes(value)) return 'blue';
+  if (['SCHEDULED', 'PENDING', 'PLANNED', 'PARTIAL', 'PARTIALLY_APPROVED', 'PARTIALLY_PAID'].includes(value)) return 'amber';
+  if (['IN_PROGRESS'].includes(value)) return 'purple';
+  if (['OVERDUE', 'CANCELLED', 'FAILED', 'NO_SHOW', 'ARCHIVED', 'BLOCKED'].includes(value)) return 'red';
+  if (['ARRIVED', 'WAITING', 'CHECKED_IN', 'DRAFT', 'OPEN'].includes(value)) return 'blue';
   return 'gray';
+}
+
+/** Cor do card de evento na agenda — alinhada ao status do agendamento. */
+export function appointmentEventTone(status: unknown): 'teal' | 'blue' | 'amber' | 'purple' | 'green' | 'red' | 'gray' {
+  const value = String(status ?? '').toUpperCase();
+  switch (value) {
+    case 'SCHEDULED':
+      return 'blue';
+    case 'CONFIRMED':
+      return 'green';
+    case 'CHECKED_IN':
+      return 'teal';
+    case 'IN_PROGRESS':
+      return 'purple';
+    case 'COMPLETED':
+      return 'gray';
+    case 'CANCELLED':
+      return 'red';
+    case 'NO_SHOW':
+      return 'amber';
+    default:
+      return 'blue';
+  }
 }
 
 const presentationLabels: Record<string, string> = {
@@ -101,6 +125,10 @@ const presentationLabels: Record<string, string> = {
   ADULT: 'Adulto', CHILD: 'Infantil', ELDERLY: 'Idoso', PREGNANT: 'Gestante',
   APPOINTMENTS: 'Agenda', FINANCIAL: 'Financeiro', COMMISSIONS: 'Comissões',
   COMMUNICATION: 'Comunicação', CLOSED: 'Fechado',
+  ACCEPTED: 'Aceito', REVOKED: 'Revogado', EXPIRED: 'Expirado',
+  PAYABLE: 'Conta a pagar', RECEIVABLE: 'Conta a receber',
+  DAILY: 'Diária', WEEKLY: 'Semanal', MONTHLY: 'Mensal', YEARLY: 'Anual',
+  PRODUCTION: 'Produção', RECEIPT: 'Recebimento',
   APPOINTMENT_COMPLETED: 'Consulta concluída',
 };
 

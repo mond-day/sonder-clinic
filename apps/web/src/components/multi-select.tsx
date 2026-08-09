@@ -14,25 +14,31 @@ export function MultiSelect({
   label,
   options,
   defaultValues = [],
+  values,
   placeholder = 'Selecionar…',
   disabled = false,
+  onChange,
 }: {
-  name: string;
+  name?: string;
   label: string;
   options: MultiSelectOption[];
   defaultValues?: string[];
+  values?: string[];
   placeholder?: string;
   disabled?: boolean;
+  onChange?: (values: string[]) => void;
 }) {
   const id = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const controlled = values !== undefined;
+  const [internalSelected, setInternalSelected] = useState<string[]>(defaultValues);
+  const selected = controlled ? values : internalSelected;
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<string[]>(defaultValues);
   const [query, setQuery] = useState('');
 
   useEffect(() => {
-    setSelected(defaultValues);
-  }, [defaultValues.join('|')]);
+    if (!controlled) setInternalSelected(defaultValues);
+  }, [controlled, defaultValues.join('|')]);
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -53,17 +59,21 @@ export function MultiSelect({
   const selectedLabels = options.filter((option) => selected.includes(option.value));
 
   function toggle(value: string) {
-    setSelected((current) => (
-      current.includes(value) ? current.filter((item) => item !== value) : [...current, value]
-    ));
+    const next = selected.includes(value)
+      ? selected.filter((item) => item !== value)
+      : [...selected, value];
+    if (!controlled) setInternalSelected(next);
+    onChange?.(next);
   }
 
   return (
     <label className="multiselect-field">
       <span>{label}</span>
-      {selected.map((value) => (
-        <input key={value} type="hidden" name={name} value={value} />
-      ))}
+      {name
+        ? selected.map((value) => (
+            <input key={value} type="hidden" name={name} value={value} />
+          ))
+        : null}
       <div className="multiselect" ref={rootRef}>
         <button
           type="button"

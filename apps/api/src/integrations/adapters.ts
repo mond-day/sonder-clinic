@@ -97,21 +97,23 @@ export async function testGoogleCalendar(): Promise<AdapterResult> {
   const mock = envFlag('GOOGLE_CALENDAR_MOCK', 'true');
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (mock || !clientId || !clientSecret) {
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+  if (mock || !clientId || !clientSecret || !redirectUri) {
     return {
       success: false,
       provider: 'GOOGLE_CALENDAR',
       enabled: false,
       message: mock
         ? 'Google Calendar desabilitado (GOOGLE_CALENDAR_MOCK=true).'
-        : 'Google Calendar desabilitado: configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET.',
+        : 'Google Calendar desabilitado: configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET e GOOGLE_REDIRECT_URI.',
     };
   }
   return {
     success: false,
     provider: 'GOOGLE_CALENDAR',
     enabled: true,
-    message: 'OAuth Google configurado, mas ainda não há refresh token autorizado para testar a API.',
+    message:
+      'Client OAuth presente no env. Conclua POST /integrations/:id/oauth/start + callback para obter refresh_token; use test-connection na conexão persistida.',
   };
 }
 

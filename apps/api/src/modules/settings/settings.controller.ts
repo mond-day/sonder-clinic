@@ -89,8 +89,8 @@ export class SettingsController {
 
   @Get('context')
   @RequirePermissions('clinic.view')
-  context(@Req() req: AuthenticatedRequest) {
-    return this.settings.operationalContext(req.auth.organizationId);
+  context(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) {
+    return this.settings.operationalContext(req.auth.organizationId, clinicId);
   }
 
   @Get('branding')

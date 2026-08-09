@@ -20,13 +20,29 @@ export function readEvolutionConfiguration(
     configuration && typeof configuration === 'object' && !Array.isArray(configuration)
       ? (configuration as Record<string, unknown>)
       : {};
+  const env: Record<string, unknown> = {
+    EVOLUTION_BASE_URL: process.env.EVOLUTION_BASE_URL,
+    BASE_URL: process.env.EVOLUTION_BASE_URL,
+    baseUrl: process.env.EVOLUTION_BASE_URL,
+    EVOLUTION_API_KEY: process.env.EVOLUTION_API_KEY,
+    API_KEY: process.env.EVOLUTION_API_KEY,
+    apiKey: process.env.EVOLUTION_API_KEY,
+    EVOLUTION_INSTANCE: process.env.EVOLUTION_INSTANCE,
+    INSTANCE_NAME: process.env.EVOLUTION_INSTANCE,
+    instance: process.env.EVOLUTION_INSTANCE,
+  };
   const baseUrl =
     firstString(credentials, ['EVOLUTION_BASE_URL', 'BASE_URL', 'baseUrl']) ??
-    firstString(settings, ['baseUrl', 'BASE_URL']);
-  const apiKey = firstString(credentials, ['EVOLUTION_API_KEY', 'API_KEY', 'apiKey', 'apikey']);
+    firstString(settings, ['baseUrl', 'BASE_URL', 'EVOLUTION_BASE_URL']) ??
+    firstString(env, ['EVOLUTION_BASE_URL', 'BASE_URL', 'baseUrl']);
+  const apiKey =
+    firstString(credentials, ['EVOLUTION_API_KEY', 'API_KEY', 'apiKey', 'apikey']) ??
+    firstString(settings, ['apiKey', 'API_KEY', 'EVOLUTION_API_KEY']) ??
+    firstString(env, ['EVOLUTION_API_KEY', 'API_KEY', 'apiKey']);
   const instance =
-    firstString(credentials, ['EVOLUTION_INSTANCE', 'INSTANCE_NAME', 'instance']) ??
-    firstString(settings, ['instance', 'instanceName', 'INSTANCE_NAME']);
+    firstString(credentials, ['EVOLUTION_INSTANCE', 'INSTANCE_NAME', 'instance', 'instanceName']) ??
+    firstString(settings, ['instance', 'instanceName', 'INSTANCE_NAME', 'EVOLUTION_INSTANCE']) ??
+    firstString(env, ['EVOLUTION_INSTANCE', 'INSTANCE_NAME', 'instance']);
 
   if (!baseUrl || !apiKey || !instance) return null;
   return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, instance };

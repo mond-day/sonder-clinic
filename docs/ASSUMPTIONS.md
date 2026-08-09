@@ -33,10 +33,16 @@ Assumptions adotadas para não bloquear o desenvolvimento. Histórico detalhado 
 | A32 | Expense vs Payable | **Payable** é o lançamento operacional (API/UI/worker). `Expense` permanece legado para seed e relatório `expenses` (união Expense+Payable). Novas despesas → Payable + categoria/centro de custo |
 | A33 | Convites de usuário | Exigem SMTP real (`SMTP_HOST`); token só no e-mail; aceite público em `/auth/accept-invitation` |
 | A34 | Integrações sem credencial | Superfície de API existe; `POST /integrations/:id/test-connection` carrega credenciais salvas e falha explicitamente em MOCK/sem config — não declarar GO sem credenciais |
-| A35 | Comunicação (templates/canais) | Templates + opt-in + CRUD MessagingChannel + envio manual. EMAIL=SMTP; WHATSAPP/SMS=stub (FAILED honesto se MOCK/sem Evolution outbound) |
+| A35 | Comunicação (templates/canais) | Templates + opt-in + CRUD MessagingChannel + envio manual. EMAIL=SMTP; WHATSAPP=Evolution real se `EVOLUTION_MOCK=false` + baseUrl/apiKey/instance (env, canal ou IntegrationConnection); senão FAILED (nunca SENT falso). SMS ainda stub |
 | A36 | Áudio/transcrição | Explicitamente fora de escopo do backlog QA |
 | A37 | Merge de pacientes | Origem → destino; move vínculos clínicos/financeiros; origem vira ARCHIVED; ClinicalRecord por clínica é consolidado; pastas com mesmo nome são unificadas |
-| A38 | Google Calendar OAuth | Superfície + stub PARTIAL. Sem clientId/secret → falha explícita. Com credenciais → ainda sem consentimento OAuth nem sync bidirecional. **Não declarar GO.** Endpoints: `GET /integrations/google-calendar/oauth-status`, `POST /integrations/:id/oauth/start` |
+| A38 | Google Calendar OAuth | **Fatia 4 + última milha:** OAuth real; sync clinic→Google (outbox); Google→clinic via `POST .../calendar/pull-sync` **e** webhook push (`POST /integrations/google/calendar/webhook` + `POST .../calendar/watch`) se `GOOGLE_CALENDAR_WEBHOOK_URL` (HTTPS). Sem webhook URL → pull-sync só. Canais Google expiram (~7d) — renovar via watch. Exige `GOOGLE_CALENDAR_MOCK=false` + OAuth — **GO só com OAuth concluído** |
 | A39 | Retornos `allowedHours` | Formato `{ start, end, weekdays, timezone? }` (default TZ `America/Cuiaba`). `{}` = 24/7. Se **todas** as regras matching estão fora da janela, o outbox adia com `leaseUntil` sem consumir attempts. Se há regras dueNow + deferred, só dueNow rodam e o evento é marcado processado (deferred daquele evento não reexecutam) |
+| A40 | Financeiro líquido | `paidAmount`/`outstandingAmount` vêm da API (`buildReceivableFinanceView`); front não recalcula regra. OVERDUE é efetivo se saldo > 0 e `dueDate < hoje` |
+| A41 | Tarefas recorrentes | Idempotência via `Task.occurrenceKey`; worker + `POST /tasks/:id/recurrence/generate` |
+| A42 | Escopo profissional | Tabelas `ProfessionalClinic`/`Unit`/`Specialty`. Com `clinicId`, listagens/filtros **exigem** vínculo ativo (sem fallback “sem links”). Migration Fatia 3 backfill + seed criam vínculos |
+| A43 | Duplicados de paciente | `PatientDuplicateDismissal` persiste “não são duplicados”; merge só via Configurações com preview de conflitos |
+| A44 | Evolução DRAFT | Exclusão é **hard delete** (`DELETE /clinical-entries/:id`) com auditoria `clinical.draft_deleted` |
+| A45 | Calendar event mapping | `Appointment.externalCalendarEventId` guarda o id do evento Google; cancelamento remove o evento quando OAuth ativo |
 
-Última atualização: **1.1.6 + QA P0 + Tratamentos + Documentos + P1/P2 fatias A–J**.
+Última atualização: **Última milha — webhook Google Calendar + editores Termo/Encaminhamento + UX tratamentos/odontograma**.

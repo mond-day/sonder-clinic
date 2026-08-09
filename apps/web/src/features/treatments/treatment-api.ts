@@ -41,8 +41,18 @@ export async function duplicateTreatmentPlan(id: string) {
   return api.post<TreatmentPlan>(`/treatment-plans/${id}/duplicate`);
 }
 
-export async function approveTreatmentPlan(id: string, itemIds: string[], version?: number) {
-  return api.post<TreatmentPlan>(`/treatment-plans/${id}/approve`, { itemIds, version });
+export async function approveTreatmentPlan(
+  id: string,
+  itemIds: string[],
+  version?: number,
+  options?: { paymentMethod: string; dueDate?: string },
+) {
+  return api.post<TreatmentPlan>(`/treatment-plans/${id}/approve`, {
+    itemIds,
+    version,
+    paymentMethod: options?.paymentMethod,
+    dueDate: options?.dueDate,
+  });
 }
 
 export async function cancelTreatmentPlan(id: string, reason: string, version?: number) {

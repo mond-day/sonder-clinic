@@ -69,7 +69,7 @@ export type LegalDocument = {
 @Injectable()
 export class SettingsService {
   private readonly storage = createStorageAdapter();
-  operationalContext(organizationId: string) {
+  operationalContext(organizationId: string, clinicId?: string) {
     return Promise.all([
       prisma.clinic.findMany({
         where: { organizationId, status: 'ACTIVE' },
@@ -95,7 +95,13 @@ export class SettingsService {
         orderBy: { tradeName: 'asc' },
       }),
       prisma.professional.findMany({
-        where: { user: { organizationId, status: 'ACTIVE' } },
+        where: {
+          user: { organizationId, status: 'ACTIVE' },
+          status: 'ACTIVE',
+          ...(clinicId
+            ? { clinicLinks: { some: { clinicId, active: true } } }
+            : {}),
+        },
         select: { id: true, userId: true, name: true, croNumber: true, croState: true },
         orderBy: { name: 'asc' },
       }),

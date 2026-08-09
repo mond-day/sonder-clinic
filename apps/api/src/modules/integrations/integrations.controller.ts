@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { IsIn, IsObject, IsOptional, IsUUID } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
@@ -43,6 +44,18 @@ export class IntegrationsController {
     return this.integrations.startGoogleCalendarOauth(request.auth.organizationId, id);
   }
 
+  @Post(':id/calendar/pull-sync')
+  @RequirePermissions('integration.manage')
+  pullSync(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    return this.integrations.pullGoogleCalendarSync(request.auth.organizationId, id);
+  }
+
+  @Post(':id/calendar/watch')
+  @RequirePermissions('integration.manage')
+  registerWatch(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    return this.integrations.registerGoogleCalendarWatch(request.auth.organizationId, id);
+  }
+
   @Post(':provider/test')
   @RequirePermissions('integration.manage')
   test(@Param('provider') provider: string) {
@@ -71,5 +84,50 @@ export class IntegrationsController {
   @RequirePermissions('integration.manage')
   remove(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.integrations.remove(request.auth.organizationId, request.auth.userId, id);
+  }
+}
+
+/**
+ * Callback OAuth + webhook push Google — sem AuthGuard.
+ * OAuth: GOOGLE_REDIRECT_URI. Webhook: GOOGLE_CALENDAR_WEBHOOK_URL.
+ */
+@ApiTags('integrations-oauth')
+@Controller('integrations/google')
+export class GoogleCalendarOauthController {
+  constructor(private readonly integrations: IntegrationsService) {}
+
+  @Get('callback')
+  async callback(
+    @Query('code') code: string | undefined,
+    @Query('state') state: string | undefined,
+    @Query('error') error: string | undefined,
+    @Res() res: Response,
+  ) {
+    if (error) {
+      const webUrl = (process.env.WEB_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+      return res.redirect(
+        `${webUrl}/configuracoes?integration=GOOGLE_CALENDAR&oauth=error&reason=${encodeURIComponent(error)}`,
+      );
+    }
+    const result = await this.integrations.handleGoogleOauthCallback(code, state);
+    return res.redirect(result.redirectTo);
+  }
+
+  /** Google Calendar push notification (channels.watch). */
+  @Post('calendar/webhook')
+  calendarWebhook(
+    @Headers('x-goog-channel-id') channelId?: string,
+    @Headers('x-goog-channel-token') channelToken?: string,
+    @Headers('x-goog-resource-id') resourceId?: string,
+    @Headers('x-goog-resource-state') resourceState?: string,
+    @Headers('x-goog-message-number') messageNumber?: string,
+  ) {
+    return this.integrations.handleGoogleCalendarWebhook({
+      channelId,
+      channelToken,
+      resourceId,
+      resourceState,
+      messageNumber,
+    });
   }
 }

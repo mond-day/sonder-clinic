@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
-import { list, text, type RecordValue } from '@/lib/format';
+import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { Modal } from './modal';
 import { EmptyState, ErrorState, MetricCard, PageHeader, Panel, Skeleton, StatusBadge } from './ui';
 
@@ -250,17 +250,16 @@ export function UsersView() {
         </form>
       </Modal>
 
-      <div className="metric-grid">
-        <MetricCard label="Usuários" value={users.length} />
-        <MetricCard label="Ativos" value={users.filter((item) => item.status === 'ACTIVE').length} tone="green" />
+      <div className="metric-grid compact">
+        <MetricCard label="Usuários" value={users.length} meta={`${users.filter((item) => item.status === 'ACTIVE').length} ativos`} />
         <MetricCard label="Convites pendentes" value={invitations.filter((item) => item.status === 'PENDING').length} tone="amber" />
-        <MetricCard label="Perfis" value={roles.length} />
+        <MetricCard label="Perfis" value={roles.length} meta="Matriz RBAC" />
       </div>
       <div className="users-layout">
-        <Panel title="Usuários e convites" description="Bloqueie, reative e gerencie convites SMTP">
+        <Panel title="Equipe" description="Usuários ativos e bloqueados">
           {users.length ? (
             <div className="table-wrap">
-              <table>
+              <table className="data-table">
                 <thead>
                   <tr>
                     <th>Nome</th>
@@ -273,11 +272,11 @@ export function UsersView() {
                 <tbody>
                   {users.map((user) => (
                     <tr key={String(user.id)}>
-                      <td>{text(user.name)}</td>
+                      <td><strong>{text(user.name)}</strong></td>
                       <td>{text(user.email)}</td>
                       <td>
                         <StatusBadge tone={user.status === 'ACTIVE' ? 'green' : user.status === 'BLOCKED' ? 'red' : 'amber'}>
-                          {text(user.status)}
+                          {presentationLabel(user.status)}
                         </StatusBadge>
                       </td>
                       <td>
@@ -306,82 +305,85 @@ export function UsersView() {
             <EmptyState title="Nenhum usuário" description="Convide o primeiro colaborador." />
           )}
           {invitations.length ? (
-            <div className="table-wrap" style={{ marginTop: 16 }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Convite</th>
-                    <th>E-mail</th>
-                    <th>Status</th>
-                    <th>Expira</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invitations.map((invite) => (
-                    <tr key={String(invite.id)}>
-                      <td>{text(invite.name)}</td>
-                      <td>{text(invite.email)}</td>
-                      <td>
-                        <StatusBadge tone={invite.status === 'PENDING' ? 'amber' : invite.status === 'ACCEPTED' ? 'green' : 'gray'}>
-                          {text(invite.status)}
-                        </StatusBadge>
-                      </td>
-                      <td>{invite.expiresAt ? new Date(String(invite.expiresAt)).toLocaleString('pt-BR') : '—'}</td>
-                      <td className="row-actions">
-                        {invite.status === 'PENDING' ? (
-                          <>
-                            <button
-                              type="button"
-                              className="button small"
-                              disabled={busy || smtpConfigured === false}
-                              onClick={() => void (async () => {
-                                setBusy(true);
-                                setFormError('');
-                                try {
-                                  await api.post(`/users/invitations/${String(invite.id)}/resend`);
-                                  setFormMessage('Convite reenviado.');
-                                  await load();
-                                } catch (err) {
-                                  setFormError(err instanceof ApiError ? err.message : 'Falha ao reenviar.');
-                                } finally {
-                                  setBusy(false);
-                                }
-                              })()}
-                            >
-                              Reenviar
-                            </button>
-                            <button
-                              type="button"
-                              className="button small danger"
-                              disabled={busy}
-                              onClick={() => void (async () => {
-                                setBusy(true);
-                                setFormError('');
-                                try {
-                                  await api.post(`/users/invitations/${String(invite.id)}/revoke`);
-                                  setFormMessage('Convite revogado.');
-                                  await load();
-                                } catch (err) {
-                                  setFormError(err instanceof ApiError ? err.message : 'Falha ao revogar.');
-                                } finally {
-                                  setBusy(false);
-                                }
-                              })()}
-                            >
-                              Revogar
-                            </button>
-                          </>
-                        ) : null}
-                      </td>
+            <div className="form-section" style={{ marginTop: 16 }}>
+              <header><h3 style={{ margin: 0 }}>Convites</h3></header>
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nome</th>
+                      <th>E-mail</th>
+                      <th>Status</th>
+                      <th>Expira</th>
+                      <th></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {invitations.map((invite) => (
+                      <tr key={String(invite.id)}>
+                        <td>{text(invite.name)}</td>
+                        <td>{text(invite.email)}</td>
+                        <td>
+                          <StatusBadge tone={invite.status === 'PENDING' ? 'amber' : invite.status === 'ACCEPTED' ? 'green' : 'gray'}>
+                            {presentationLabel(invite.status)}
+                          </StatusBadge>
+                        </td>
+                        <td>{invite.expiresAt ? new Date(String(invite.expiresAt)).toLocaleString('pt-BR') : '—'}</td>
+                        <td className="row-actions">
+                          {invite.status === 'PENDING' ? (
+                            <>
+                              <button
+                                type="button"
+                                className="button small"
+                                disabled={busy || smtpConfigured === false}
+                                onClick={() => void (async () => {
+                                  setBusy(true);
+                                  setFormError('');
+                                  try {
+                                    await api.post(`/users/invitations/${String(invite.id)}/resend`);
+                                    setFormMessage('Convite reenviado.');
+                                    await load();
+                                  } catch (err) {
+                                    setFormError(err instanceof ApiError ? err.message : 'Falha ao reenviar.');
+                                  } finally {
+                                    setBusy(false);
+                                  }
+                                })()}
+                              >
+                                Reenviar
+                              </button>
+                              <button
+                                type="button"
+                                className="button small danger"
+                                disabled={busy}
+                                onClick={() => void (async () => {
+                                  setBusy(true);
+                                  setFormError('');
+                                  try {
+                                    await api.post(`/users/invitations/${String(invite.id)}/revoke`);
+                                    setFormMessage('Convite revogado.');
+                                    await load();
+                                  } catch (err) {
+                                    setFormError(err instanceof ApiError ? err.message : 'Falha ao revogar.');
+                                  } finally {
+                                    setBusy(false);
+                                  }
+                                })()}
+                              >
+                                Revogar
+                              </button>
+                            </>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : null}
         </Panel>
-        <Panel title="Perfis" description="Selecione um perfil para editar a matriz">
+        <Panel title="Perfis e permissões" description="Selecione um perfil para editar a matriz por domínio">
           <div className="role-cards">
             {roles.map((item) => {
               const userCount = Number((item._count as RecordValue | undefined)?.users ?? 0);
@@ -394,7 +396,6 @@ export function UsersView() {
                   onClick={() => setSelectedRole(String(item.id))}
                 >
                   <strong>{text(item.name)}</strong>
-                  <span>{text(item.code)}</span>
                   <small>{userCount} usuário(s) · {permissionCount} permissão(ões)</small>
                 </button>
               );

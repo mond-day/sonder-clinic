@@ -36,16 +36,30 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
   const [clinicId, setClinicIdState] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (preferredClinicId?: string) => {
     if (!user) return;
     setLoading(true);
     try {
-      const context = await api.get<{ clinics: Clinic[]; professionals: Professional[] }>('/settings/context');
+      const stored = preferredClinicId
+        ?? (typeof window !== 'undefined' ? window.localStorage.getItem(STORAGE_KEY) : null)
+        ?? '';
+      const context = await api.get<{ clinics: Clinic[]; professionals: Professional[] }>(
+        stored ? `/settings/context?clinicId=${encodeURIComponent(stored)}` : '/settings/context',
+      );
       setClinics(context.clinics);
-      setProfessionals(context.professionals);
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      const selected = context.clinics.some((clinic) => clinic.id === stored) ? stored! : (context.clinics[0]?.id ?? '');
+      const selected = context.clinics.some((clinic) => clinic.id === stored)
+        ? stored
+        : (context.clinics[0]?.id ?? '');
       setClinicIdState(selected);
+      if (selected && selected !== stored) {
+        const scoped = await api.get<{ clinics: Clinic[]; professionals: Professional[] }>(
+          `/settings/context?clinicId=${encodeURIComponent(selected)}`,
+        );
+        setProfessionals(scoped.professionals);
+      } else {
+        setProfessionals(context.professionals);
+      }
+      if (selected) window.localStorage.setItem(STORAGE_KEY, selected);
     } finally {
       setLoading(false);
     }
@@ -60,11 +74,12 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
     professionals,
     clinicId,
     loading,
-    refresh,
+    refresh: () => refresh(clinicId || undefined),
     setClinicId(value) {
       if (!clinics.some((clinic) => clinic.id === value)) return;
       window.localStorage.setItem(STORAGE_KEY, value);
       setClinicIdState(value);
+      void refresh(value);
     },
   }), [clinics, professionals, clinicId, loading, refresh]);
 
