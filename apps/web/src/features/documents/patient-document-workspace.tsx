@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { hasPermission, maskCpf } from '@/lib/format';
+import { publicAppUrl } from '@/lib/public-url';
 import { useAuth } from '@/components/auth-provider';
 import type { Professional } from '@/components/selection-provider';
 import { EmptyState, ErrorState, Panel, Skeleton } from '@/components/ui';
@@ -764,7 +765,7 @@ export function PatientDocumentWorkspace({
           setActionError('');
           try {
             const result = await documentApi.createSignatureRequest(selected.id, input);
-            const absolute = `${window.location.origin}${result.publicPath}`;
+            const absolute = publicAppUrl(result.publicPath);
             setShareLink(absolute);
             try {
               await navigator.clipboard.writeText(absolute);

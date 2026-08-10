@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Modal } from '@/components/modal';
 import type { Professional } from '@/components/selection-provider';
-import { presentationLabel, text } from '@/lib/format';
+import { api } from '@/lib/api';
+import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { examRequestSchema } from './document-schemas';
 import type { DocumentFolder, DocumentTemplate } from './document-types';
 
@@ -14,13 +15,13 @@ type ExamItem = {
   notes: string;
 };
 
-const EXAM_PRESETS = [
+const FALLBACK_EXAM_PRESETS = [
   'Radiografia panorâmica',
   'Radiografia periapical',
   'Interproximal',
   'Tomografia Cone Beam',
   'Telerradiografia',
-  'Fotografias',
+  'Fotografias clínicas',
   'Outro',
 ] as const;
 
@@ -72,6 +73,8 @@ export function ExamRequestEditor({
   const [urgency, setUrgency] = useState<'ROUTINE' | 'URGENT' | 'STAT'>('ROUTINE');
   const [items, setItems] = useState<ExamItem[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [examCatalog, setExamCatalog] = useState<Array<RecordValue & { name: string }>>([]);
+  const [examSearch, setExamSearch] = useState('');
   const [folderId, setFolderId] = useState('');
   const [notes, setNotes] = useState('');
   const [formError, setFormError] = useState('');
@@ -84,19 +87,37 @@ export function ExamRequestEditor({
     setUrgency('ROUTINE');
     setItems([]);
     setPickerOpen(false);
+    setExamSearch('');
     setFolderId('');
     setNotes('');
     setFormError('');
+    api.get<Array<RecordValue & { name: string }>>('/exam-catalog')
+      .then((data) => setExamCatalog(list(data) as Array<RecordValue & { name: string }>))
+      .catch(() => setExamCatalog([]));
   }, [open, options, professionals]);
+
+  const pickerOptions = useMemo(() => {
+    const names = examCatalog.length
+      ? examCatalog.map((row) => text(row.name)).filter(Boolean)
+      : [...FALLBACK_EXAM_PRESETS.filter((item) => item !== 'Outro')];
+    const q = examSearch.trim().toLowerCase();
+    const filtered = q ? names.filter((name) => name.toLowerCase().includes(q)) : names;
+    return [...filtered, 'Outro / texto livre'];
+  }, [examCatalog, examSearch]);
 
   function updateItem(index: number, patch: Partial<ExamItem>) {
     setItems((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
   function addExam(preset: string) {
-    const name = preset === 'Outro' ? '' : preset;
-    setItems((current) => [...current, emptyItem(name)]);
+    const name = preset.startsWith('Outro') ? '' : preset;
+    const catalog = examCatalog.find((row) => text(row.name) === preset);
+    setItems((current) => [...current, {
+      ...emptyItem(name),
+      notes: catalog?.defaultInstructions ? text(catalog.defaultInstructions) : '',
+    }]);
     setPickerOpen(false);
+    setExamSearch('');
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -167,7 +188,7 @@ export function ExamRequestEditor({
     <Modal
       open={open}
       title="Solicitação de exame"
-      description="Liste exames, indicação clínica e urgência. O documento é gerado a partir de um modelo EXAM_REQUEST."
+      description="Liste exames, indicação clínica e urgência a partir do catálogo da clínica."
       onClose={onClose}
       size="medium"
     >
@@ -237,7 +258,14 @@ export function ExamRequestEditor({
           ) : null}
           {pickerOpen ? (
             <div className="exam-picker-grid" role="listbox" aria-label="Tipos de exame">
-              {EXAM_PRESETS.map((preset) => (
+              <input
+                className="filter-input"
+                placeholder="Buscar exame…"
+                value={examSearch}
+                onChange={(event) => setExamSearch(event.target.value)}
+                aria-label="Buscar exame"
+              />
+              {pickerOptions.map((preset) => (
                 <button
                   key={preset}
                   type="button"

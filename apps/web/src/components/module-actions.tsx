@@ -29,10 +29,21 @@ const patientSchema = z.object({
   fullName: z.string().trim().min(3, 'Nome deve ter ao menos 3 caracteres.'),
   preferredName: z.string().trim().optional(),
   cpf: z.string().regex(/^\d{11}$/, 'CPF deve ter 11 dígitos.').optional(),
+  passportNumber: z.string().trim().min(5).max(40).optional(),
   birthDate: z.string().date().optional(),
   email: z.string().email('E-mail inválido.').optional(),
   primaryPhone: z.string().trim().min(10, 'Telefone inválido.'),
+  secondaryPhone: z.string().trim().min(10).optional(),
   isMinor: z.boolean(),
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+  postalCode: z.string().trim().optional(),
+  street: z.string().trim().max(200).optional(),
+  number: z.string().trim().max(40).optional(),
+  complement: z.string().trim().max(120).optional(),
+  district: z.string().trim().max(120).optional(),
+  city: z.string().trim().max(120).optional(),
+  state: z.string().trim().max(2).optional(),
+  country: z.string().trim().max(80).optional(),
 });
 const appointmentSchema = z.object({
   patientId: uuid,
@@ -212,7 +223,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
     const current = patients.find((patient) => patient.id === patientToEdit);
     return <MutationPanel
       title={lockedPatientEdit ? (current ? 'Editar paciente' : 'Cadastrar paciente') : 'Cadastrar ou editar paciente'}
-      description="Validação aplicada antes do envio e novamente pela API."
+      description="Dados pessoais, contato e endereço. Endereço é opcional para cadastro rápido."
       message={message}
       error={error}
     >
@@ -222,19 +233,65 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
       <form className="mutation-form" key={patientToEdit} onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
         const parsed = validate(patientSchema, {
-          fullName: data.get('fullName'), preferredName: optional(data.get('preferredName')), cpf: optional(data.get('cpf')),
-          birthDate: optional(data.get('birthDate')), email: optional(data.get('email')), primaryPhone: data.get('primaryPhone'), isMinor: data.get('isMinor') === 'on',
+          fullName: data.get('fullName'),
+          preferredName: optional(data.get('preferredName')),
+          cpf: optional(data.get('cpf')),
+          passportNumber: optional(data.get('passportNumber')),
+          birthDate: optional(data.get('birthDate')),
+          email: optional(data.get('email')),
+          primaryPhone: data.get('primaryPhone'),
+          secondaryPhone: optional(data.get('secondaryPhone')),
+          isMinor: data.get('isMinor') === 'on',
+          status: optional(data.get('status')) as 'ACTIVE' | 'INACTIVE' | undefined,
+          postalCode: optional(data.get('postalCode')),
+          street: optional(data.get('street')),
+          number: optional(data.get('number')),
+          complement: optional(data.get('complement')),
+          district: optional(data.get('district')),
+          city: optional(data.get('city')),
+          state: optional(data.get('state')),
+          country: optional(data.get('country')) ?? 'Brasil',
         });
         if (!parsed) return;
         void run(() => current ? api.put(`/patients/${current.id}`, parsed) : api.post('/patients', { ...parsed, clinicId }), current ? 'Paciente atualizado.' : 'Paciente criado.', event.currentTarget);
       }}>
-        <label>Nome completo<input name="fullName" defaultValue={String(current?.fullName ?? '')} required /></label>
-        <label>Nome preferido<input name="preferredName" defaultValue={String(current?.preferredName ?? '')} /></label>
-        <label>CPF<input name="cpf" inputMode="numeric" maxLength={11} defaultValue={String(current?.cpf ?? '')} /></label>
-        <label>Nascimento<input name="birthDate" type="date" defaultValue={current?.birthDate ? String(current.birthDate).slice(0, 10) : ''} /></label>
-        <label>E-mail<input name="email" type="email" defaultValue={String(current?.email ?? '')} /></label>
-        <label>Telefone<input name="primaryPhone" defaultValue={String(current?.primaryPhone ?? '')} required /></label>
-        <label className="check-field"><input name="isMinor" type="checkbox" defaultChecked={Boolean(current?.isMinor)} /> Menor de idade</label>
+        <Disclosure title="Dados pessoais" description="Identificação do paciente">
+          <label>Nome completo<input name="fullName" defaultValue={String(current?.fullName ?? '')} required /></label>
+          <label>Nome preferido<input name="preferredName" defaultValue={String(current?.preferredName ?? '')} /></label>
+          <label>CPF<input name="cpf" inputMode="numeric" maxLength={11} defaultValue={String(current?.cpf ?? '')} /></label>
+          <label>Passaporte<input name="passportNumber" defaultValue={String(current?.passportNumber ?? '')} /></label>
+          <label>Nascimento<input name="birthDate" type="date" defaultValue={current?.birthDate ? String(current.birthDate).slice(0, 10) : ''} /></label>
+          <label>Status
+            <select name="status" defaultValue={String(current?.status ?? 'ACTIVE')}>
+              <option value="ACTIVE">Ativo</option>
+              <option value="INACTIVE">Inativo</option>
+            </select>
+          </label>
+        </Disclosure>
+        <Disclosure title="Contato" description="Telefones e e-mail">
+          <label>Telefone principal<input name="primaryPhone" defaultValue={String(current?.primaryPhone ?? '')} required /></label>
+          <label>Segundo telefone<input name="secondaryPhone" defaultValue={String(current?.secondaryPhone ?? '')} /></label>
+          <label className="span-2">E-mail<input name="email" type="email" defaultValue={String(current?.email ?? '')} /></label>
+        </Disclosure>
+        <Disclosure title="Endereço" description="Opcional no cadastro rápido">
+          <label>CEP<input name="postalCode" inputMode="numeric" maxLength={9} defaultValue={String(current?.postalCode ?? '')} placeholder="00000-000" /></label>
+          <label>Número<input name="number" defaultValue={String(current?.number ?? '')} /></label>
+          <label className="span-2">Rua / logradouro<input name="street" defaultValue={String(current?.street ?? '')} /></label>
+          <label>Complemento<input name="complement" defaultValue={String(current?.complement ?? '')} placeholder="Apartamento, bloco…" /></label>
+          <label>Bairro<input name="district" defaultValue={String(current?.district ?? '')} /></label>
+          <label>Cidade<input name="city" defaultValue={String(current?.city ?? '')} /></label>
+          <label>UF<input name="state" maxLength={2} defaultValue={String(current?.state ?? '')} placeholder="SP" /></label>
+          <label>País
+            <select name="country" defaultValue={String(current?.country ?? 'Brasil')}>
+              <option value="Brasil">Brasil</option>
+              <option value="Outro">Outro</option>
+            </select>
+          </label>
+        </Disclosure>
+        <Disclosure title="Responsável" description="Somente quando aplicável">
+          <label className="check-field"><input name="isMinor" type="checkbox" defaultChecked={Boolean(current?.isMinor)} /> Paciente menor de idade</label>
+          <p className="muted-note span-2">Ao marcar menor de idade, vincule o responsável no prontuário — os dados do responsável não misturam com os do paciente.</p>
+        </Disclosure>
         <button className="button primary" disabled={busy}>{current ? 'Salvar alterações' : 'Criar paciente'}</button>
       </form>
     </MutationPanel>;
@@ -349,7 +406,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   }
 
   if (module === 'financeiro') {
-    return <MutationPanel title="Títulos e recebimentos" description="Pagamentos usam chave idempotente única por envio." message={message} error={error}>
+    return <MutationPanel title="Títulos e recebimentos" description="Cadastre títulos e registre recebimentos dos pacientes." message={message} error={error}>
       <form className="mutation-form compact" onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
         const parsed = validate(receivableSchema, { patientId: data.get('patientId'), description: data.get('description'), originalAmount: data.get('originalAmount'), dueDate: data.get('dueDate'), paymentMethod: optional(data.get('paymentMethod')) });

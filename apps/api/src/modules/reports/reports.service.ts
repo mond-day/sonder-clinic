@@ -199,11 +199,10 @@ export class ReportsService {
         });
         const map = new Map(pros.map((item) => [item.id, item.name]));
         rows = aggregated.map((item) => ({
-          professionalId: item.professionalId,
-          professional: map.get(item.professionalId) ?? item.professionalId,
+          professional: map.get(item.professionalId) ?? 'Profissional não encontrado',
           sessions: item.sessions,
           clinicalProduction: item.total,
-          total: item.total,
+          averagePerSession: item.sessions > 0 ? Number((item.total / item.sessions).toFixed(2)) : 0,
         }));
         meta = {
           ...meta,
@@ -356,7 +355,7 @@ export class ReportsService {
           title: item.title,
           status: item.status,
           total: Number(item.total),
-          patient: patientMap.get(item.patientId) ?? item.patientId,
+          patient: patientMap.get(item.patientId) ?? 'Paciente não encontrado',
           createdAt: item.createdAt.toISOString(),
         }));
         break;
@@ -402,7 +401,7 @@ export class ReportsService {
             amount: Number(finance.outstandingAmount),
             dueDate: item.dueDate.toISOString().slice(0, 10),
             status: finance.effectiveStatus,
-            patient: patientMap.get(item.patientId) ?? item.patientId,
+            patient: patientMap.get(item.patientId) ?? 'Paciente não encontrado',
           };
         });
         break;
@@ -432,7 +431,7 @@ export class ReportsService {
             const finance = buildReceivableFinanceView(item);
             return {
               id: item.id,
-              patient: patientMap.get(item.patientId) ?? item.patientId,
+              patient: patientMap.get(item.patientId) ?? 'Paciente não encontrado',
               description: item.description,
               balance: Number(finance.outstandingAmount),
               paidAmount: Number(finance.paidAmount),
@@ -475,7 +474,7 @@ export class ReportsService {
             method: item.method,
             paidAt: item.paidAt?.toISOString() ?? null,
             description: item.receivable.description,
-            patient: patientMap.get(item.receivable.patientId) ?? item.receivable.patientId,
+            patient: patientMap.get(item.receivable.patientId) ?? 'Paciente não encontrado',
           };
         });
         break;
@@ -563,7 +562,7 @@ export class ReportsService {
           status: item.status,
           stage: item.detailedStage,
           laboratory: item.laboratoryName,
-          patient: patientMap.get(item.patientId) ?? item.patientId,
+          patient: patientMap.get(item.patientId) ?? 'Paciente não encontrado',
           dueAt: item.dueAt?.toISOString() ?? null,
         }));
         break;
@@ -590,7 +589,7 @@ export class ReportsService {
           template: item.template.name,
           type: item.template.type,
           status: item.status,
-          patient: patientMap.get(item.patientId) ?? item.patientId,
+          patient: patientMap.get(item.patientId) ?? 'Paciente não encontrado',
           createdAt: item.generatedAt.toISOString(),
         }));
         break;

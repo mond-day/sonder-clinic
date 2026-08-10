@@ -2,11 +2,22 @@
 
 import { Copy, Pencil, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
+import { list, text, type RecordValue } from '@/lib/format';
 import type { PrescriptionItem } from './document-types';
 
 export type DraftPrescriptionItem = PrescriptionItem & {
   key: string;
   kind?: 'medication' | 'exam' | 'free_text';
+};
+
+type CatalogMedication = RecordValue & {
+  id: string;
+  name: string;
+  concentration?: string | null;
+  pharmaceuticalForm?: string | null;
+  defaultRoute?: string | null;
+  activeIngredient?: string | null;
 };
 
 export function blankPrescriptionItem(
@@ -25,6 +36,94 @@ export function blankPrescriptionItem(
     pharmaceuticalForm: '',
     route: '',
   };
+}
+
+function MedicationCatalogField({
+  value,
+  onChange,
+  onPick,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onPick: (item: CatalogMedication) => void;
+}) {
+  const [query, setQuery] = useState(value);
+  const [options, setOptions] = useState<CatalogMedication[]>([]);
+  const [open, setOpen] = useState(false);
+  const [freeText, setFreeText] = useState(false);
+
+  useEffect(() => { setQuery(value); }, [value]);
+
+  useEffect(() => {
+    if (freeText) return;
+    const handle = window.setTimeout(() => {
+      api.get<CatalogMedication[]>(`/medication-catalog?q=${encodeURIComponent(query)}`)
+        .then((data) => setOptions(list(data) as CatalogMedication[]))
+        .catch(() => setOptions([]));
+    }, 200);
+    return () => window.clearTimeout(handle);
+  }, [query, freeText]);
+
+  if (freeText) {
+    return (
+      <label className="span-full">
+        Medicamento (texto livre)
+        <input
+          required
+          autoFocus
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Digite o medicamento"
+        />
+        <button type="button" className="button ghost small" style={{ marginTop: 6 }} onClick={() => setFreeText(false)}>
+          Voltar à busca do catálogo
+        </button>
+      </label>
+    );
+  }
+
+  return (
+    <label className="span-full" style={{ position: 'relative' }}>
+      Medicamento
+      <input
+        required
+        autoFocus
+        value={query}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+        placeholder="Buscar medicamento…"
+        autoComplete="off"
+      />
+      {open ? (
+        <div className="row-menu-popover" role="listbox" style={{ position: 'absolute', zIndex: 20, left: 0, right: 0, top: '100%', marginTop: 4, maxHeight: 220, overflow: 'auto' }}>
+          {options.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="option"
+              onClick={() => {
+                onPick(item);
+                setQuery(item.name);
+                setOpen(false);
+              }}
+            >
+              {item.name}
+              <small style={{ display: 'block', opacity: 0.7 }}>
+                {[item.concentration, item.pharmaceuticalForm, item.defaultRoute].filter(Boolean).join(' · ')}
+              </small>
+            </button>
+          ))}
+          <button type="button" role="option" onClick={() => { setFreeText(true); setOpen(false); }}>
+            + Usar texto livre
+          </button>
+        </div>
+      ) : null}
+    </label>
+  );
 }
 
 export function PrescriptionItemEditor({
@@ -121,16 +220,29 @@ export function PrescriptionItemEditor({
                 Concluir item
               </button>
             </div>
-            <label className="span-full">
-              {item.kind === 'exam' ? 'Exame' : item.kind === 'free_text' ? 'Título' : 'Medicamento'}
-              <input
-                required
-                autoFocus
+            {item.kind === 'medication' ? (
+              <MedicationCatalogField
                 value={item.medicationName}
-                onChange={(event) => update(item.key, { medicationName: event.target.value })}
-                placeholder={item.kind === 'exam' ? 'Ex.: Radiografia panorâmica' : item.kind === 'free_text' ? 'Orientação / recomendação' : 'Digite o medicamento'}
+                onChange={(medicationName) => update(item.key, { medicationName })}
+                onPick={(catalog) => update(item.key, {
+                  medicationName: catalog.name,
+                  concentration: text(catalog.concentration, item.concentration ?? ''),
+                  pharmaceuticalForm: text(catalog.pharmaceuticalForm, item.pharmaceuticalForm ?? ''),
+                  route: text(catalog.defaultRoute, item.route ?? ''),
+                })}
               />
-            </label>
+            ) : (
+              <label className="span-full">
+                {item.kind === 'exam' ? 'Exame' : 'Título'}
+                <input
+                  required
+                  autoFocus
+                  value={item.medicationName}
+                  onChange={(event) => update(item.key, { medicationName: event.target.value })}
+                  placeholder={item.kind === 'exam' ? 'Ex.: Radiografia panorâmica' : 'Orientação / recomendação'}
+                />
+              </label>
+            )}
             {item.kind === 'medication' ? (
               <>
                 <label>

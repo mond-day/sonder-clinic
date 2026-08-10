@@ -11,6 +11,7 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { UsersModule } from './modules/users/users.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { CatalogsModule } from './modules/catalogs/catalogs.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { ReportsModule } from './modules/reports/reports.module';
     WorkspaceModule,
     UsersModule,
     ReportsModule,
+    CatalogsModule,
   ],
   controllers: [AppController],
 })

@@ -8,10 +8,12 @@ import {
   ClipboardList,
   Eye,
   FileText,
+  FlaskConical,
   MessageSquare,
   MoreHorizontal,
   Palette,
   Pencil,
+  Pill,
   Plug,
   Power,
   RefreshCcw,
@@ -28,8 +30,10 @@ import { AnamnesisTemplateEditor } from '@/features/anamnesis/template-editor';
 import {
   ClinicsAdminPanel,
   CommunicationTemplatesPanel,
+  ExamCatalogPanel,
   FinanceCatalogAdminPanel,
   LaboratoriesAdminPanel,
+  MedicationCatalogPanel,
   MessagingChannelsPanel,
   OdontogramConditionsAdminPanel,
   OutboxDeadLetterPanel,
@@ -39,12 +43,14 @@ import { PatientDuplicatesPanel } from '@/features/patients/patient-duplicates-p
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
 import { useWorkspace } from './workspace-provider';
-import { EmptyState, PageHeader, Panel, StatusBadge } from './ui';
+import { Disclosure, EmptyState, PageHeader, Panel, StatusBadge } from './ui';
 import { Modal } from './modal';
 
 type SectionKey =
   | 'overview'
   | 'anamnesis'
+  | 'medications'
+  | 'exams'
   | 'units'
   | 'duplicates'
   | 'procedures'
@@ -66,17 +72,19 @@ const sections: Array<{
   icon: typeof Building2;
 }> = [
   { key: 'overview', label: 'Visão geral', description: 'Todas as áreas de configuração da clínica.', icon: ShieldCheck },
-  { key: 'anamnesis', label: 'Anamnese (modelos)', description: 'Editor visual drag-and-drop de seções e perguntas.', icon: ClipboardList },
-  { key: 'units', label: 'Unidades, consultórios e equipe', description: 'Estrutura física, cadeiras e profissionais ativos.', icon: Building2 },
+  { key: 'anamnesis', label: 'Modelos de anamnese', description: 'Crie, revise, publique e versione formulários clínicos.', icon: ClipboardList },
+  { key: 'medications', label: 'Medicamentos e protocolos', description: 'Catálogo para agilizar prescrições com revisão clínica.', icon: Pill },
+  { key: 'exams', label: 'Tipos de exame', description: 'Catálogo editável usado nas solicitações.', icon: FlaskConical },
+  { key: 'units', label: 'Unidades e cadeiras', description: 'Estrutura física, cadeiras e profissionais ativos.', icon: Building2 },
   { key: 'duplicates', label: 'Pacientes duplicados', description: 'Saneamento cadastral assistido com preview de merge.', icon: ClipboardList },
-  { key: 'procedures', label: 'Procedimentos e especialidades', description: 'Catálogo clínico que alimenta agenda e planos.', icon: Stethoscope },
+  { key: 'procedures', label: 'Procedimentos', description: 'Catálogo clínico que alimenta agenda e planos.', icon: Stethoscope },
   { key: 'returns', label: 'Retornos automáticos', description: 'Fila de contato e regras de retorno pós-atendimento.', icon: RefreshCcw },
   { key: 'finance', label: 'Financeiro e comissões', description: 'Contas, categorias, taxas e regras de repasse.', icon: CircleDollarSign },
-  { key: 'communication', label: 'WhatsApp e comunicações', description: 'Entregas, confirmações e lembretes enviados.', icon: MessageSquare },
-  { key: 'integrations', label: 'Integrações e API', description: 'Provedores externos, credenciais e status.', icon: Plug },
+  { key: 'communication', label: 'Comunicação', description: 'Entregas, confirmações e lembretes enviados.', icon: MessageSquare },
+  { key: 'integrations', label: 'Integrações', description: 'Provedores externos, status e sincronização.', icon: Plug },
   { key: 'branding', label: 'Identidade visual', description: 'Nome, cores e logotipo do tenant.', icon: Palette },
-  { key: 'tags', label: 'Etiquetas da agenda', description: 'Cores e nomes para organizar agendamentos.', icon: Tag },
-  { key: 'certificate', label: 'Certificado digital A1', description: 'Status seguro para receitas e atestados.', icon: KeyRound },
+  { key: 'tags', label: 'Etiquetas', description: 'Cores e nomes para organizar agendamentos.', icon: Tag },
+  { key: 'certificate', label: 'Certificado digital', description: 'Status seguro para receitas e atestados.', icon: KeyRound },
   { key: 'legal', label: 'Documentos legais', description: 'Privacidade, uso e consentimento LGPD.', icon: FileText },
 ];
 
@@ -355,14 +363,12 @@ export function SettingsView() {
     setIntegrationMenuId(null);
     try {
       const result = await api.post<{ success?: boolean; message?: string }>(`/integrations/${id}/test-connection`, {});
-      setError(result.success
-        ? ''
-        : (result.message ?? 'Teste da conexão sem sucesso (stub/mock honesto).'));
-      if (result.success) load();
-      else if (result.message) {
-        /* surface honest failure in the notice area */
+      if (result.success) {
+        setError('');
+        load();
+      } else {
+        setError(result.message ?? 'Teste da conexão sem sucesso. Verifique as credenciais.');
       }
-      window.alert(result.message ?? (result.success ? 'Conexão OK.' : 'Falha no teste.'));
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível testar a integração.');
     }
@@ -380,9 +386,9 @@ export function SettingsView() {
         setError('');
         return;
       }
-      setError(result.message ?? 'OAuth Google Calendar não retornou authorizeUrl.');
+      setError(result.message ?? 'Não foi possível iniciar a conexão com o Google Agenda.');
     } catch (cause) {
-      const message = cause instanceof ApiError ? cause.message : 'OAuth Google Calendar indisponível.';
+      const message = cause instanceof ApiError ? cause.message : 'Conexão com Google Agenda indisponível.';
       setError(message);
     }
   }
@@ -411,7 +417,7 @@ export function SettingsView() {
       setError(result.message ?? 'Webhook Google registrado.');
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Registro de webhook Google falhou.');
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível ativar as atualizações automáticas.');
     }
   }
 
@@ -472,7 +478,7 @@ export function SettingsView() {
           <button className="button primary">Criar etiqueta</button>
         </form>
       </Modal>
-      <Modal open={configModal === 'procedure'} title="Novo procedimento" description="Cadastro no catálogo clínico da organização (POST /procedures)." onClose={closeConfigModal}>
+      <Modal open={configModal === 'procedure'} title="Novo procedimento" description="Cadastro no catálogo clínico da organização." onClose={closeConfigModal}>
         <form className="mutation-form" onSubmit={createProcedure}>
           <label>Código interno<input name="internalCode" minLength={1} required autoFocus /></label>
           <label>Código TUSS<input name="tussCode" placeholder="Opcional" /></label>
@@ -505,17 +511,17 @@ export function SettingsView() {
           <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : 'Criar cadeira'}</button>
         </form>
       </Modal>
-      <Modal open={configModal === 'automation'} title="Regra de retorno automático" description="Dispara quando a consulta é marcada como concluída. O worker respeita allowedHours (America/Cuiaba)." onClose={closeConfigModal}>
+      <Modal open={configModal === 'automation'} title="Regra de retorno automático" description="Dispara quando a consulta é marcada como concluída. Respeita o horário permitido da clínica." onClose={closeConfigModal}>
         <form className="mutation-form" onSubmit={submitAutomation}>
           <label className="span-2">Nome da regra<input value={automationName} onChange={(e) => setAutomationName(e.target.value)} minLength={3} required autoFocus /></label>
           <label className="span-2">Motivo do retorno<input value={automationReason} onChange={(e) => setAutomationReason(e.target.value)} minLength={3} required /></label>
           <label>Dias após conclusão<input type="number" min={0} max={365} value={automationDays} onChange={(e) => setAutomationDays(e.target.value)} required /></label>
-          <label>Início (allowedHours)<input type="time" value={automationStart} onChange={(e) => setAutomationStart(e.target.value)} /></label>
-          <label>Fim (allowedHours)<input type="time" value={automationEnd} onChange={(e) => setAutomationEnd(e.target.value)} /></label>
+          <label>Horário permitido — início<input type="time" value={automationStart} onChange={(e) => setAutomationStart(e.target.value)} /></label>
+          <label>Horário permitido — fim<input type="time" value={automationEnd} onChange={(e) => setAutomationEnd(e.target.value)} /></label>
           <label className="span-2">
-            Somente dias úteis
+            Dias
             <select value={automationWeekdaysOnly ? 'yes' : 'no'} onChange={(e) => setAutomationWeekdaysOnly(e.target.value === 'yes')}>
-              <option value="yes">Seg–sex</option>
+              <option value="yes">Segunda a sexta</option>
               <option value="no">Todos os dias</option>
             </select>
           </label>
@@ -570,7 +576,7 @@ export function SettingsView() {
                 <button className="button soft" type="button" onClick={() => setCertificateEditing(false)}>Voltar à visualização</button>
               </div>
             ) : null}
-            <div className="secure-notice" style={{ margin: 14 }}>Máximo de 5 MB. O arquivo fica em storage privado e a senha é criptografada com AES-256-GCM.</div>
+            <div className="secure-notice" style={{ margin: 14 }}>Máximo de 5 MB. O arquivo e a senha ficam protegidos e nunca são expostos para download.</div>
           </>
         )}
       </Modal>
@@ -608,6 +614,8 @@ export function SettingsView() {
           )}
 
           {section === 'anamnesis' && <AnamnesisTemplateEditor />}
+          {section === 'medications' && <MedicationCatalogPanel />}
+          {section === 'exams' && <ExamCatalogPanel />}
 
           {section === 'units' && (
             <Panel
@@ -752,7 +760,7 @@ export function SettingsView() {
               )}
               <p className="muted-note" style={{ padding: '0 14px 14px' }}>
                 {procedures.length} procedimentos · {specialties.length} especialidades.
-                Novos itens usam <code>POST /procedures</code> e passam a valer para toda a organização.
+                Novos itens passam a valer para toda a organização.
               </p>
               <PriceTablesAdminPanel clinicId={clinicId} procedures={procedures} />
               <OdontogramConditionsAdminPanel />
@@ -959,12 +967,10 @@ export function SettingsView() {
           {section === 'integrations' && (
             <Panel
               title={activeLabel}
-              description="Provedores com formulário específico (Nibo, pagamentos, WhatsApp, agenda e IA)."
+              description="Provedores externos com status e sincronização."
             >
               <p className="muted-note" style={{ padding: '0 14px' }}>
-                Google Calendar: defina GOOGLE_CALENDAR_MOCK=false + clientId/secret + GOOGLE_REDIRECT_URI, salve a conexão e use Iniciar OAuth.
-                Sync clinic→Google no worker; Google→clinic via Pull sync. Auto-renew do webhook via GOOGLE_CALENDAR_WATCH_AUTO_RENEW (worker).
-                Sem GOOGLE_CALENDAR_WEBHOOK_URL: webhook não configurado — usando sincronização manual/pull.
+                Conecte o Google Agenda e outros provedores. Use sincronizar agora quando precisar atualizar os dados.
               </p>
               {loading && <div className="state-message">Carregando integrações…</div>}
               {!loading && integrations.length === 0 && (
@@ -978,13 +984,13 @@ export function SettingsView() {
                     return (
                       <div className="settings-row" key={rowId}>
                         <div>
-                          <strong>{text(item.provider)}</strong>
+                          <strong>{text(item.provider) === 'GOOGLE_CALENDAR' ? 'Google Agenda' : text(item.provider)}</strong>
                           <span>
-                            {text(item.scopeType ?? item.source)} · modo {text(item.mode, 'persistido')}
+                            {presentationLabel(item.status)}
                             {item.lastSyncAt ? ` · última sincronização ${dateOnly(item.lastSyncAt)}` : ''}
                           </span>
                           {text(item.provider) === 'GOOGLE_CALENDAR' ? (
-                            <span className="muted-note">
+            <Disclosure title="Detalhes técnicos" description="Informações para suporte" defaultOpen={false}>
                               {(() => {
                                 const cfg = item.configuration && typeof item.configuration === 'object'
                                   ? item.configuration as RecordValue
@@ -992,14 +998,22 @@ export function SettingsView() {
                                 const expiration = cfg.webhookExpiration;
                                 const calendarId = text(cfg.calendarId, 'primary');
                                 const lastError = text(cfg.webhookWatchLastError);
-                                if (!expiration) {
-                                  return `Calendário: ${calendarId} · Webhook não configurado — usando sincronização manual/pull.`;
-                                }
-                                const expMs = Number(expiration);
-                                const expDate = Number.isFinite(expMs) ? new Date(expMs) : new Date(String(expiration));
-                                return `OAuth: conectado · Calendário: ${calendarId} · Webhook: ativo · Expira: ${Number.isNaN(expDate.getTime()) ? String(expiration) : expDate.toLocaleString('pt-BR')}${lastError ? ` · Erro renew: ${lastError}` : ''}`;
+                                const expLabel = (() => {
+                                  if (!expiration) return 'não configuradas — use sincronização manual';
+                                  const expMs = Number(expiration);
+                                  const expDate = Number.isFinite(expMs) ? new Date(expMs) : new Date(String(expiration));
+                                  return `ativas · expira ${Number.isNaN(expDate.getTime()) ? String(expiration) : expDate.toLocaleString('pt-BR')}`;
+                                })();
+                                return (
+                                  <div className="muted-note" style={{ display: 'grid', gap: 4 }}>
+                                    <span>Provedor: GOOGLE_CALENDAR</span>
+                                    <span>Calendário: {calendarId}</span>
+                                    <span>Atualizações automáticas: {expLabel}</span>
+                                    {lastError ? <span>Última falha: {lastError}</span> : null}
+                                  </div>
+                                );
                               })()}
-                            </span>
+                            </Disclosure>
                           ) : null}
                         </div>
                         <div className="row-actions">
@@ -1052,21 +1066,21 @@ export function SettingsView() {
                                         role="menuitem"
                                         onClick={() => void startGoogleOauth(String(item.id))}
                                       >
-                                        Iniciar OAuth
+                                        Conectar / reconectar
                                       </button>
                                       <button
                                         type="button"
                                         role="menuitem"
                                         onClick={() => void pullGoogleCalendarSync(String(item.id))}
                                       >
-                                        Pull sync (Google → agenda)
+                                        Sincronizar agora
                                       </button>
                                       <button
                                         type="button"
                                         role="menuitem"
                                         onClick={() => void registerGoogleWatch(String(item.id))}
                                       >
-                                        Registrar/renovar webhook
+                                        Ativar atualizações automáticas
                                       </button>
                                     </>
                                   ) : null}
@@ -1075,7 +1089,7 @@ export function SettingsView() {
                                     role="menuitem"
                                     onClick={() => void disableIntegration(String(item.id))}
                                   >
-                                    Inativar
+                                    Desativar
                                   </button>
                                 </div>
                               ) : null}

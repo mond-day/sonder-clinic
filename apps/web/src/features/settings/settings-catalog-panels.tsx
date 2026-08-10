@@ -102,7 +102,7 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
         </div>
       )}
       <p className="muted-note">Contexto ativo: {clinics.length} clínica(s) no seletor. A última clínica ativa não pode ser inativada.</p>
-      <Modal open={open} title="Nova clínica" description="Cadastro administrativo da unidade (POST /settings/clinics)." onClose={() => setOpen(false)} size="small">
+      <Modal open={open} title="Nova clínica" description="Cadastro administrativo da unidade." onClose={() => setOpen(false)} size="small">
         <form className="mutation-form" onSubmit={createClinic}>
           <label className="span-2">Nome fantasia<input name="tradeName" minLength={2} required autoFocus /></label>
           <label className="span-2">Razão social<input name="legalName" minLength={2} required /></label>
@@ -959,5 +959,284 @@ export function OdontogramConditionsAdminPanel() {
         </form>
       </Modal>
     </div>
+  );
+}
+
+type CatalogRow = RecordValue;
+
+function CatalogList({
+  title,
+  description,
+  createLabel,
+  rows,
+  loading,
+  error,
+  search,
+  onSearch,
+  statusFilter,
+  onStatusFilter,
+  onCreate,
+  onEdit,
+  renderSecondary,
+}: {
+  title: string;
+  description: string;
+  createLabel: string;
+  rows: CatalogRow[];
+  loading: boolean;
+  error: string;
+  search: string;
+  onSearch: (value: string) => void;
+  statusFilter: 'all' | 'active' | 'inactive';
+  onStatusFilter: (value: 'all' | 'active' | 'inactive') => void;
+  onCreate: () => void;
+  onEdit: (row: CatalogRow) => void;
+  renderSecondary: (row: CatalogRow) => string;
+}) {
+  const filtered = rows.filter((row) => {
+    if (statusFilter === 'active' && !row.active) return false;
+    if (statusFilter === 'inactive' && row.active) return false;
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return String(row.name ?? '').toLowerCase().includes(q);
+  });
+
+  return (
+    <div className="form-section" style={{ padding: '0 14px 14px' }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>{title}</h3>
+          <p className="muted-note" style={{ margin: '4px 0 0' }}>{description}</p>
+        </div>
+        <button className="button small primary" type="button" onClick={onCreate}>{createLabel}</button>
+      </header>
+      <div className="catalog-search" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input placeholder="Buscar…" value={search} onChange={(e) => onSearch(e.target.value)} style={{ flex: 1 }} />
+        <select value={statusFilter} onChange={(e) => onStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}>
+          <option value="all">Todos os status</option>
+          <option value="active">Ativos</option>
+          <option value="inactive">Inativos</option>
+        </select>
+      </div>
+      {error ? <p className="state-message error" role="alert">{error}</p> : null}
+      {loading ? <div className="state-message">Carregando…</div> : null}
+      {!loading && filtered.length === 0 ? (
+        <EmptyState title="Nenhum item" description="Cadastre o primeiro item desta área." />
+      ) : (
+        <div className="settings-list">
+          {filtered.map((row) => (
+            <div className="settings-row" key={String(row.id)}>
+              <div>
+                <strong>{text(row.name)}</strong>
+                <span>{renderSecondary(row)}</span>
+              </div>
+              <div className="row-actions">
+                <StatusBadge tone={row.active ? 'green' : 'gray'}>{row.active ? 'Ativo' : 'Inativo'}</StatusBadge>
+                <button className="button small" type="button" onClick={() => onEdit(row)}>Editar</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function MedicationCatalogPanel() {
+  const [rows, setRows] = useState<CatalogRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<CatalogRow | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    api.get<CatalogRow[]>(`/medication-catalog?includeInactive=true&q=${encodeURIComponent(search)}`)
+      .then((data) => setRows(list(data)))
+      .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao carregar medicamentos.'))
+      .finally(() => setLoading(false));
+  }, [search]);
+
+  useEffect(() => { const t = window.setTimeout(load, 250); return () => window.clearTimeout(t); }, [load]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    setBusy(true);
+    setFormError('');
+    const body = {
+      name: String(data.get('name') || '').trim(),
+      activeIngredient: String(data.get('activeIngredient') || '').trim() || undefined,
+      concentration: String(data.get('concentration') || '').trim() || undefined,
+      pharmaceuticalForm: String(data.get('pharmaceuticalForm') || '').trim() || undefined,
+      defaultRoute: String(data.get('defaultRoute') || '').trim() || undefined,
+      notes: String(data.get('notes') || '').trim() || undefined,
+      active: data.get('active') === 'true',
+    };
+    try {
+      if (editing) await api.patch(`/medication-catalog/${String(editing.id)}`, body);
+      else await api.post('/medication-catalog', body);
+      setOpen(false);
+      setEditing(null);
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <CatalogList
+        title="Medicamentos"
+        description="Catálogo para agilizar prescrições. A posologia deve ser confirmada pelo profissional."
+        createLabel="+ Novo medicamento"
+        rows={rows}
+        loading={loading}
+        error={error}
+        search={search}
+        onSearch={setSearch}
+        statusFilter={statusFilter}
+        onStatusFilter={setStatusFilter}
+        onCreate={() => { setEditing(null); setOpen(true); }}
+        onEdit={(row) => { setEditing(row); setOpen(true); }}
+        renderSecondary={(row) => [row.concentration, row.pharmaceuticalForm, row.defaultRoute ? `via ${row.defaultRoute}` : ''].filter(Boolean).join(' · ') || '—'}
+      />
+      <Modal
+        open={open}
+        title={editing ? 'Editar medicamento' : 'Novo medicamento'}
+        description="Cadastre identificação. Dose e posologia são confirmadas na prescrição."
+        onClose={() => { setOpen(false); setEditing(null); }}
+      >
+        <form className="mutation-form" onSubmit={(e) => void submit(e)}>
+          <label className="span-2">Nome / princípio ativo<input name="name" required defaultValue={String(editing?.name ?? '')} /></label>
+          <label>Concentração<input name="concentration" defaultValue={String(editing?.concentration ?? '')} placeholder="500 mg" /></label>
+          <label>Forma farmacêutica<input name="pharmaceuticalForm" defaultValue={String(editing?.pharmaceuticalForm ?? '')} placeholder="Cápsula" /></label>
+          <label>Via usual<input name="defaultRoute" defaultValue={String(editing?.defaultRoute ?? '')} placeholder="Oral" /></label>
+          <label>Status
+            <select name="active" defaultValue={editing?.active === false ? 'false' : 'true'}>
+              <option value="true">Ativo</option>
+              <option value="false">Inativo</option>
+            </select>
+          </label>
+          <label className="span-2">Observação interna<textarea name="notes" defaultValue={String(editing?.notes ?? '')} rows={2} /></label>
+          {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
+          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
+        </form>
+      </Modal>
+    </>
+  );
+}
+
+export function ExamCatalogPanel() {
+  const [rows, setRows] = useState<CatalogRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<CatalogRow | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    api.get<CatalogRow[]>(`/exam-catalog?includeInactive=true&q=${encodeURIComponent(search)}`)
+      .then((data) => setRows(list(data)))
+      .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao carregar exames.'))
+      .finally(() => setLoading(false));
+  }, [search]);
+
+  useEffect(() => { const t = window.setTimeout(load, 250); return () => window.clearTimeout(t); }, [load]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    setBusy(true);
+    setFormError('');
+    const body = {
+      name: String(data.get('name') || '').trim(),
+      category: String(data.get('category') || 'IMAGING'),
+      lateralityBehavior: String(data.get('lateralityBehavior') || 'OPTIONAL'),
+      defaultInstructions: String(data.get('defaultInstructions') || '').trim() || undefined,
+      active: data.get('active') === 'true',
+    };
+    try {
+      if (editing) await api.patch(`/exam-catalog/${String(editing.id)}`, body);
+      else await api.post('/exam-catalog', body);
+      setOpen(false);
+      setEditing(null);
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const categoryLabel = (value: unknown) => {
+    const map: Record<string, string> = { IMAGING: 'Imagem', LAB: 'Laboratorial', PHOTO: 'Fotografia', OTHER: 'Outro' };
+    return map[String(value)] ?? text(value);
+  };
+
+  return (
+    <>
+      <CatalogList
+        title="Tipos de exame"
+        description="Catálogo editável usado nas solicitações de exame."
+        createLabel="+ Novo tipo de exame"
+        rows={rows}
+        loading={loading}
+        error={error}
+        search={search}
+        onSearch={setSearch}
+        statusFilter={statusFilter}
+        onStatusFilter={setStatusFilter}
+        onCreate={() => { setEditing(null); setOpen(true); }}
+        onEdit={(row) => { setEditing(row); setOpen(true); }}
+        renderSecondary={(row) => `${categoryLabel(row.category)} · ${presentationLabel(row.lateralityBehavior ?? 'OPTIONAL')}`}
+      />
+      <Modal
+        open={open}
+        title={editing ? 'Editar tipo de exame' : 'Novo tipo de exame'}
+        description="O catálogo aparece na busca ao criar uma solicitação."
+        onClose={() => { setOpen(false); setEditing(null); }}
+      >
+        <form className="mutation-form" onSubmit={(e) => void submit(e)}>
+          <label className="span-2">Nome<input name="name" required defaultValue={String(editing?.name ?? '')} /></label>
+          <label>Categoria
+            <select name="category" defaultValue={String(editing?.category ?? 'IMAGING')}>
+              <option value="IMAGING">Imagem</option>
+              <option value="LAB">Laboratorial</option>
+              <option value="PHOTO">Fotografia</option>
+              <option value="OTHER">Outro</option>
+            </select>
+          </label>
+          <label>Região / lateralidade
+            <select name="lateralityBehavior" defaultValue={String(editing?.lateralityBehavior ?? 'OPTIONAL')}>
+              <option value="OPTIONAL">Opcional</option>
+              <option value="REQUIRED">Obrigatória</option>
+              <option value="NOT_APPLICABLE">Não se aplica</option>
+            </select>
+          </label>
+          <label className="span-2">Orientação padrão<textarea name="defaultInstructions" defaultValue={String(editing?.defaultInstructions ?? '')} rows={2} /></label>
+          <label>Status
+            <select name="active" defaultValue={editing?.active === false ? 'false' : 'true'}>
+              <option value="true">Ativo</option>
+              <option value="false">Inativo</option>
+            </select>
+          </label>
+          {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
+          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
+        </form>
+      </Modal>
+    </>
   );
 }

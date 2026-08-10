@@ -278,6 +278,8 @@ model Organization {
   agendaTags   AgendaTag[]
   laboratories Laboratory[]
   duplicateDismissals PatientDuplicateDismissal[]
+  medicationCatalog MedicationCatalogItem[]
+  examCatalog       ExamCatalogItem[]
 }
 
 model Clinic {
@@ -504,6 +506,14 @@ model Patient {
   secondaryPhone String?
   isMinor        Boolean           @default(false)
   status         PatientStatus     @default(ACTIVE)
+  postalCode     String?
+  street         String?
+  number         String?
+  complement     String?
+  district       String?
+  city           String?
+  state          String?
+  country        String?           @default("Brasil")
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   organization   Organization      @relation(fields: [organizationId], references: [id])
@@ -1932,4 +1942,38 @@ model PrescriptionProtocol {
 
   @@index([organizationId, name, professionalId])
   @@index([organizationId, active])
+}
+
+model MedicationCatalogItem {
+  id                 String       @id @default(uuid()) @db.Uuid
+  organizationId     String       @db.Uuid
+  name               String
+  activeIngredient   String?
+  concentration      String?
+  pharmaceuticalForm String?
+  defaultRoute       String?
+  notes              String?
+  active             Boolean      @default(true)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, active])
+  @@index([organizationId, name])
+}
+
+model ExamCatalogItem {
+  id                  String       @id @default(uuid()) @db.Uuid
+  organizationId      String       @db.Uuid
+  name                String
+  category            String       @default("IMAGING")
+  lateralityBehavior  String?      @default("OPTIONAL")
+  defaultInstructions String?
+  active              Boolean      @default(true)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  organization        Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, active])
+  @@index([organizationId, name])
 }

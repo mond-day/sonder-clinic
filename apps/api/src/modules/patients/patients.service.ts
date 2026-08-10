@@ -18,6 +18,13 @@ import {
   previewPatientMerge,
 } from './patients-duplicates.utils';
 
+const brazilianPostalCode = z
+  .string()
+  .trim()
+  .transform((value) => value.replace(/\D/g, ''))
+  .refine((value) => value.length === 0 || value.length === 8, 'CEP deve ter 8 dígitos.')
+  .optional();
+
 const patientDataSchema = z.object({
   fullName: z.string().trim().min(3),
   preferredName: z.string().trim().optional(),
@@ -28,6 +35,20 @@ const patientDataSchema = z.object({
   primaryPhone: z.string().trim().min(10),
   secondaryPhone: z.string().trim().min(10).optional(),
   isMinor: z.boolean().optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+  postalCode: brazilianPostalCode,
+  street: z.string().trim().max(200).optional(),
+  number: z.string().trim().max(40).optional(),
+  complement: z.string().trim().max(120).optional(),
+  district: z.string().trim().max(120).optional(),
+  city: z.string().trim().max(120).optional(),
+  state: z.string().trim().max(2).optional(),
+  country: z.string().trim().max(80).optional(),
+}).superRefine((data, ctx) => {
+  const country = (data.country ?? 'Brasil').toLowerCase();
+  if (data.postalCode && country.includes('brasil') && data.postalCode.length !== 8) {
+    ctx.addIssue({ code: 'custom', message: 'CEP inválido para o Brasil.', path: ['postalCode'] });
+  }
 });
 
 export type CreatePatientInput = {
@@ -40,6 +61,15 @@ export type CreatePatientInput = {
   primaryPhone: string;
   secondaryPhone?: string;
   isMinor?: boolean;
+  status?: 'ACTIVE' | 'INACTIVE';
+  postalCode?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  district?: string;
+  city?: string;
+  state?: string;
+  country?: string;
   clinicId: string;
 };
 
@@ -94,29 +124,38 @@ export class PatientsService {
   }
 
   async create(organizationId: string, input: CreatePatientInput) {
-    parseWithZod(patientDataSchema, input);
-    if (input.cpf) {
-      const duplicate = await prisma.patient.findFirst({ where: { organizationId, cpf: input.cpf } });
+    const parsed = parseWithZod(patientDataSchema, input);
+    if (parsed.cpf) {
+      const duplicate = await prisma.patient.findFirst({ where: { organizationId, cpf: parsed.cpf } });
       if (duplicate) throw new ConflictException('Já existe um paciente com este CPF.');
     }
-    if (input.passportNumber) {
+    if (parsed.passportNumber) {
       const duplicatePassport = await prisma.patient.findFirst({
-        where: { organizationId, passportNumber: input.passportNumber },
+        where: { organizationId, passportNumber: parsed.passportNumber },
       });
       if (duplicatePassport) throw new ConflictException('Já existe um paciente com este passaporte.');
     }
     return prisma.patient.create({
       data: {
         organizationId,
-        fullName: input.fullName,
-        preferredName: input.preferredName,
-        cpf: input.cpf,
-        passportNumber: input.passportNumber,
-        birthDate: input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : undefined,
-        email: input.email,
-        primaryPhone: input.primaryPhone,
-        secondaryPhone: input.secondaryPhone,
-        isMinor: input.isMinor ?? false,
+        fullName: parsed.fullName,
+        preferredName: parsed.preferredName,
+        cpf: parsed.cpf,
+        passportNumber: parsed.passportNumber,
+        birthDate: parsed.birthDate ? new Date(`${parsed.birthDate}T00:00:00.000Z`) : undefined,
+        email: parsed.email,
+        primaryPhone: parsed.primaryPhone,
+        secondaryPhone: parsed.secondaryPhone,
+        isMinor: parsed.isMinor ?? false,
+        status: parsed.status ?? 'ACTIVE',
+        postalCode: parsed.postalCode || null,
+        street: parsed.street || null,
+        number: parsed.number || null,
+        complement: parsed.complement || null,
+        district: parsed.district || null,
+        city: parsed.city || null,
+        state: parsed.state || null,
+        country: parsed.country || 'Brasil',
         clinics: { create: { clinicId: input.clinicId } },
       },
     });
@@ -149,6 +188,15 @@ export class PatientsService {
         primaryPhone: data.primaryPhone,
         secondaryPhone: data.secondaryPhone || null,
         isMinor: data.isMinor,
+        status: data.status,
+        postalCode: data.postalCode || null,
+        street: data.street || null,
+        number: data.number || null,
+        complement: data.complement || null,
+        district: data.district || null,
+        city: data.city || null,
+        state: data.state || null,
+        country: data.country || 'Brasil',
       },
     });
   }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { isLocalhostAppUrl, publicAppUrl } from '@/lib/public-url';
 import { EmptyState, ErrorState, Panel, Skeleton, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
 import { AnamnesisDetailModal } from './anamnesis-detail-modal';
@@ -226,7 +227,7 @@ export function AnamnesisWorkspace({
         signerRole: 'PATIENT',
         signerName: 'Paciente',
       });
-      const absolute = `${window.location.origin}${result.publicPath}`;
+      const absolute = publicAppUrl(result.publicPath);
       setRemoteLink(absolute);
       await navigator.clipboard?.writeText(absolute).catch(() => undefined);
     } catch (err) {
@@ -474,7 +475,16 @@ export function AnamnesisWorkspace({
                   Assinar profissionalmente
                 </button>
               </div>
-              {remoteLink ? <p className="muted-note">Link público copiado: {remoteLink}</p> : null}
+              {remoteLink ? (
+                <>
+                  <p className="muted-note">Link público copiado: {remoteLink}</p>
+                  {isLocalhostAppUrl(remoteLink) ? (
+                    <p className="secure-notice" role="status">
+                      Este link funciona somente neste computador. Para testar em outro dispositivo, configure um endereço acessível na rede ou um túnel HTTPS.
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
             </div>
           ) : null}
         </div>

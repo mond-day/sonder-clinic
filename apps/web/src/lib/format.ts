@@ -133,12 +133,34 @@ const presentationLabels: Record<string, string> = {
   DAILY: 'Diária', WEEKLY: 'Semanal', MONTHLY: 'Mensal', YEARLY: 'Anual',
   PRODUCTION: 'Produção', RECEIPT: 'Recebimento',
   APPOINTMENT_COMPLETED: 'Consulta concluída',
+  SIGNATURE_REQUESTED: 'Assinatura solicitada',
+  SIGNATURE_REQUEST_REVOKED: 'Solicitação de assinatura revogada',
+  SIGNATURE_REQUEST_USED: 'Assinatura concluída pelo link',
+  DOCUMENT_GENERATED: 'Documento gerado',
+  DOCUMENT_CANCELLED: 'Documento cancelado',
+  DOCUMENT_ARCHIVED: 'Documento arquivado',
+  REMOTE_LINK: 'Link remoto',
+  DRAWN: 'Assinatura na tela',
+  MOCK_A1: 'Assinatura de teste',
+  IMAGING: 'Imagem',
+  PHOTO: 'Fotografia',
+  OTHER: 'Outro',
+  OPTIONAL: 'Opcional',
+  REQUIRED: 'Obrigatória',
+  NOT_APPLICABLE: 'Não se aplica',
 };
 
 export const presentationLabel = (value: unknown) => {
   const key = String(value ?? '').toUpperCase();
   return presentationLabels[key] ?? text(value);
 };
+
+/** Fallback seguro para eventos exibidos ao usuário. */
+export function presentationEventLabel(type: unknown) {
+  const key = String(type ?? '').toUpperCase();
+  if (!key) return 'Evento do documento';
+  return presentationLabels[key] ?? 'Evento do documento';
+}
 
 export function dayBounds(reference = new Date()) {
   const from = new Date(reference);

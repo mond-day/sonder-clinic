@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUUID, Length, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUUID, Length, MaxLength, MinLength } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { PatientsService } from './patients.service';
@@ -15,6 +15,15 @@ class CreatePatientDto {
   @IsString() @MinLength(10) primaryPhone!: string;
   @IsOptional() @IsString() @MinLength(10) secondaryPhone?: string;
   @IsOptional() @IsBoolean() isMinor?: boolean;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
+  @IsOptional() @IsString() postalCode?: string;
+  @IsOptional() @IsString() street?: string;
+  @IsOptional() @IsString() number?: string;
+  @IsOptional() @IsString() complement?: string;
+  @IsOptional() @IsString() district?: string;
+  @IsOptional() @IsString() city?: string;
+  @IsOptional() @IsString() state?: string;
+  @IsOptional() @IsString() country?: string;
   @IsUUID() clinicId!: string;
 }
 
@@ -28,6 +37,15 @@ class UpdatePatientDto {
   @IsString() @MinLength(10) primaryPhone!: string;
   @IsOptional() @IsString() @MinLength(10) secondaryPhone?: string;
   @IsOptional() @IsBoolean() isMinor?: boolean;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
+  @IsOptional() @IsString() postalCode?: string;
+  @IsOptional() @IsString() street?: string;
+  @IsOptional() @IsString() number?: string;
+  @IsOptional() @IsString() complement?: string;
+  @IsOptional() @IsString() district?: string;
+  @IsOptional() @IsString() city?: string;
+  @IsOptional() @IsString() state?: string;
+  @IsOptional() @IsString() country?: string;
 }
 
 class LinkClinicDto {

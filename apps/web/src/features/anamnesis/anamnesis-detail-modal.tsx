@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { publicAppUrl } from '@/lib/public-url';
 import { EmptyState, ErrorState, Panel, Skeleton, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
 import { isGroupVisible, type ConditionGroup } from './conditions';
@@ -225,7 +226,7 @@ export function AnamnesisDetailModal({
         signerRole: 'PATIENT',
         signerName: text(detail.patient?.fullName) || 'Paciente',
       });
-      const absolute = `${window.location.origin}${result.publicPath}`;
+      const absolute = publicAppUrl(result.publicPath);
       setRemoteLink(absolute);
       await navigator.clipboard?.writeText(absolute).catch(() => undefined);
       await load();
