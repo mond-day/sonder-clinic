@@ -1,6 +1,6 @@
 # Production readiness — Sonder Clinic
 
-Checklist honesto para aptidão de produção. Atualizado após remessa **P0/P1/P2 pós-auditoria** (anamnese, produção, Google watch).
+Checklist honesto para aptidão de produção. Atualizado após remessa **Release Candidate / estabilização final**.
 
 Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL** = funciona com ressalvas.
 
@@ -8,77 +8,59 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 
 | Item | Status | Notas |
 |------|--------|-------|
-| Secrets JWT / `ENCRYPTION_MASTER_KEY` | **NO-GO** até trocar defaults | Nunca usar valores de `.env.example` em prod |
-| `DATABASE_URL` Postgres gerenciado | **NO-GO** | Backups e retenção obrigatórios |
+| Secrets JWT / `ENCRYPTION_MASTER_KEY` | **NO-GO** até trocar defaults | Fail-fast em `NODE_ENV=production` recusa startup com defaults |
+| `DATABASE_URL` Postgres gerenciado | **NO-GO** | Não-localhost; backups e retenção obrigatórios |
 | HTTPS + Traefik / TLS | **NO-GO** | ADR 0002; redes `traefik_public` |
-| Migrations aplicadas (`db:deploy`) | **NO-GO** | Inclui `20260810010000_anamnesis_p0_fks_cancelled` |
-| `COOKIE_SECURE=true` + HTTPS | **NO-GO** | Cookies de sessão |
-| Storage MinIO/S3 com credenciais | **NO-GO** para uploads | `STORAGE_DRIVER=minio\|s3` + endpoint/keys/bucket |
+| Migrations aplicadas (`db:deploy`) | **NO-GO** | Inclui `20260810020000_anamnesis_source_response` |
+| `COOKIE_SECURE=true` + HTTPS | **NO-GO** | Fail-fast exige `COOKIE_SECURE=true` |
+| Storage MinIO/S3 com credenciais | **NO-GO** para uploads | Fail-fast recusa `STORAGE_DRIVER=local` |
+| Redis (`QUEUE_DRIVER=redis` + `REDIS_URL`) | **NO-GO** em prod | Fail-fast + readiness |
+| `CORS_ORIGIN` explícito | **NO-GO** em prod | Sem fallback localhost |
 | SMTP real | **NO-GO** se reset, convites **ou envio manual EMAIL** forem requisito | Sem `SMTP_HOST` falha explicitamente |
 
 ## Operação (GO / PARTIAL)
 
 | Item | Status | Notas |
 |------|--------|-------|
-| Imagens GHCR (`api`/`web`/`worker`) | **GO** | Workflow `release-images.yml` |
-| Redis compartilhado (`QUEUE_DRIVER=redis`) | **PARTIAL** | Dev usa `memory`; prod deve usar Redis |
-| Healthchecks Swarm | **GO** se stack aplicada | |
+| Imagens GHCR (`api`/`web`/`worker`) | **GO (código)** | Só após CI verde (`workflow_run`) |
+| Branch protection `main` exige CI | **PARTIAL** | Documentado; configurar no GitHub |
+| Health liveness `/health` | **GO** | |
+| Readiness `/api/v1/health/ready` | **GO (código)** | DB + Redis (prod) + storage |
+| Swagger | **GO (código)** | Off por default em prod (`SWAGGER_ENABLED`) |
 | Backups Postgres | **PARTIAL** | Processo externo |
 | Monitoramento / OTEL | **GO** (código) / **PARTIAL** (ops) | |
 | ClamAV | **GO** (adapter) / **PARTIAL** (ops) | |
-| Outbox dead-letter | **PARTIAL** | Worker DLQ + API/UI; calendar-sync e WhatsApp na outbox |
-| Seed em produção | **NO-GO** | Seed é só desenvolvimento; modelos de anamnese sobem no create-org via seed |
+| Outbox dead-letter | **PARTIAL** | Worker DLQ + API/UI |
+| Seed em produção | **NO-GO** | Só desenvolvimento |
 
 ## Produto / compliance
 
 | Item | Status | Notas |
 |------|--------|-------|
 | LGPD | **PARTIAL** | Políticas editáveis; DPO externo |
-| Auditoria (`AuditEvent`) | **GO** em fluxos críticos | Inclui anamnese (create/sign/revoke/reopen/cancel/delete) |
-| Isolamento multi-tenant | **GO** | Anamnese: clinicId validado na org |
-| Integrações externas | **GO (código)** / **PARTIAL (ops)** | Google OAuth+sync+watch renew (A38) requer env + consentimento |
-| Comunicação (canais/envio) | **GO (código)** / **PARTIAL (ops)** | EMAIL=SMTP; WHATSAPP=Evolution se MOCK=false + credenciais; SMS stub |
-| Certificado A1 | **PARTIAL** | Precisa PKCS#12 válido |
-| Relatórios XLSX | **GO** (código) | Produção por procedimento = recebimentos + elegibilidade de sessão |
-| Anamnese lifecycle | **GO (código)** | Lock/hash/revoke/reopen/EXPIRED job; E2E **PARTIAL** até run CI verde |
-| Recorrências financeiras | **GO** | |
-| Convites SMTP | **GO** (código) / **NO-GO** ops sem SMTP | |
-| Merge de pacientes | **GO** (código) / **PARTIAL** staging | Via Configurações + preview |
-| Documentos (paciente) | **GO** (código) | Não reconstruído nesta remessa |
-| Documentos (admin modelos) | **GO (código)** | Editor estruturado + preview + validate |
-| Tarefas ricas | **GO** (código) | |
-| Financeiro parcial/estorno | **GO** (código) | |
-| Laboratório | **GO** (código) | |
-| Profissional ↔ clínica/unidade | **GO** (código) | Escopo rígido com `clinicId` (Fatia 3) |
-| Retornos `allowedHours` | **GO** (código worker) | |
-| E2E Playwright | **PARTIAL** | `anamnesis-e2e` **GO** (A–F + docs admin, run local); fatia4/remessa ainda sem GO de suite completa |
+| Auditoria | **GO** | Inclui `anamnesis.update_draft_created` / `superseded` / `cancelled` |
+| Multi-tenant | **GO** | `sourceResponseId` / publish / relatórios isolados por org |
+| Anamnese lifecycle | **GO (código)** | Update não invalida origem; SUPERSEDED na finalize |
+| Relatórios produção vs recebimento | **GO (código)** | `production-procedure` clínico; `receipt-procedure` financeiro |
+| Document templates publish | **GO (código)** | Validate obrigatório no publish |
+| Integrações externas | **GO (código)** / **PARTIAL (ops)** | Google watch renew com lease CAS |
+| E2E Playwright | **PARTIAL** | Specs alinhados A–G; evidência CI pendente |
 
 ## Checklist pré-release operacional
 
-1. Rotacionar secrets; validar `ENCRYPTION_MASTER_KEY` (64 hex).
-2. `pnpm db:deploy`; smoke login admin.
-3. MinIO/S3 + teste de upload.
-4. Configurar SMTP; testar reset, convite e envio manual EMAIL.
-5. Imagens no Swarm; `/health`.
-6. Backup Postgres (restore dry-run).
-7. Desabilitar `*_MOCK=true` só com credencial real.
-8. Google: `GOOGLE_CALENDAR_MOCK=false` + OAuth + (opcional) `GOOGLE_CALENDAR_WEBHOOK_URL` + `GOOGLE_CALENDAR_WATCH_AUTO_RENEW=true`.
-9. Evolution: `EVOLUTION_MOCK=false` + baseUrl/apiKey/instance + smoke lembrete/manual.
-10. (Opcional) ClamAV / OTEL.
-11. Revisar dead-letters e `allowedHours`.
-12. Rodar `pnpm typecheck` / `pnpm test` / `pnpm test:e2e` e anexar evidência.
-
-## Remessa / Fatias
-
-| Área | Status |
-|------|--------|
-| Regras financeiras | **GO** (código) |
-| Tratamentos / Documentos paciente / Tarefas / Lab / Pesquisa | **GO** (código) — preservados |
-| Anamnese P0/P1 | **GO (código)** / **PARTIAL** E2E |
-| Produção por procedimento | **GO (código)** — base financeira + sessão |
-| Google Calendar | **GO** (código) se OAuth; webhook+auto-renew se URL HTTPS; senão pull-sync |
-| WhatsApp Evolution | **GO** (código) se MOCK=false + creds; senão FAILED |
+1. Rotacionar secrets; validar `ENCRYPTION_MASTER_KEY` (64 hex ≠ example).
+2. `COOKIE_SECURE=true`, `CORS_ORIGIN`, `QUEUE_DRIVER=redis`, `REDIS_URL`, storage remoto.
+3. `pnpm db:deploy` (inclui `sourceResponseId`); smoke login admin.
+4. MinIO/S3 + teste de upload.
+5. SMTP; testar reset/convite/EMAIL.
+6. Imagens `sha-<commit>` (não depender só de `latest`); Swarm; `/health` + `/health/ready`.
+7. Backup Postgres (restore dry-run).
+8. Desabilitar `*_MOCK` só com credencial real.
+9. Google: OAuth + webhook HTTPS + auto-renew (preferir 1 worker replica).
+10. Rodar `pnpm lint` / `typecheck` / `test` / `test:e2e` e anexar evidência.
+11. Branch protection: main exige CI verde.
 
 ## Veredito
 
-Piloto controlado: gaps clínicos de anamnese e semântica de produção foram fechados em código. **Ainda não é go-live pleno:** secrets/HTTPS/storage/SMTP/migrations/backups e evidência E2E/CI bloqueiam ops.
+**Release Candidate (código):** gaps de estabilização fechados no monorepo.  
+**Go-live pleno:** ainda **NO-GO** até secrets/HTTPS/Redis/S3/SMTP/migrations/backups + CI/E2E verdes em staging.

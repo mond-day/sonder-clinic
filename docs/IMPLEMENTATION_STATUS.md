@@ -1,58 +1,44 @@
 # Status de implementação
 
-Atualizado — versão **1.1.6** + remessa **P0/P1/P2 pós-auditoria anamnese/produção/Google watch**.
+Atualizado — remessa **Release Candidate / estabilização final** (pós `d95c4c2`).
 
-## Remessa P0/P1/P2 pós-auditoria (anamnese + produção + watch)
+## Remessa RC — estabilização final
 
 ### DONE (código)
-- **Anamnese P0:** lock `409` em `AWAITING_SIGNATURE`; `POST .../reopen-draft` (sem assinaturas); hash canônico breaking; finalize só com assinaturas do mesmo hash; revoke request; `clinicId ∈ org` (prontuário global na org); FKs Clinic/Patient; `effectiveStatus`; job worker materializa `EXPIRED`; auditoria crítica; delete draft; atualização cancela vigente assinada (`CANCELLED`, signatures preservadas)
-- **Anamnese P1:** summary-strip, histórico operacional, detail modal, continuar/excluir draft, requests/revoke UI, link público melhorado, bootstrap modelos só no create-org (seed `installDefaultAnamnesisTemplates`), editor modelos com filtros/preview/validate, E2E `anamnesis-e2e.spec.ts` (**GO** — run local A–F + documentos admin)
-- **Documentos admin P1:** PATCH + editor estruturado mínimo + preview fictício + validate antes de publish (workspace do paciente **não** reconstruído)
-- **Produção por procedimento:** elegibilidade `TreatmentSession.completedAt` (sem correções); valor = recebimentos líquidos do plano alocados às sessões; exports usam a mesma query
-- **Google watch P2:** auto-renew configurável (`GOOGLE_CALENDAR_WATCH_AUTO_RENEW` + lead/interval); lease de idempotência; UI de expiração/status
+- **Anamnese P0:** respostas no detail modal (`formatAnamnesisAnswer` + seções); lifecycle seguro (`sourceResponseId`, origem permanece SIGNED até finalize → `SUPERSEDED`); concorrência 409; auditoria `update_draft_created` / `superseded`; cancel com motivo obrigatório; confirmações UI (sem `window.confirm`)
+- **Financeiro P0/P1:** removido campo Desconto ignorado no recebimento; filtro vencidos usa `effectiveStatus`; filtros avançados reais (período de vencimento); detalhe de payables
+- **Documentos P1:** `publishDocumentTemplate` revalida snapshot (`validateDocumentTemplateStructure`) → 400 com lista de erros
+- **Relatórios P1:** `production-procedure` = produção clínica; `receipt-procedure` = recebimento alocado; profissional exclui correções + valor clínico
+- **CI/Release P0:** `pnpm lint` no CI; `release-images` gated por `workflow_run` CI success
+- **Security/ops P1:** fail-fast prod (`assertProductionEnvironment`); `SWAGGER_ENABLED`; `/api/v1/health/ready`; CORS explícito em prod
+- **Google watch P2:** claim atômico de lease (SQL condicional)
+- **Testes:** lifecycle puro, production-env, template structure, produção clínica/recebimento; E2E A–G alinhados ao aceite
 
-### PARTIAL
+### PARTIAL / NO-GO (ops)
 | Item | Motivo |
 |------|--------|
-| Google watch renew em prod | Exige `GOOGLE_CALENDAR_WEBHOOK_URL` HTTPS + OAuth; sem URL permanece pull-sync |
-| Bootstrap modelos em runtime | Só no seed/create-org (opção A); não há endpoint `install-defaults` |
+| Secrets/HTTPS/Redis/S3/SMTP reais | Fora do repo — ver `PRODUCTION_READINESS.md` |
+| Google watch em prod | Exige URL HTTPS + OAuth; preferir 1 réplica worker ou lease CAS |
+| E2E suite completa em CI | Depende de pipeline verde com serviços |
 
 ### Migration
-- `20260810010000_anamnesis_p0_fks_cancelled` — enum `CANCELLED` + FKs `AnamnesisResponse`→Clinic/Patient
+- `20260810020000_anamnesis_source_response` — coluna `sourceResponseId` + índices
 
-## Última milha (preservada)
+## Remessa P0/P1/P2 pós-auditoria (preservada)
 
-### DONE
-- **Google Calendar webhook push:** `POST /integrations/:id/calendar/watch` + webhook público + `WebhookReceipt`
-- **Editores dedicados:** Termo/consentimento e Encaminhamento
-- **Tratamentos / mini-odontograma:** evoluções separadas; 5 faces
+Lock 409, reopen, hash, revoke, EXPIRED job, FKs, produção financeira (agora separada), Google auto-renew — ver histórico abaixo.
 
-### Residual honesto
-| Item | Motivo |
-|------|--------|
-| Webhook em localhost | Google exige HTTPS público — use túnel/prod URL |
-| Lista de evoluções históricas no modal do plano | Composer + aba dedicada; timeline completa permanece na ficha |
+### DONE (código) — remessa anterior
+- **Anamnese P0:** lock `409` em `AWAITING_SIGNATURE`; `POST .../reopen-draft`; hash canônico; revoke; `clinicId ∈ org`; FKs; `effectiveStatus`; job `EXPIRED`
+- **Documentos admin P1:** PATCH + editor + validate
+- **Google watch P2:** auto-renew configurável
 
-## Fatia 4 (integrações + E2E)
+### Migration anterior
+- `20260810010000_anamnesis_p0_fks_cancelled`
 
-### DONE
-- **Google Calendar OAuth real:** `POST /integrations/:id/oauth/start` → `authorizeUrl`; callback público `GET /integrations/google/callback`; tokens AES-GCM na conexão; status honesto em `oauth-status` / test-connection
-- **Sync bidirecional mínimo:** clinic→Google via outbox; Google→clinic via pull-sync + webhook
-- **WhatsApp Evolution:** envio real com `EVOLUTION_MOCK=false`
-- **E2E:** `apps/web/e2e/fatia4-e2e.spec.ts`
-- Migration `20260809180000_fatia4_google_calendar_sync`
+## Fatia 4 / Última milha / Fatia 3 — preservadas
 
-### GO se configurado / PARTIAL sem ops
-| Item | Status |
-|------|--------|
-| Google Calendar | **GO (código)** se MOCK=false + OAuth; webhook + auto-renew **GO (código)** se URL HTTPS + `GOOGLE_CALENDAR_WATCH_AUTO_RENEW`; senão pull-sync |
-| WhatsApp Evolution | **GO (código)** se MOCK=false + creds; **PARTIAL/ops** no default MOCK |
-| SMS outbound | **PARTIAL** stub honesto |
-| Chatwoot live | **PARTIAL** |
-
-## Fatia 3 / Remessa final — preservadas
-
-Merge em Configurações; Evolução modal; Odontograma 5 faces; Financeiro P0; Documentos paciente; Tratamentos workspace — **não reconstruídos** nesta remessa.
+Agenda, pacientes, prontuário, tratamentos, documentos paciente, tarefas, financeiro base, Google OAuth — **não reconstruídos**.
 
 ## Docs
 

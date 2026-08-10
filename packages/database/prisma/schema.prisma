@@ -1112,11 +1112,14 @@ model AnamnesisResponse {
   validUntil       DateTime?                @db.Date
   contentHash      String?
   supersededById   String?                  @db.Uuid
+  sourceResponseId String?                  @db.Uuid
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
   template         AnamnesisTemplate        @relation(fields: [templateId], references: [id])
   clinic           Clinic                   @relation(fields: [clinicId], references: [id])
   patient          Patient                  @relation(fields: [patientId], references: [id])
+  sourceResponse   AnamnesisResponse?       @relation("AnamnesisSource", fields: [sourceResponseId], references: [id], onDelete: SetNull)
+  derivedUpdates   AnamnesisResponse[]      @relation("AnamnesisSource")
   signatures       AnamnesisSignature[]
   signatureRequests AnamnesisSignatureRequest[]
 
@@ -1124,6 +1127,8 @@ model AnamnesisResponse {
   @@index([organizationId, status, createdAt])
   @@index([clinicId, createdAt])
   @@index([patientId, createdAt])
+  @@index([sourceResponseId])
+  @@index([supersededById])
 }
 
 model AnamnesisSignature {

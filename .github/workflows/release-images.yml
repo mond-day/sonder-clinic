@@ -1,16 +1,24 @@
 name: Release images
 
+# Publica imagens somente após CI verde no mesmo commit (workflow_run),
+# ou manualmente via workflow_dispatch / release / tag.
+# latest nunca deve sair de commit sem CI success.
+
 on:
-  push:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
     branches: [main, master]
-    tags: ['v*']
   release:
     types: [published]
+  push:
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
+  actions: read
 
 env:
   REGISTRY: ghcr.io
@@ -18,6 +26,10 @@ env:
 
 jobs:
   publish:
+    if: >
+      github.event_name != 'workflow_run'
+      || (github.event.workflow_run.conclusion == 'success'
+          && contains(fromJSON('["main","master"]'), github.event.workflow_run.head_branch))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -37,13 +49,25 @@ jobs:
             file: apps/worker/Dockerfile
             image: sonder-clinic-worker
     steps:
+      - name: Resolve ref
+        id: ref
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.sha }}
 
       - name: Resolve version
         id: meta
         run: |
           REF="${GITHUB_REF}"
-          SHA_SHORT="${GITHUB_SHA::12}"
+          SHA_SHORT="${{ steps.ref.outputs.sha }}"
+          SHA_SHORT="${SHA_SHORT::12}"
           if [[ "$REF" == refs/tags/v* ]]; then
             VERSION="${REF#refs/tags/v}"
           elif [[ "$REF" == refs/tags/* ]]; then

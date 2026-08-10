@@ -54,8 +54,11 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedReceivable, setSelectedReceivable] = useState<RecordValue | null>(null);
+  const [selectedPayable, setSelectedPayable] = useState<RecordValue | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
+  const [dueFrom, setDueFrom] = useState('');
+  const [dueTo, setDueTo] = useState('');
   const [patientQuery, setPatientQuery] = useState('');
   const [closingId, setClosingId] = useState<string | null>(null);
   const [recurrenceBusy, setRecurrenceBusy] = useState<string | null>(null);
@@ -287,14 +290,24 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
 
   const filteredReceivables = useMemo(() => {
     const query = patientQuery.trim().toLocaleLowerCase('pt-BR');
+    const fromMs = dueFrom ? new Date(`${dueFrom}T00:00:00`).getTime() : null;
+    const toMs = dueTo ? new Date(`${dueTo}T23:59:59`).getTime() : null;
     return receivables.filter((item) => {
-      if (statusFilter && item.status !== statusFilter) return false;
+      const status = String(item.effectiveStatus ?? item.status);
+      if (statusFilter && status !== statusFilter) return false;
+      if (fromMs != null || toMs != null) {
+        if (!item.dueDate) return false;
+        const dueMs = new Date(String(item.dueDate)).getTime();
+        if (Number.isNaN(dueMs)) return false;
+        if (fromMs != null && dueMs < fromMs) return false;
+        if (toMs != null && dueMs > toMs) return false;
+      }
       if (!query) return true;
       const patientName = text(nested(item, 'patient').fullName, '').toLocaleLowerCase('pt-BR');
       const description = text(item.description).toLocaleLowerCase('pt-BR');
       return patientName.includes(query) || description.includes(query);
     });
-  }, [patientQuery, receivables, statusFilter]);
+  }, [dueFrom, dueTo, patientQuery, receivables, statusFilter]);
 
   const filteredRecurrences = useMemo(() => {
     const query = recurrenceQuery.trim().toLocaleLowerCase('pt-BR');
@@ -499,7 +512,33 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
             </div>
             {filtersOpen ? (
               <div className="filters filter-advanced">
-                <p className="muted-note">Filtros avançados reservados para critérios adicionais (clínica, período, profissional).</p>
+                <label>
+                  Vencimento de
+                  <input
+                    type="date"
+                    value={dueFrom}
+                    onChange={(event) => setDueFrom(event.target.value)}
+                    aria-label="Vencimento a partir de"
+                  />
+                </label>
+                <label>
+                  Vencimento até
+                  <input
+                    type="date"
+                    value={dueTo}
+                    onChange={(event) => setDueTo(event.target.value)}
+                    aria-label="Vencimento até"
+                  />
+                </label>
+                {(dueFrom || dueTo) ? (
+                  <button
+                    type="button"
+                    className="button small"
+                    onClick={() => { setDueFrom(''); setDueTo(''); }}
+                  >
+                    Limpar período
+                  </button>
+                ) : null}
               </div>
             ) : null}
             {loading ? <div className="state-message">Carregando…</div> : null}
@@ -732,36 +771,96 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
       )}
 
       {tab === 'payable' && (
-        <Panel title="Contas a pagar" description="Títulos de saída da clínica.">
-          {!canFinance ? (
-            <div className="state-message error" role="alert">Sem permissão financial.view.</div>
-          ) : payables.length === 0 ? (
-            <EmptyState title="Nenhuma conta a pagar" description="Cadastre despesas pelo módulo financeiro quando necessário." />
-          ) : (
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Descrição</th>
-                    <th>Vencimento</th>
-                    <th>Valor</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {payables.map((item) => (
-                    <tr key={String(item.id)}>
-                      <td>{text(item.description)}</td>
-                      <td>{dateOnly(item.dueDate)}</td>
-                      <td>{currency(item.originalAmount ?? item.netAmount)}</td>
-                      <td><StatusBadge tone={statusTone(String(item.status))}>{presentationLabel(item.status)}</StatusBadge></td>
+        <>
+          <Modal
+            open={Boolean(selectedPayable)}
+            title="Detalhes da conta a pagar"
+            description="Valor, fornecedor, categoria e pagamentos vinculados."
+            onClose={() => setSelectedPayable(null)}
+          >
+            {selectedPayable ? (
+              <>
+                <div className="info-grid">
+                  <div className="info-item"><small>Descrição</small><strong>{text(selectedPayable.description)}</strong></div>
+                  <div className="info-item"><small>Status</small><strong>{presentationLabel(selectedPayable.status)}</strong></div>
+                  <div className="info-item"><small>Valor original</small><strong>{currency(selectedPayable.originalAmount ?? selectedPayable.netAmount)}</strong></div>
+                  <div className="info-item"><small>Pago</small><strong>{currency(selectedPayable.paidAmount)}</strong></div>
+                  <div className="info-item"><small>Saldo</small><strong>{currency(
+                    Number(selectedPayable.originalAmount ?? selectedPayable.netAmount ?? 0)
+                    - Number(selectedPayable.paidAmount ?? 0),
+                  )}</strong></div>
+                  <div className="info-item"><small>Vencimento</small><strong>{dateOnly(selectedPayable.dueDate)}</strong></div>
+                  <div className="info-item"><small>Fornecedor</small><strong>{text(selectedPayable.supplierName, '—')}</strong></div>
+                  <div className="info-item"><small>Categoria</small><strong>{text(selectedPayable.categoryId, '—')}</strong></div>
+                  <div className="info-item"><small>Centro de custo</small><strong>{text(selectedPayable.costCenterId, '—')}</strong></div>
+                  <div className="info-item"><small>Notas</small><strong>{text(selectedPayable.notes, '—')}</strong></div>
+                </div>
+                <Panel title="Pagamentos">
+                  {list(selectedPayable.payments).length ? (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Data</th>
+                            <th>Método</th>
+                            <th>Valor</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {list(selectedPayable.payments).map((payment) => (
+                            <tr key={String(payment.id)}>
+                              <td>{dateOnly(payment.paidAt)}</td>
+                              <td>{paymentMethodLabel(payment.method)}</td>
+                              <td>{currency(payment.amount)}</td>
+                              <td>{presentationLabel(payment.status)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="muted-note">Nenhum pagamento registrado.</p>
+                  )}
+                </Panel>
+              </>
+            ) : null}
+          </Modal>
+          <Panel title="Contas a pagar" description="Títulos de saída da clínica.">
+            {!canFinance ? (
+              <div className="state-message error" role="alert">Sem permissão financial.view.</div>
+            ) : payables.length === 0 ? (
+              <EmptyState title="Nenhuma conta a pagar" description="Cadastre despesas pelo módulo financeiro quando necessário." />
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Descrição</th>
+                      <th>Vencimento</th>
+                      <th>Valor</th>
+                      <th>Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Panel>
+                  </thead>
+                  <tbody>
+                    {payables.map((item) => (
+                      <tr
+                        key={String(item.id)}
+                        onClick={() => setSelectedPayable(item)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <td>{text(item.description)}</td>
+                        <td>{dateOnly(item.dueDate)}</td>
+                        <td>{currency(item.originalAmount ?? item.netAmount)}</td>
+                        <td><StatusBadge tone={statusTone(String(item.status))}>{presentationLabel(item.status)}</StatusBadge></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+        </>
       )}
       {tab === 'recurring' && (
         <>

@@ -10,14 +10,15 @@ import {
   netPayablePaid,
   refundedTotal,
 } from '../operations/operations-finance.utils';
-import { allocateProductionByProcedure } from './production-by-procedure';
+import { allocateClinicalProductionByProcedure, allocateClinicalProductionByProfessional, allocateReceiptByProcedure } from './production-by-procedure';
 
 export const REPORT_CATALOG = [
   { id: 'appointments', name: 'Agendamentos', domain: 'clinical', permission: 'report.view_clinical' },
   { id: 'no-shows', name: 'Faltas e cancelamentos', domain: 'clinical', permission: 'report.view_clinical' },
   { id: 'new-patients', name: 'Novos pacientes', domain: 'clinical', permission: 'report.view_clinical' },
   { id: 'production-professional', name: 'Produção por profissional', domain: 'clinical', permission: 'report.view_clinical' },
-  { id: 'production-procedure', name: 'Produção por procedimento', domain: 'clinical', permission: 'report.view_clinical' },
+  { id: 'production-procedure', name: 'Produção clínica por procedimento', domain: 'clinical', permission: 'report.view_clinical' },
+  { id: 'receipt-procedure', name: 'Recebimento por procedimento', domain: 'financial', permission: 'report.view_financial' },
   { id: 'treatment-plans', name: 'Planos de tratamento', domain: 'clinical', permission: 'report.view_clinical' },
   { id: 'budget-conversion', name: 'Conversão de orçamentos', domain: 'management', permission: 'report.view_management' },
   { id: 'receivables', name: 'Contas a receber', domain: 'financial', permission: 'report.view_financial' },
@@ -166,27 +167,100 @@ export class ReportsService {
         break;
       }
       case 'production-professional': {
-        const data = await prisma.treatmentSession.groupBy({
-          by: ['professionalId'],
+        const sessions = await prisma.treatmentSession.findMany({
           where: {
-            item: { plan: { organizationId, ...clinicFilter } },
+            correctionOfId: null,
             completedAt: { gte: period.from, lte: period.to },
+            item: { plan: { organizationId, ...clinicFilter } },
           },
-          _count: { _all: true },
+          include: {
+            item: { select: { total: true, plannedSessions: true } },
+          },
+        });
+        const aggregated = allocateClinicalProductionByProfessional({
+          sessions: sessions.map((session) => ({
+            id: session.id,
+            correctionOfId: session.correctionOfId,
+            completedAt: session.completedAt!,
+            treatmentPlanId: '',
+            procedureId: '',
+            procedureName: '',
+            procedureCode: null,
+            itemTotal: Number(session.item.total),
+            plannedSessions: session.item.plannedSessions,
+            professionalId: session.professionalId,
+          })),
+          from: period.from,
+          to: period.to,
         });
         const pros = await prisma.professional.findMany({
-          where: { id: { in: data.map((item) => item.professionalId) } },
+          where: { id: { in: aggregated.map((item) => item.professionalId) } },
           select: { id: true, name: true },
         });
         const map = new Map(pros.map((item) => [item.id, item.name]));
-        rows = data.map((item) => ({
+        rows = aggregated.map((item) => ({
           professionalId: item.professionalId,
           professional: map.get(item.professionalId) ?? item.professionalId,
-          sessions: item._count._all,
+          sessions: item.sessions,
+          clinicalProduction: item.total,
+          total: item.total,
         }));
+        meta = {
+          ...meta,
+          basis: 'clinical_session_weight',
+          eligibility: 'treatment_session.completedAt',
+          excludesCorrections: true,
+        };
         break;
       }
       case 'production-procedure': {
+        const sessions = await prisma.treatmentSession.findMany({
+          where: {
+            correctionOfId: null,
+            completedAt: { gte: period.from, lte: period.to },
+            item: { plan: { organizationId, ...clinicFilter } },
+          },
+          include: {
+            item: {
+              include: {
+                procedure: { select: { id: true, name: true, internalCode: true } },
+                plan: { select: { id: true } },
+              },
+            },
+          },
+        });
+        rows = allocateClinicalProductionByProcedure({
+          sessions: sessions.map((session) => ({
+            id: session.id,
+            correctionOfId: session.correctionOfId,
+            completedAt: session.completedAt!,
+            treatmentPlanId: session.item.plan.id,
+            procedureId: session.item.procedure.id,
+            procedureName: session.item.procedure.name,
+            procedureCode: session.item.procedure.internalCode,
+            itemTotal: Number(session.item.total),
+            plannedSessions: session.item.plannedSessions,
+          })),
+          from: period.from,
+          to: period.to,
+        }).map((row) => ({
+          procedureId: row.procedureId,
+          procedure: row.procedure,
+          internalCode: row.internalCode,
+          quantity: row.sessions,
+          sessions: row.sessions,
+          total: row.total,
+        }));
+        meta = {
+          ...meta,
+          basis: 'clinical_session_weight',
+          eligibility: 'treatment_session.completedAt',
+          excludesCorrections: true,
+          note: 'Produção clínica (item.total / plannedSessions). Recebimento financeiro: report id receipt-procedure.',
+        };
+        break;
+      }
+      case 'receipt-procedure': {
         const sessions = await prisma.treatmentSession.findMany({
           where: {
             correctionOfId: null,
@@ -229,11 +303,11 @@ export class ReportsService {
               netReceived: Math.max(0, Number(payment.amount) - refunded),
             };
           });
-        rows = allocateProductionByProcedure({
+        rows = allocateReceiptByProcedure({
           sessions: sessions.map((session) => ({
             id: session.id,
             correctionOfId: session.correctionOfId,
-            completedAt: session.completedAt,
+            completedAt: session.completedAt!,
             treatmentPlanId: session.item.plan.id,
             procedureId: session.item.procedure.id,
             procedureName: session.item.procedure.name,
@@ -257,6 +331,7 @@ export class ReportsService {
           basis: 'financial_received',
           eligibility: 'treatment_session.completedAt',
           excludesCorrections: true,
+          note: 'Recebimento líquido alocado às sessões elegíveis. Produção clínica: production-procedure.',
         };
         break;
       }

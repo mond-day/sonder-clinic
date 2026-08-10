@@ -57,6 +57,7 @@ import {
   parseSignatureRules,
   publicDocumentSafeView,
   stripClientIdentity,
+  validateDocumentTemplateStructure,
   validateTemplateVariables,
   type DocumentStatus,
   type DocumentTemplateStatus,
@@ -1454,6 +1455,19 @@ export class OperationsService {
   async publishDocumentTemplate(organizationId: string, actorId: string | undefined, id: string) {
     const template = await this.getDocumentTemplate(organizationId, id);
     if (template.status !== 'DRAFT') throw new ConflictException('Somente rascunhos podem ser publicados.');
+    const structureErrors = validateDocumentTemplateStructure({
+      name: template.name,
+      type: template.type,
+      structuredContent: template.structuredContent,
+      allowedVariables: template.allowedVariables,
+      signatureRules: template.signatureRules,
+    });
+    if (structureErrors.length) {
+      throw new BadRequestException({
+        message: 'Modelo inválido para publicação.',
+        errors: structureErrors,
+      });
+    }
     const published = await prisma.documentTemplate.update({
       where: { id },
       data: {
@@ -1464,7 +1478,10 @@ export class OperationsService {
         archivedAt: null,
       },
     });
-    await this.audit(actorId, 'document.template.published', 'DocumentTemplate', id, null, { version: published.version });
+    await this.audit(actorId, 'document.template.published', 'DocumentTemplate', id, null, {
+      version: published.version,
+      type: published.type,
+    });
     return published;
   }
 
@@ -1506,13 +1523,27 @@ export class OperationsService {
 
   async validateDocumentTemplate(organizationId: string, id: string, clinicalContent: Record<string, unknown> = {}) {
     const template = await this.getDocumentTemplate(organizationId, id);
-    const errors = validateTemplateVariables(template.allowedVariables, stripClientIdentity(clinicalContent));
+    const errors = [
+      ...validateDocumentTemplateStructure({
+        name: template.name,
+        type: template.type,
+        structuredContent: template.structuredContent,
+        allowedVariables: template.allowedVariables,
+        signatureRules: template.signatureRules,
+      }),
+      ...validateTemplateVariables(template.allowedVariables, stripClientIdentity(clinicalContent)),
+    ];
     try {
       assertCidConsent({ templateType: template.type, clinicalContent });
     } catch (error) {
       errors.push(error instanceof Error ? error.message : 'CID inválido.');
     }
-    return { ok: errors.length === 0, errors, template: { id: template.id, type: template.type, version: template.version, status: template.status } };
+    return {
+      ok: errors.length === 0,
+      valid: errors.length === 0,
+      errors,
+      template: { id: template.id, type: template.type, version: template.version, status: template.status },
+    };
   }
 
   documents(organizationId: string, clinicId?: string, patientId?: string, includeArchived = false) {

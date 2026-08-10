@@ -45,7 +45,8 @@ Assumptions adotadas para não bloquear o desenvolvimento. Histórico detalhado 
 | A44 | Evolução DRAFT | Exclusão é **hard delete** (`DELETE /clinical-entries/:id`) com auditoria `clinical.draft_deleted` |
 | A45 | Calendar event mapping | `Appointment.externalCalendarEventId` guarda o id do evento Google; cancelamento remove o evento quando OAuth ativo |
 | A46 | Anamnese multi-tenant | Escopo **global na organização**: `clinicId` deve ∈ org; não exige `PatientClinic`. Hash canônico inclui `clinicId`/`patientId`/`templateId`/`templateVersion`/answers (breaking, só dev) |
-| A47 | Anamnese lifecycle | `AWAITING_SIGNATURE` é imutável (409). Reopen só sem assinaturas. Assinada não reabre: cancelar (`CANCELLED`, preserva signatures) ou criar atualização (cancela vigente + novo DRAFT). `SUPERSEDED` legado; fluxo novo preferencialmente `CANCELLED`. `EXPIRED` materializado no worker + `effectiveStatus` na API |
-| A48 | Produção por procedimento | Valor = **recebimentos** (pagamentos líquidos no período) do plano; elegibilidade = `TreatmentSession.completedAt` no período e `correctionOfId IS NULL`. Item APPROVED sem sessão → 0 |
+| A47 | Anamnese lifecycle | `AWAITING_SIGNATURE` é imutável (409). Reopen só sem assinaturas. Assinada: cancelar (`CANCELLED` + motivo) **ou** criar atualização (`sourceResponseId`, origem permanece SIGNED/EXPIRED). Origem só vira `SUPERSEDED` na finalização da nova versão (concorrência → 409). `EXPIRED` materializado no worker + `effectiveStatus` |
+| A48 | Produção vs recebimento | `production-procedure` = produção clínica (`item.total / plannedSessions`, sessões `completedAt`, sem correções). `receipt-procedure` = recebimentos líquidos alocados às sessões elegíveis. Profissional usa a mesma base clínica |
+| A49 | Release / prod bootstrap | CI inclui lint; imagens só após CI success. Em `NODE_ENV=production` a API recusa startup com secrets/drivers inválidos. Swagger off por default em prod. Readiness em `/api/v1/health/ready` |
 
-Última atualização: **Remessa P0/P1/P2 pós-auditoria — anamnese, produção financeira, Google watch auto-renew**.
+Última atualização: **Release Candidate — estabilização final**.

@@ -10,6 +10,7 @@ import {
   calculateAlertsAndRisk, parseAnamnesisSchema, validateAnswers,
 } from './anamnesis-schema';
 import { effectiveAnamnesisStatus, withEffectiveStatus } from './anamnesis-status';
+import { assertOriginStillReplaceable, canCreateUpdateFrom } from './anamnesis-lifecycle';
 
 const tokenSha256 = (token: string) =>
   createHash('sha256').update(token).digest('hex');
@@ -30,6 +31,7 @@ type AuditAction =
   | 'anamnesis.signature_request_revoked'
   | 'anamnesis.signed'
   | 'anamnesis.reopened'
+  | 'anamnesis.update_draft_created'
   | 'anamnesis.superseded'
   | 'anamnesis.cancelled'
   | 'anamnesis.draft_deleted';
@@ -608,6 +610,64 @@ export class AnamnesisService {
             },
           });
         }
+
+        if (response.sourceResponseId) {
+          const origin = await tx.anamnesisResponse.findFirst({
+            where: { id: response.sourceResponseId, organizationId },
+          });
+          if (!origin) {
+            throw new ConflictException('Anamnese de origem da atualização não encontrada.');
+          }
+          if (origin.organizationId !== organizationId) {
+            throw new ConflictException('Origem fora do tenant.');
+          }
+          try {
+            assertOriginStillReplaceable({
+              id: origin.id,
+              status: origin.status,
+              supersededById: origin.supersededById,
+              organizationId: origin.organizationId,
+            }, id);
+          } catch {
+            throw new ConflictException(
+              'Esta origem já foi substituída por outra versão. Conflito de concorrência.',
+            );
+          }
+          const locked = await tx.anamnesisResponse.updateMany({
+            where: {
+              id: origin.id,
+              organizationId,
+              OR: [
+                { supersededById: null },
+                { supersededById: id },
+              ],
+              status: { not: 'SUPERSEDED' },
+            },
+            data: {
+              status: 'SUPERSEDED',
+              supersededById: id,
+            },
+          });
+          if (locked.count !== 1) {
+            throw new ConflictException(
+              'Esta origem já foi substituída por outra versão. Conflito de concorrência.',
+            );
+          }
+          await this.audit(tx, {
+            actorId,
+            action: 'anamnesis.superseded',
+            clinicId: response.clinicId,
+            entityId: origin.id,
+            changes: {
+              patientId: response.patientId,
+              clinicId: response.clinicId,
+              previousStatus: origin.status,
+              nextStatus: 'SUPERSEDED',
+              supersededById: id,
+              signaturesPreserved: true,
+            },
+          });
+        }
       }
 
       const updated = await tx.anamnesisResponse.update({
@@ -641,6 +701,7 @@ export class AnamnesisService {
           previousStatus: response.status,
           nextStatus: updated.status,
           finalized: finalize,
+          sourceResponseId: response.sourceResponseId ?? null,
         },
       });
 
@@ -649,15 +710,18 @@ export class AnamnesisService {
   }
 
   /**
-   * Atualização clínica: cancela a vigente assinada/expirada (preserva assinaturas)
-   * e cria novo DRAFT com respostas copiadas. Não usa SUPERSEDED precoce.
+   * Atualização clínica: cria DRAFT referenciando a origem via sourceResponseId.
+   * A origem permanece SIGNED/EXPIRED até a nova versão ser finalizada (aí vira SUPERSEDED).
    */
   async supersede(organizationId: string, id: string, actorId: string, clinicId: string) {
     await this.assertClinic(organizationId, clinicId);
     const response = await this.getResponse(organizationId, id);
     const effective = effectiveAnamnesisStatus(response);
-    if (response.status !== 'SIGNED' && response.status !== 'EXPIRED' && effective !== 'EXPIRED') {
+    if (!canCreateUpdateFrom(response.status, effective)) {
       throw new ConflictException('Somente anamneses assinadas/expiradas podem ser atualizadas.');
+    }
+    if (response.supersededById) {
+      throw new ConflictException('Esta anamnese já foi substituída por outra versão.');
     }
     return prisma.$transaction(async (tx) => {
       const template = await tx.anamnesisTemplate.findFirst({
@@ -681,35 +745,13 @@ export class AnamnesisService {
           alerts: json(alerts),
           riskAssessment: json(riskAssessment),
           completedById: actorId,
-        },
-      });
-
-      await tx.anamnesisResponse.update({
-        where: { id },
-        data: {
-          status: 'CANCELLED',
-          supersededById: draft.id,
+          sourceResponseId: id,
         },
       });
 
       await this.audit(tx, {
         actorId,
-        action: 'anamnesis.superseded',
-        clinicId,
-        entityId: id,
-        changes: {
-          patientId: response.patientId,
-          clinicId,
-          previousStatus: response.status,
-          nextStatus: 'CANCELLED',
-          newDraftId: draft.id,
-          reason: 'create_update_cancelled_previous',
-          signaturesPreserved: true,
-        },
-      });
-      await this.audit(tx, {
-        actorId,
-        action: 'anamnesis.created',
+        action: 'anamnesis.update_draft_created',
         clinicId,
         entityId: draft.id,
         changes: {
@@ -717,6 +759,7 @@ export class AnamnesisService {
           clinicId,
           templateId: template.id,
           sourceResponseId: id,
+          sourceStatus: response.status,
           nextStatus: 'DRAFT',
         },
       });
@@ -729,6 +772,10 @@ export class AnamnesisService {
     const response = await this.getResponse(organizationId, id);
     if (['CANCELLED', 'SUPERSEDED', 'DRAFT'].includes(response.status)) {
       throw new ConflictException('Esta anamnese não pode ser cancelada neste status.');
+    }
+    const trimmed = String(reason ?? '').trim();
+    if (trimmed.length < 3) {
+      throw new BadRequestException('Informe o motivo do cancelamento (mínimo 3 caracteres).');
     }
     const now = new Date();
     return prisma.$transaction(async (tx) => {
@@ -751,7 +798,7 @@ export class AnamnesisService {
           clinicId: response.clinicId,
           previousStatus: response.status,
           nextStatus: 'CANCELLED',
-          reason: reason ?? null,
+          reason: trimmed,
           signaturesPreserved: true,
           wasSigned: Boolean(response.signedAt) || response.signatures.length > 0,
         },

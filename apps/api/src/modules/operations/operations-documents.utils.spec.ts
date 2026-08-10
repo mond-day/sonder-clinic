@@ -10,6 +10,7 @@ import {
   normalizePrescriptionItems,
   parseSignatureRules,
   stripClientIdentity,
+  validateDocumentTemplateStructure,
   validateTemplateVariables,
 } from './operations-documents.utils';
 
@@ -158,6 +159,30 @@ describe('operations-documents.utils', () => {
     it('valida variáveis obrigatórias do template', () => {
       expect(validateTemplateVariables(['corpo', 'dias?', 'identity.patientName'], { corpo: 'ok' })).toEqual([]);
       expect(validateTemplateVariables(['corpo'], {})).toEqual(['Variável obrigatória ausente: corpo']);
+    });
+  });
+
+  describe('validateDocumentTemplateStructure (publish gate)', () => {
+    it('bloqueia variável desconhecida', () => {
+      const errors = validateDocumentTemplateStructure({
+        name: 'Termo',
+        type: 'CONSENT',
+        structuredContent: { body: 'Olá {{fooBar}}' },
+        allowedVariables: ['patientName'],
+        signatureRules: { requiredRoles: ['PROFESSIONAL'], minSignatures: 1 },
+      });
+      expect(errors.some((e) => e.includes('fooBar'))).toBe(true);
+    });
+
+    it('aceita snapshot válido', () => {
+      const errors = validateDocumentTemplateStructure({
+        name: 'Termo',
+        type: 'CONSENT',
+        structuredContent: { body: 'Olá {{patientName}}, clinica {{clinicName}}.' },
+        allowedVariables: ['patientName', 'clinicName'],
+        signatureRules: { requiredRoles: ['PROFESSIONAL'], minSignatures: 1 },
+      });
+      expect(errors).toEqual([]);
     });
   });
 });

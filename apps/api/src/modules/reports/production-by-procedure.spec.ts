@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  allocateProductionByProcedure,
+  allocateClinicalProductionByProcedure,
+  allocateClinicalProductionByProfessional,
+  allocateReceiptByProcedure,
   sessionClinicalWeight,
   type ProductionSessionInput,
 } from './production-by-procedure';
@@ -18,38 +20,81 @@ function session(partial: Partial<ProductionSessionInput> & { id: string }): Pro
     procedureCode: 'R01',
     itemTotal: 1000,
     plannedSessions: 2,
+    professionalId: 'pro-1',
     ...partial,
   };
 }
 
-describe('production-by-procedure', () => {
-  it('caso 1: plano aprovado sem sessão → produção 0', () => {
-    const rows = allocateProductionByProcedure({
-      sessions: [],
-      payments: [{ treatmentPlanId: 'plan-1', netReceived: 500 }],
-      from,
-      to,
-    });
-    expect(rows).toEqual([]);
+describe('produção clínica por procedimento', () => {
+  it('0 sessões → 0', () => {
+    expect(allocateClinicalProductionByProcedure({ sessions: [], from, to })).toEqual([]);
   });
 
-  it('caso 2: 1 sessão elegível recebe o valor recebido do plano', () => {
-    const rows = allocateProductionByProcedure({
-      sessions: [session({ id: 's1', plannedSessions: 2, itemTotal: 1000 })],
-      payments: [{ treatmentPlanId: 'plan-1', netReceived: 1000 }],
+  it('1 sessão → 500 (1000/2)', () => {
+    const rows = allocateClinicalProductionByProcedure({
+      sessions: [session({ id: 's1' })],
       from,
       to,
     });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.sessions).toBe(1);
+    expect(rows[0]!.total).toBe(500);
+  });
+
+  it('2 sessões → 1000', () => {
+    const rows = allocateClinicalProductionByProcedure({
+      sessions: [
+        session({ id: 's1' }),
+        session({ id: 's2', completedAt: new Date('2026-08-15') }),
+      ],
+      from,
+      to,
+    });
+    expect(rows[0]!.sessions).toBe(2);
     expect(rows[0]!.total).toBe(1000);
   });
 
-  it('caso 3: 2 sessões somam o recebido integral', () => {
-    const rows = allocateProductionByProcedure({
+  it('sessão + correção → 500 (correção não conta)', () => {
+    const rows = allocateClinicalProductionByProcedure({
       sessions: [
-        session({ id: 's1', plannedSessions: 2, itemTotal: 1000 }),
-        session({ id: 's2', plannedSessions: 2, itemTotal: 1000, completedAt: new Date('2026-08-15') }),
+        session({ id: 's1' }),
+        session({ id: 's1-corr', correctionOfId: 's1', completedAt: new Date('2026-08-12') }),
+      ],
+      from,
+      to,
+    });
+    expect(rows[0]!.sessions).toBe(1);
+    expect(rows[0]!.total).toBe(500);
+  });
+});
+
+describe('recebimento por procedimento', () => {
+  it('sem pagamento → 0', () => {
+    const rows = allocateReceiptByProcedure({
+      sessions: [session({ id: 's1' })],
+      payments: [],
+      from,
+      to,
+    });
+    expect(rows[0]!.sessions).toBe(1);
+    expect(rows[0]!.total).toBe(0);
+  });
+
+  it('pagamento parcial alocado à sessão', () => {
+    const rows = allocateReceiptByProcedure({
+      sessions: [session({ id: 's1' })],
+      payments: [{ treatmentPlanId: 'plan-1', netReceived: 400 }],
+      from,
+      to,
+    });
+    expect(rows[0]!.total).toBe(400);
+  });
+
+  it('pagamento total com 2 sessões', () => {
+    const rows = allocateReceiptByProcedure({
+      sessions: [
+        session({ id: 's1' }),
+        session({ id: 's2', completedAt: new Date('2026-08-15') }),
       ],
       payments: [{ treatmentPlanId: 'plan-1', netReceived: 1000 }],
       from,
@@ -59,8 +104,8 @@ describe('production-by-procedure', () => {
     expect(rows[0]!.total).toBe(1000);
   });
 
-  it('caso 4: correção não duplica produção', () => {
-    const rows = allocateProductionByProcedure({
+  it('correção não duplica recebimento', () => {
+    const rows = allocateReceiptByProcedure({
       sessions: [
         session({ id: 's1' }),
         session({ id: 's1-corr', correctionOfId: 's1', completedAt: new Date('2026-08-12') }),
@@ -72,18 +117,26 @@ describe('production-by-procedure', () => {
     expect(rows[0]!.sessions).toBe(1);
     expect(rows[0]!.total).toBe(800);
   });
+});
 
-  it('sessão fora do período não conta', () => {
-    const rows = allocateProductionByProcedure({
-      sessions: [session({ id: 's1', completedAt: new Date('2026-07-01') })],
-      payments: [{ treatmentPlanId: 'plan-1', netReceived: 1000 }],
+describe('produção por profissional', () => {
+  it('correctionOfId != null → não contar', () => {
+    const rows = allocateClinicalProductionByProfessional({
+      sessions: [
+        session({ id: 's1', professionalId: 'pro-1' }),
+        session({ id: 's1-corr', correctionOfId: 's1', professionalId: 'pro-1' }),
+      ],
       from,
       to,
     });
-    expect(rows).toEqual([]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.sessions).toBe(1);
+    expect(rows[0]!.total).toBe(500);
   });
+});
 
-  it('sessionClinicalWeight divide pelo plannedSessions', () => {
+describe('sessionClinicalWeight', () => {
+  it('divide pelo plannedSessions', () => {
     expect(sessionClinicalWeight(1000, 2)).toBe(500);
     expect(sessionClinicalWeight(1000, 0)).toBe(1000);
   });

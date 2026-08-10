@@ -54,7 +54,7 @@ class SupersedeDto {
 }
 
 class CancelDto {
-  @IsOptional() @IsString() reason?: string;
+  @IsString() @MinLength(3) reason!: string;
 }
 
 class PublicSignDto {

@@ -76,7 +76,8 @@ async function registerWatch(accessToken: string, calendarId: string, input: {
 
 /**
  * Renova canais Google Calendar próximos do vencimento.
- * Idempotência via lease em configuration.webhookRenewLeaseUntil.
+ * Lease atômico via updateMany condicional em configuration.webhookRenewLeaseUntil.
+ * Assumir uma réplica de worker em produção é aceitável; o CAS reduz race entre réplicas.
  * Falhas são registradas em webhookWatchLastError sem derrubar o worker.
  */
 export async function renewExpiringGoogleCalendarWatches(now = new Date()): Promise<{
@@ -131,15 +132,23 @@ export async function renewExpiringGoogleCalendarWatches(now = new Date()): Prom
     }
 
     const leaseUntil = new Date(now.getTime() + 5 * 60_000).toISOString();
-    await prisma.integrationConnection.update({
-      where: { id: connection.id },
-      data: {
-        configuration: {
-          ...config,
-          webhookRenewLeaseUntil: leaseUntil,
-        } as Prisma.InputJsonValue,
-      },
-    });
+    // Claim atômico: só uma réplica do worker obtém o lease.
+    const claimed = await prisma.$executeRaw`
+      UPDATE "IntegrationConnection"
+      SET "configuration" = COALESCE("configuration", '{}'::jsonb)
+        || jsonb_build_object('webhookRenewLeaseUntil', ${leaseUntil}::text)
+      WHERE "id" = ${connection.id}::uuid
+        AND "status" = 'ACTIVE'
+        AND (
+          "configuration" IS NULL
+          OR "configuration"->>'webhookRenewLeaseUntil' IS NULL
+          OR ("configuration"->>'webhookRenewLeaseUntil')::timestamptz <= ${now}
+        )
+    `;
+    if (Number(claimed) !== 1) {
+      skipped += 1;
+      continue;
+    }
 
     try {
       if (!connection.encryptedCredentials) {

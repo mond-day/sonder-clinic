@@ -1926,6 +1926,30 @@ button { cursor: pointer; }
 .public-anamnesis-section { margin-bottom: 16px; }
 .question-block.read-only { opacity: .92; }
 
+.anamnesis-answers { display: grid; gap: 12px; overflow-x: hidden; }
+.anamnesis-answer-section {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 12px 12px;
+}
+.anamnesis-answer-section > summary {
+  cursor: pointer;
+  font-weight: 650;
+  padding: 12px 0;
+  list-style: none;
+}
+.anamnesis-answer-section > summary::-webkit-details-marker { display: none; }
+.anamnesis-answer-list { display: grid; gap: 10px; margin: 0; }
+.anamnesis-answer-row {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.anamnesis-answer-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.anamnesis-answer-row dt { color: var(--muted); font-size: 12px; font-weight: 600; }
+.anamnesis-answer-row dd { margin: 0; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+
 @media (max-width: 900px) {
   .anamnesis-history-desktop { display: none; }
   .anamnesis-history-mobile { display: grid; }

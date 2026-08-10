@@ -66,7 +66,6 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const [receiveId, setReceiveId] = useState('');
   const [receiveMethod, setReceiveMethod] = useState('PIX');
   const [receiveAmount, setReceiveAmount] = useState('');
-  const [receiveDiscount, setReceiveDiscount] = useState('0');
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -253,7 +252,6 @@ export function PatientChart({ patientId }: { patientId: string }) {
                 </select>
               </label>
               <label>Valor<input type="number" min="0.01" step="0.01" required value={receiveAmount} onChange={(event) => setReceiveAmount(event.target.value)} /></label>
-              <label>Desconto<input type="number" min="0" step="0.01" value={receiveDiscount} onChange={(event) => setReceiveDiscount(event.target.value)} /></label>
             </>
           ) : null}
           <button className="button primary" disabled={saving}>

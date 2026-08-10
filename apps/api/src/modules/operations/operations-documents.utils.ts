@@ -221,6 +221,91 @@ export function validateTemplateVariables(
   return errors;
 }
 
+const KNOWN_IDENTITY_VARS = new Set([
+  'patientName', 'patientCpf', 'professionalName', 'professionalCro', 'clinicName', 'date',
+  'paciente', 'profissional', 'clinica', 'data', 'identity.patientName', 'identity.clinicName',
+]);
+
+const PLACEHOLDER_RE = /\{\{\s*([a-zA-Z0-9_.?]+)\s*\}\}/g;
+
+export function extractTemplatePlaceholders(structuredContent: unknown): string[] {
+  if (!structuredContent || typeof structuredContent !== 'object' || Array.isArray(structuredContent)) {
+    return [];
+  }
+  const texts = Object.values(structuredContent as Record<string, unknown>)
+    .filter((value): value is string => typeof value === 'string');
+  const found = new Set<string>();
+  for (const text of texts) {
+    for (const match of text.matchAll(PLACEHOLDER_RE)) {
+      if (match[1]) found.add(match[1]);
+    }
+  }
+  return [...found];
+}
+
+/** Valida snapshot do modelo antes de publicar (estrutura + placeholders + assinatura). */
+export function validateDocumentTemplateStructure(template: {
+  name?: string | null;
+  type?: string | null;
+  structuredContent?: unknown;
+  allowedVariables?: unknown;
+  signatureRules?: unknown;
+}): string[] {
+  const errors: string[] = [];
+  const name = String(template.name ?? '').trim();
+  if (name.length < 2) errors.push('Nome do modelo é obrigatório.');
+
+  const type = String(template.type ?? '').trim();
+  const allowedTypes = new Set([...DOCUMENT_TEMPLATE_TYPES, 'CERTIFICATE', 'ATTESTATION']);
+  if (!type || !allowedTypes.has(type)) {
+    errors.push(`Tipo de modelo inválido: ${type || '(vazio)'}.`);
+  }
+
+  const content = template.structuredContent;
+  if (!content || typeof content !== 'object' || Array.isArray(content)) {
+    errors.push('structuredContent deve ser um objeto.');
+  } else {
+    const body = String((content as Record<string, unknown>).body ?? '').trim();
+    if (body.length < 5) errors.push('Corpo do modelo (body) é obrigatório (mínimo 5 caracteres).');
+  }
+
+  const allowed = Array.isArray(template.allowedVariables)
+    ? template.allowedVariables.filter((v): v is string => typeof v === 'string')
+    : [];
+  if (!allowed.length) {
+    errors.push('allowedVariables deve listar ao menos uma variável permitida.');
+  }
+
+  const placeholders = extractTemplatePlaceholders(content);
+  for (const placeholder of placeholders) {
+    const bare = placeholder.replace(/\?$/, '');
+    const permitted = allowed.some((item) => item.replace(/\?$/, '') === bare)
+      || KNOWN_IDENTITY_VARS.has(placeholder)
+      || KNOWN_IDENTITY_VARS.has(bare);
+    if (!permitted) {
+      errors.push(`Variável desconhecida no conteúdo: {{${placeholder}}}.`);
+    }
+  }
+
+  const rules = template.signatureRules;
+  if (rules != null) {
+    if (typeof rules !== 'object' || Array.isArray(rules)) {
+      errors.push('signatureRules deve ser um objeto.');
+    } else {
+      const requiredRoles = (rules as SignatureRules).requiredRoles;
+      if (requiredRoles != null && (!Array.isArray(requiredRoles) || requiredRoles.some((r) => typeof r !== 'string'))) {
+        errors.push('signatureRules.requiredRoles deve ser um array de strings.');
+      }
+      const minSignatures = (rules as SignatureRules).minSignatures;
+      if (minSignatures != null && (!Number.isInteger(minSignatures) || minSignatures < 1)) {
+        errors.push('signatureRules.minSignatures deve ser inteiro >= 1.');
+      }
+    }
+  }
+
+  return errors;
+}
+
 export function normalizePrescriptionItems(items: unknown): PrescriptionItem[] {
   if (!Array.isArray(items) || !items.length) {
     throw new Error('Informe ao menos um item da receita.');
