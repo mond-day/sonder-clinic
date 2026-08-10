@@ -36,7 +36,7 @@ Assumptions adotadas para não bloquear o desenvolvimento. Histórico detalhado 
 | A35 | Comunicação (templates/canais) | Templates + opt-in + CRUD MessagingChannel + envio manual. EMAIL=SMTP; WHATSAPP=Evolution real se `EVOLUTION_MOCK=false` + baseUrl/apiKey/instance (env, canal ou IntegrationConnection); senão FAILED (nunca SENT falso). SMS ainda stub |
 | A36 | Áudio/transcrição | Explicitamente fora de escopo do backlog QA |
 | A37 | Merge de pacientes | Origem → destino; move vínculos clínicos/financeiros; origem vira ARCHIVED; ClinicalRecord por clínica é consolidado; pastas com mesmo nome são unificadas |
-| A38 | Google Calendar OAuth | **Fatia 4 + última milha:** OAuth real; sync clinic→Google (outbox); Google→clinic via `POST .../calendar/pull-sync` **e** webhook push (`POST /integrations/google/calendar/webhook` + `POST .../calendar/watch`) se `GOOGLE_CALENDAR_WEBHOOK_URL` (HTTPS). Sem webhook URL → pull-sync só. Canais Google expiram (~7d) — renovar via watch. Exige `GOOGLE_CALENDAR_MOCK=false` + OAuth — **GO só com OAuth concluído** |
+| A38 | Google Calendar OAuth | **Fatia 4 + remessa P2:** OAuth real; sync clinic→Google (outbox); Google→clinic via pull-sync **e** webhook se `GOOGLE_CALENDAR_WEBHOOK_URL`. Auto-renew no worker se `GOOGLE_CALENDAR_WATCH_AUTO_RENEW=true` (lead/interval configuráveis). Sem webhook URL → pull-sync só. Exige `GOOGLE_CALENDAR_MOCK=false` + OAuth — **GO só com OAuth concluído** |
 | A39 | Retornos `allowedHours` | Formato `{ start, end, weekdays, timezone? }` (default TZ `America/Cuiaba`). `{}` = 24/7. Se **todas** as regras matching estão fora da janela, o outbox adia com `leaseUntil` sem consumir attempts. Se há regras dueNow + deferred, só dueNow rodam e o evento é marcado processado (deferred daquele evento não reexecutam) |
 | A40 | Financeiro líquido | `paidAmount`/`outstandingAmount` vêm da API (`buildReceivableFinanceView`); front não recalcula regra. OVERDUE é efetivo se saldo > 0 e `dueDate < hoje` |
 | A41 | Tarefas recorrentes | Idempotência via `Task.occurrenceKey`; worker + `POST /tasks/:id/recurrence/generate` |
@@ -44,5 +44,8 @@ Assumptions adotadas para não bloquear o desenvolvimento. Histórico detalhado 
 | A43 | Duplicados de paciente | `PatientDuplicateDismissal` persiste “não são duplicados”; merge só via Configurações com preview de conflitos |
 | A44 | Evolução DRAFT | Exclusão é **hard delete** (`DELETE /clinical-entries/:id`) com auditoria `clinical.draft_deleted` |
 | A45 | Calendar event mapping | `Appointment.externalCalendarEventId` guarda o id do evento Google; cancelamento remove o evento quando OAuth ativo |
+| A46 | Anamnese multi-tenant | Escopo **global na organização**: `clinicId` deve ∈ org; não exige `PatientClinic`. Hash canônico inclui `clinicId`/`patientId`/`templateId`/`templateVersion`/answers (breaking, só dev) |
+| A47 | Anamnese lifecycle | `AWAITING_SIGNATURE` é imutável (409). Reopen só sem assinaturas. Assinada não reabre: cancelar (`CANCELLED`, preserva signatures) ou criar atualização (cancela vigente + novo DRAFT). `SUPERSEDED` legado; fluxo novo preferencialmente `CANCELLED`. `EXPIRED` materializado no worker + `effectiveStatus` na API |
+| A48 | Produção por procedimento | Valor = **recebimentos** (pagamentos líquidos no período) do plano; elegibilidade = `TreatmentSession.completedAt` no período e `correctionOfId IS NULL`. Item APPROVED sem sessão → 0 |
 
-Última atualização: **Última milha — webhook Google Calendar + editores Termo/Encaminhamento + UX tratamentos/odontograma**.
+Última atualização: **Remessa P0/P1/P2 pós-auditoria — anamnese, produção financeira, Google watch auto-renew**.

@@ -10,6 +10,7 @@ import {
   netPayablePaid,
   refundedTotal,
 } from '../operations/operations-finance.utils';
+import { allocateProductionByProcedure } from './production-by-procedure';
 
 export const REPORT_CATALOG = [
   { id: 'appointments', name: 'Agendamentos', domain: 'clinical', permission: 'report.view_clinical' },
@@ -186,26 +187,77 @@ export class ReportsService {
         break;
       }
       case 'production-procedure': {
-        const items = await prisma.treatmentItem.findMany({
+        const sessions = await prisma.treatmentSession.findMany({
           where: {
-            plan: { organizationId, ...clinicFilter, updatedAt: { gte: period.from, lte: period.to } },
-            status: { in: ['APPROVED', 'IN_PROGRESS', 'COMPLETED'] },
+            correctionOfId: null,
+            completedAt: { gte: period.from, lte: period.to },
+            item: { plan: { organizationId, ...clinicFilter } },
           },
-          include: { procedure: { select: { name: true, internalCode: true } } },
+          include: {
+            item: {
+              include: {
+                procedure: { select: { id: true, name: true, internalCode: true } },
+                plan: { select: { id: true } },
+              },
+            },
+          },
         });
-        const grouped = new Map<string, { procedure: string; quantity: number; total: number }>();
-        for (const item of items) {
-          const key = item.procedureId;
-          const current = grouped.get(key) ?? {
-            procedure: item.procedure.name,
-            quantity: 0,
-            total: 0,
-          };
-          current.quantity += item.quantity;
-          current.total += Number(item.total);
-          grouped.set(key, current);
-        }
-        rows = [...grouped.entries()].map(([procedureId, value]) => ({ procedureId, ...value }));
+        const planIds = [...new Set(sessions.map((row) => row.item.plan.id))];
+        const payments = planIds.length
+          ? await prisma.payment.findMany({
+              where: {
+                status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
+                paidAt: { gte: period.from, lte: period.to },
+                receivable: {
+                  organizationId,
+                  ...clinicFilter,
+                  treatmentId: { in: planIds },
+                },
+              },
+              include: {
+                refunds: true,
+                receivable: { select: { treatmentId: true } },
+              },
+            })
+          : [];
+        const paymentRows = payments
+          .filter((payment) => payment.receivable.treatmentId)
+          .map((payment) => {
+            const refunded = payment.refunds.reduce((acc, refund) => acc + Number(refund.amount), 0);
+            return {
+              treatmentPlanId: payment.receivable.treatmentId!,
+              netReceived: Math.max(0, Number(payment.amount) - refunded),
+            };
+          });
+        rows = allocateProductionByProcedure({
+          sessions: sessions.map((session) => ({
+            id: session.id,
+            correctionOfId: session.correctionOfId,
+            completedAt: session.completedAt,
+            treatmentPlanId: session.item.plan.id,
+            procedureId: session.item.procedure.id,
+            procedureName: session.item.procedure.name,
+            procedureCode: session.item.procedure.internalCode,
+            itemTotal: Number(session.item.total),
+            plannedSessions: session.item.plannedSessions,
+          })),
+          payments: paymentRows,
+          from: period.from,
+          to: period.to,
+        }).map((row) => ({
+          procedureId: row.procedureId,
+          procedure: row.procedure,
+          internalCode: row.internalCode,
+          quantity: row.sessions,
+          sessions: row.sessions,
+          total: row.total,
+        }));
+        meta = {
+          ...meta,
+          basis: 'financial_received',
+          eligibility: 'treatment_session.completedAt',
+          excludesCorrections: true,
+        };
         break;
       }
       case 'treatment-plans': {

@@ -1,20 +1,58 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { SignaturePad } from '@/features/anamnesis/signature-pad';
+import { QuestionRenderer } from '@/features/anamnesis/question-renderer';
+import { isGroupVisible, type ConditionGroup } from '@/features/anamnesis/conditions';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+
+type PublicPayload = {
+  clinic?: { tradeName?: string; legalName?: string };
+  patient?: { fullName?: string };
+  signerName?: string;
+  signerRole?: string;
+  expiresAt?: string;
+  template?: {
+    name?: string;
+    audience?: string;
+    version?: number;
+    schemaJson?: {
+      sections?: Array<{
+        id: string;
+        title: string;
+        order: number;
+        visibleWhen?: ConditionGroup;
+        questions: Array<{
+          id: string;
+          code: string;
+          label: string;
+          type: string;
+          required: boolean;
+          options?: Array<{ value: string; label: string }>;
+          helpText?: string;
+          visibleWhen?: ConditionGroup;
+        }>;
+      }>;
+    };
+  };
+  answers?: Record<string, unknown>;
+  signatures?: Array<{ signerRole: string; signerName: string; signedAt: string }>;
+};
+
+async function readError(response: Response) {
+  const payload = await response.json().catch(() => null) as { message?: string | string[] } | null;
+  const message = Array.isArray(payload?.message) ? payload?.message[0] : payload?.message;
+  if (response.status === 410) return message ?? 'Link revogado, expirado ou já utilizado.';
+  if (response.status === 404) return message ?? 'Link de assinatura inválido.';
+  return message ?? 'Não foi possível carregar a assinatura.';
+}
 
 export default function PublicAnamnesisSignPage() {
   const params = useParams<{ token: string }>();
   const token = params.token;
-  const [data, setData] = useState<{
-    clinic?: { tradeName?: string; legalName?: string };
-    signerName?: string;
-    template?: { name?: string; version?: number };
-    answers?: Record<string, unknown>;
-  } | null>(null);
+  const [data, setData] = useState<PublicPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -23,12 +61,20 @@ export default function PublicAnamnesisSignPage() {
   useEffect(() => {
     fetch(`${API_URL}/public/anamnesis-signatures/${token}`)
       .then(async (response) => {
-        if (!response.ok) throw new Error('Link inválido ou expirado.');
-        return response.json();
+        if (!response.ok) throw new Error(await readError(response));
+        return response.json() as Promise<PublicPayload>;
       })
       .then(setData)
       .catch((err: Error) => setError(err.message));
   }, [token]);
+
+  const sections = useMemo(() => {
+    const answers = data?.answers ?? {};
+    return (data?.template?.schemaJson?.sections ?? [])
+      .slice()
+      .sort((a, b) => a.order - b.order)
+      .filter((section) => isGroupVisible(answers, section.visibleWhen));
+  }, [data]);
 
   async function sign() {
     if (!signature) {
@@ -43,10 +89,7 @@ export default function PublicAnamnesisSignPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ evidence: { dataUrl: signature } }),
       });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null) as { message?: string } | null;
-        throw new Error(payload?.message ?? 'Falha ao assinar.');
-      }
+      if (!response.ok) throw new Error(await readError(response));
       setDone(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao assinar.');
@@ -77,21 +120,53 @@ export default function PublicAnamnesisSignPage() {
     );
   }
 
+  const clinicName = data.clinic?.tradeName ?? data.clinic?.legalName ?? 'Sonder Clinic';
+  const answers = data.answers ?? {};
+
   return (
-    <main className="legal-page">
-      <p className="eyebrow">{data.clinic?.tradeName ?? data.clinic?.legalName ?? 'Sonder Clinic'}</p>
+    <main className="legal-page public-anamnesis">
+      <p className="eyebrow">{clinicName}</p>
       <h1>Assinar anamnese</h1>
       <p>
-        {data.template?.name} · v{data.template?.version} — {data.signerName}
+        Paciente: <strong>{data.patient?.fullName ?? '—'}</strong>
+        {' · '}
+        {data.template?.name} · v{data.template?.version}
+        {' · '}
+        Signatário: {data.signerName}
       </p>
+      {data.expiresAt ? (
+        <p className="muted-note">Link válido até {new Date(data.expiresAt).toLocaleString('pt-BR')}</p>
+      ) : null}
+
       <section className="panel">
-        <h2>Resumo das respostas</h2>
-        <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
-          {JSON.stringify(data.answers ?? {}, null, 2)}
-        </pre>
+        <h2>Conteúdo clínico (somente leitura)</h2>
+        {sections.map((section) => {
+          const questions = section.questions.filter((question) => isGroupVisible(answers, question.visibleWhen));
+          return (
+            <div key={section.id} className="public-anamnesis-section">
+              <h3>{section.title}</h3>
+              {questions.map((question) => (
+                <QuestionRenderer
+                  key={question.id}
+                  question={question}
+                  value={answers[question.code]}
+                  onChange={() => undefined}
+                  readOnly
+                />
+              ))}
+            </div>
+          );
+        })}
+        {!sections.length ? (
+          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
+            {JSON.stringify(answers, null, 2)}
+          </pre>
+        ) : null}
       </section>
+
       <section className="panel">
         <h2>Assinatura</h2>
+        <p>Data/hora: {new Date().toLocaleString('pt-BR')}</p>
         <SignaturePad onChange={setSignature} />
         {error ? <p style={{ color: 'var(--danger)' }}>{error}</p> : null}
         <button type="button" className="button primary" disabled={busy} onClick={() => void sign()}>

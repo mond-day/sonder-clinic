@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, Panel, StatusBadge } from '@/components/ui';
@@ -17,25 +17,118 @@ const TEMPLATE_TYPES = [
   'CUSTOM',
 ] as const;
 
-/** Admin mínimo: listar, criar rascunho, publicar e nova versão. */
+const VARIABLES = [
+  'patientName',
+  'patientCpf',
+  'professionalName',
+  'professionalCro',
+  'clinicName',
+  'date',
+] as const;
+
+type StructuredContent = {
+  title?: string;
+  header?: string;
+  body?: string;
+  footer?: string;
+  signature?: string;
+};
+
+type TemplateRow = RecordValue & {
+  id: string;
+  name: string;
+  type: string;
+  version?: number;
+  status?: string;
+  active?: boolean;
+  structuredContent?: StructuredContent;
+  allowedVariables?: string[];
+  signatureRules?: Record<string, unknown>;
+};
+
+const SAMPLE = {
+  patientName: 'Maria de Exemplo',
+  patientCpf: '000.000.000-00',
+  professionalName: 'Dr. Exemplo',
+  professionalCro: 'MT-00000',
+  clinicName: 'Clínica Exemplo',
+  date: new Date().toLocaleDateString('pt-BR'),
+};
+
+function applyVariables(source: string) {
+  return source.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
+    return (SAMPLE as Record<string, string>)[key] ?? `{{${key}}}`;
+  });
+}
+
+function emptyContent(): StructuredContent {
+  return {
+    title: '',
+    header: '',
+    body: '',
+    footer: '',
+    signature: '{{professionalName}} — CRO {{professionalCro}}',
+  };
+}
+
+/** Admin de modelos: editar DRAFT, preview, validar e publicar. */
 export function DocumentTemplatesAdminPanel() {
-  const [rows, setRows] = useState<RecordValue[]>([]);
+  const [rows, setRows] = useState<TemplateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [open, setOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editor, setEditor] = useState<TemplateRow | null>(null);
+  const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
+  const [content, setContent] = useState<StructuredContent>(emptyContent());
+  const [name, setName] = useState('');
+  const [type, setType] = useState<string>('CUSTOM');
+  const [validation, setValidation] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
     setError('');
     documentApi.listDocumentTemplates(true)
-      .then((data) => setRows(list(data as unknown as RecordValue[])))
+      .then((data) => setRows(list(data as unknown as RecordValue[]) as TemplateRow[]))
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao listar modelos.'))
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(load, [load]);
+
+  const previewHtml = useMemo(() => ({
+    title: applyVariables(content.title ?? ''),
+    header: applyVariables(content.header ?? ''),
+    body: applyVariables(content.body ?? ''),
+    footer: applyVariables(content.footer ?? ''),
+    signature: applyVariables(content.signature ?? ''),
+  }), [content]);
+
+  function openEditor(row: TemplateRow) {
+    const structured = (row.structuredContent ?? {}) as StructuredContent;
+    setEditor(row);
+    setName(String(row.name ?? ''));
+    setType(String(row.type ?? 'CUSTOM'));
+    setContent({
+      title: structured.title ?? '',
+      header: structured.header ?? '',
+      body: structured.body ?? '',
+      footer: structured.footer ?? '',
+      signature: structured.signature ?? '',
+    });
+    setPreview(false);
+    setValidation(null);
+    setFormError('');
+  }
+
+  function insertVariable(field: keyof StructuredContent, variable: string) {
+    const token = `{{${variable}}}`;
+    setContent((current) => ({
+      ...current,
+      [field]: `${current[field] ?? ''}${token}`,
+    }));
+  }
 
   async function createTemplate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -46,13 +139,74 @@ export function DocumentTemplatesAdminPanel() {
       await api.post('/document-templates', {
         name: String(data.get('name') || '').trim(),
         type: String(data.get('type') || 'CUSTOM'),
-        structuredContent: { body: String(data.get('body') || '').trim() },
-        allowedVariables: ['patientName', 'clinicName', 'professionalName', 'date'],
+        structuredContent: {
+          ...emptyContent(),
+          body: String(data.get('body') || '').trim(),
+        },
+        allowedVariables: [...VARIABLES],
       });
-      setOpen(false);
+      setCreateOpen(false);
       load();
     } catch (cause) {
       setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o modelo.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveDraft() {
+    if (!editor) return;
+    setBusy(true);
+    setFormError('');
+    try {
+      await api.patch(`/document-templates/${editor.id}`, {
+        name,
+        type,
+        structuredContent: content,
+        allowedVariables: [...VARIABLES],
+      });
+      load();
+      setValidation('Rascunho salvo.');
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Falha ao salvar.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function validateTemplate() {
+    if (!editor) return;
+    setBusy(true);
+    setFormError('');
+    try {
+      await saveDraft();
+      const result = await api.post<{ valid?: boolean; errors?: string[] }>(
+        `/document-templates/${editor.id}/validate`,
+        { clinicalContent: SAMPLE },
+      );
+      if (result?.valid === false || (result?.errors && result.errors.length)) {
+        setValidation(`Validação: ${(result.errors ?? ['conteúdo inválido']).join('; ')}`);
+      } else {
+        setValidation('Validação OK — pronto para publicar.');
+      }
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Falha na validação.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function publish() {
+    if (!editor) return;
+    setBusy(true);
+    setFormError('');
+    try {
+      await validateTemplate();
+      await api.post(`/document-templates/${editor.id}/publish`);
+      setEditor(null);
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Falha ao publicar.');
     } finally {
       setBusy(false);
     }
@@ -74,8 +228,8 @@ export function DocumentTemplatesAdminPanel() {
   return (
     <Panel
       title="Modelos de documento"
-      description="Publicar/versionar modelos (API já existente). Editor de solicitação de exame continua no workspace do paciente."
-      actions={<button className="button small primary" type="button" onClick={() => setOpen(true)}>Novo modelo</button>}
+      description="Editar rascunhos, pré-visualizar, validar e publicar. Editores especializados do paciente permanecem intactos."
+      actions={<button className="button small primary" type="button" onClick={() => setCreateOpen(true)}>Novo modelo</button>}
     >
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
       {loading ? <div className="state-message">Carregando modelos…</div> : null}
@@ -83,50 +237,140 @@ export function DocumentTemplatesAdminPanel() {
         <EmptyState title="Nenhum modelo" description="Crie um rascunho e publique para uso na ficha." />
       ) : (
         <div className="settings-list">
-          {rows.map((row) => (
-            <div className="settings-row" key={String(row.id)}>
-              <div>
-                <strong>{text(row.name)}</strong>
-                <span>
-                  {presentationLabel(row.type)} · v{text(row.version)} · {presentationLabel(row.status ?? (row.active ? 'PUBLISHED' : 'DRAFT'))}
-                </span>
-              </div>
-              <div className="row-actions">
-                <StatusBadge tone={row.status === 'PUBLISHED' || row.active ? 'green' : 'gray'}>
-                  {presentationLabel(row.status ?? (row.active ? 'PUBLISHED' : 'DRAFT'))}
-                </StatusBadge>
-                {String(row.status) === 'DRAFT' || (!row.status && !row.active) ? (
-                  <button className="button small primary" type="button" disabled={busy} onClick={() => void runAction(String(row.id), 'publish')}>
-                    Publicar
+          {rows.map((row) => {
+            const status = String(row.status ?? (row.active ? 'PUBLISHED' : 'DRAFT'));
+            const isDraft = status === 'DRAFT';
+            return (
+              <div className="settings-row" key={String(row.id)}>
+                <div>
+                  <strong>{text(row.name)}</strong>
+                  <span>
+                    {presentationLabel(row.type)} · v{text(row.version)} · {presentationLabel(status)}
+                  </span>
+                </div>
+                <div className="row-actions">
+                  <StatusBadge tone={status === 'PUBLISHED' ? 'green' : 'gray'}>
+                    {presentationLabel(status)}
+                  </StatusBadge>
+                  {isDraft ? (
+                    <button className="button small" type="button" disabled={busy} onClick={() => openEditor(row)}>
+                      Editar
+                    </button>
+                  ) : (
+                    <button className="button small" type="button" disabled={busy} onClick={() => openEditor(row)}>
+                      Visualizar
+                    </button>
+                  )}
+                  {isDraft ? (
+                    <button className="button small primary" type="button" disabled={busy} onClick={() => void runAction(String(row.id), 'publish')}>
+                      Publicar
+                    </button>
+                  ) : null}
+                  {status === 'PUBLISHED' ? (
+                    <button className="button small" type="button" disabled={busy} onClick={() => void runAction(String(row.id), 'new-version')}>
+                      Nova versão
+                    </button>
+                  ) : null}
+                  <button className="button small" type="button" disabled={busy} onClick={() => void runAction(String(row.id), 'archive')}>
+                    Arquivar
                   </button>
-                ) : null}
-                {String(row.status) === 'PUBLISHED' || row.active ? (
-                  <button className="button small" type="button" disabled={busy} onClick={() => void runAction(String(row.id), 'new-version')}>
-                    Nova versão
-                  </button>
-                ) : null}
-                <button className="button small" type="button" disabled={busy} onClick={() => void runAction(String(row.id), 'archive')}>
-                  Arquivar
-                </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
-      <Modal open={open} title="Novo modelo (rascunho)" description="Corpo simples; variáveis avançadas seguem no fluxo de geração." onClose={() => setOpen(false)}>
+
+      <Modal open={createOpen} title="Novo modelo (rascunho)" description="Corpo inicial; refine no editor estruturado." onClose={() => setCreateOpen(false)}>
         <form className="mutation-form" onSubmit={createTemplate}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label className="span-2">Tipo
-            <select name="type" defaultValue="EXAM_REQUEST">
-              {TEMPLATE_TYPES.map((type) => (
-                <option key={type} value={type}>{type}</option>
+            <select name="type" defaultValue="CUSTOM">
+              {TEMPLATE_TYPES.map((item) => (
+                <option key={item} value={item}>{item}</option>
               ))}
             </select>
           </label>
-          <label className="span-2">Conteúdo<textarea name="body" rows={5} required minLength={5} placeholder="Solicitamos exames: …" /></label>
+          <label className="span-2">Corpo<textarea name="body" rows={5} required minLength={5} placeholder="Solicitamos exames: …" /></label>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
           <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar rascunho'}</button>
         </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(editor)}
+        size="xlarge"
+        title={editor ? `${text(editor.name)} · v${text(editor.version)}` : 'Editor'}
+        description={String(editor?.status) === 'DRAFT' ? 'Editar rascunho' : 'Publicado — somente leitura. Use Nova versão para alterar.'}
+        onClose={() => setEditor(null)}
+      >
+        {editor ? (
+          <div className="document-template-editor">
+            <div className="heading-actions">
+              <button type="button" className={`button small${!preview ? ' primary' : ''}`} onClick={() => setPreview(false)}>Editar</button>
+              <button type="button" className={`button small${preview ? ' primary' : ''}`} onClick={() => setPreview(true)}>Pré-visualizar</button>
+            </div>
+            {!preview ? (
+              <div className="mutation-form">
+                <label className="span-2">Nome
+                  <input value={name} disabled={String(editor.status) !== 'DRAFT'} onChange={(e) => setName(e.target.value)} />
+                </label>
+                <label className="span-2">Tipo
+                  <select value={type} disabled={String(editor.status) !== 'DRAFT'} onChange={(e) => setType(e.target.value)}>
+                    {TEMPLATE_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </label>
+                {(['title', 'header', 'body', 'footer', 'signature'] as const).map((field) => (
+                  <label key={field} className="span-2">
+                    {presentationLabel(field)}
+                    <textarea
+                      rows={field === 'body' ? 6 : 2}
+                      value={content[field] ?? ''}
+                      disabled={String(editor.status) !== 'DRAFT'}
+                      onChange={(e) => setContent((current) => ({ ...current, [field]: e.target.value }))}
+                    />
+                    {String(editor.status) === 'DRAFT' ? (
+                      <span className="variable-inserter">
+                        + Inserir variável
+                        <select
+                          defaultValue=""
+                          onChange={(e) => {
+                            if (e.target.value) insertVariable(field, e.target.value);
+                            e.target.value = '';
+                          }}
+                        >
+                          <option value="">Escolher…</option>
+                          {VARIABLES.map((variable) => (
+                            <option key={variable} value={variable}>{`{{${variable}}}`}</option>
+                          ))}
+                        </select>
+                      </span>
+                    ) : null}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="document-template-preview">
+                <p className="muted-note">Dados fictícios seguros (sem paciente real).</p>
+                <h2>{previewHtml.title || text(editor.name)}</h2>
+                <p>{previewHtml.header}</p>
+                <pre style={{ whiteSpace: 'pre-wrap' }}>{previewHtml.body}</pre>
+                <p>{previewHtml.footer}</p>
+                <p><em>{previewHtml.signature}</em></p>
+                <p>Paciente: {SAMPLE.patientName} · Profissional: {SAMPLE.professionalName} · CRO: {SAMPLE.professionalCro}</p>
+              </div>
+            )}
+            {validation ? <p className="muted-note">{validation}</p> : null}
+            {formError ? <p className="form-error" role="alert">{formError}</p> : null}
+            {String(editor.status) === 'DRAFT' ? (
+              <div className="heading-actions">
+                <button type="button" className="button soft" disabled={busy} onClick={() => void saveDraft()}>Salvar</button>
+                <button type="button" className="button" disabled={busy} onClick={() => void validateTemplate()}>Validar</button>
+                <button type="button" className="button primary" disabled={busy} onClick={() => void publish()}>Publicar</button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </Modal>
     </Panel>
   );

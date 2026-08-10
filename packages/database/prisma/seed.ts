@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { seedRichData } from './seed-rich-data';
-import { seedAnamnesisCatalogs } from './seeds/anamnesis';
+import { installDefaultAnamnesisTemplates } from './seeds/anamnesis';
 
 const prisma = new PrismaClient();
 
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
     update: { active: true },
     create: { professionalId: professional.id, clinicId: clinic.id, active: true },
   });
-  await seedAnamnesisCatalogs(prisma, organization.id);
+  await installDefaultAnamnesisTemplates(prisma, organization.id);
   const conditions: Array<[string, string, string]> = [
     ['HEALTHY', 'Hígido', '#78A890'], ['CARIES', 'Cárie', '#B93A3A'],
     ['RESTORATION', 'Restauração existente', '#315E8A'], ['MISSING', 'Ausência dentária', '#68746F'],

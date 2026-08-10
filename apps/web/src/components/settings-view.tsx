@@ -401,6 +401,20 @@ export function SettingsView() {
     }
   }
 
+  async function registerGoogleWatch(id: string) {
+    setIntegrationMenuId(null);
+    try {
+      const result = await api.post<{ message?: string; expiration?: string }>(
+        `/integrations/${id}/calendar/watch`,
+        {},
+      );
+      setError(result.message ?? 'Webhook Google registrado.');
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Registro de webhook Google falhou.');
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -949,7 +963,8 @@ export function SettingsView() {
             >
               <p className="muted-note" style={{ padding: '0 14px' }}>
                 Google Calendar: defina GOOGLE_CALENDAR_MOCK=false + clientId/secret + GOOGLE_REDIRECT_URI, salve a conexão e use Iniciar OAuth.
-                Sem credenciais o teste falha de forma explícita. Sync clinic→Google no worker; Google→clinic via Pull sync.
+                Sync clinic→Google no worker; Google→clinic via Pull sync. Auto-renew do webhook via GOOGLE_CALENDAR_WATCH_AUTO_RENEW (worker).
+                Sem GOOGLE_CALENDAR_WEBHOOK_URL: webhook não configurado — usando sincronização manual/pull.
               </p>
               {loading && <div className="state-message">Carregando integrações…</div>}
               {!loading && integrations.length === 0 && (
@@ -968,6 +983,24 @@ export function SettingsView() {
                             {text(item.scopeType ?? item.source)} · modo {text(item.mode, 'persistido')}
                             {item.lastSyncAt ? ` · última sincronização ${dateOnly(item.lastSyncAt)}` : ''}
                           </span>
+                          {text(item.provider) === 'GOOGLE_CALENDAR' ? (
+                            <span className="muted-note">
+                              {(() => {
+                                const cfg = item.configuration && typeof item.configuration === 'object'
+                                  ? item.configuration as RecordValue
+                                  : {};
+                                const expiration = cfg.webhookExpiration;
+                                const calendarId = text(cfg.calendarId, 'primary');
+                                const lastError = text(cfg.webhookWatchLastError);
+                                if (!expiration) {
+                                  return `Calendário: ${calendarId} · Webhook não configurado — usando sincronização manual/pull.`;
+                                }
+                                const expMs = Number(expiration);
+                                const expDate = Number.isFinite(expMs) ? new Date(expMs) : new Date(String(expiration));
+                                return `OAuth: conectado · Calendário: ${calendarId} · Webhook: ativo · Expira: ${Number.isNaN(expDate.getTime()) ? String(expiration) : expDate.toLocaleString('pt-BR')}${lastError ? ` · Erro renew: ${lastError}` : ''}`;
+                              })()}
+                            </span>
+                          ) : null}
                         </div>
                         <div className="row-actions">
                           <StatusBadge tone={item.status === 'ACTIVE' ? 'green' : item.status === 'ERROR' ? 'red' : 'gray'}>
@@ -1027,6 +1060,13 @@ export function SettingsView() {
                                         onClick={() => void pullGoogleCalendarSync(String(item.id))}
                                       >
                                         Pull sync (Google → agenda)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => void registerGoogleWatch(String(item.id))}
+                                      >
+                                        Registrar/renovar webhook
                                       </button>
                                     </>
                                   ) : null}

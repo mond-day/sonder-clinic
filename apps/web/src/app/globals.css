@@ -1905,3 +1905,32 @@ button { cursor: pointer; }
   .med-row > *:first-child { grid-column: span 2; }
   .preview-wrap { padding: 10px; }
 }
+
+/* Anamnese P1 — histórico operacional + mobile */
+.summary-strip span { display: block; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+.anamnesis-history-desktop { overflow-x: auto; }
+.anamnesis-history-desktop table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.anamnesis-history-desktop th, .anamnesis-history-desktop td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.anamnesis-history-mobile { display: none; gap: 10px; }
+.anamnesis-history-card {
+  display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 12px;
+}
+.anamnesis-history-card span { display: block; color: var(--muted); font-size: 11px; }
+.anamnesis-section-select { display: none; margin-bottom: 8px; }
+.anamnesis-sticky-footer { position: sticky; bottom: 0; background: var(--surface, #fff); padding: 8px 0; }
+.anamnesis-template-filters { margin-bottom: 12px; }
+.anamnesis-template-preview { display: grid; gap: 12px; padding: 12px; }
+.variable-inserter { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 11px; color: var(--muted); }
+.document-template-preview { display: grid; gap: 8px; padding: 12px; border: 1px dashed var(--line); border-radius: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+.public-anamnesis-section { margin-bottom: 16px; }
+.question-block.read-only { opacity: .92; }
+
+@media (max-width: 900px) {
+  .anamnesis-history-desktop { display: none; }
+  .anamnesis-history-mobile { display: grid; }
+  .anamnesis-section-select { display: block; }
+  .anamnesis-workspace.filling .section-rail > button { display: none; }
+  .anamnesis-workspace.filling .anamnesis-grid { grid-template-columns: 1fr; }
+  .anamnesis-workspace.filling .risk-panel { order: 3; }
+}

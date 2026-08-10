@@ -225,6 +225,7 @@ enum AnamnesisResponseStatus {
   SIGNED
   EXPIRED
   SUPERSEDED
+  CANCELLED
 }
 
 enum AnamnesisSignatureRole {
@@ -302,6 +303,7 @@ model Clinic {
   laboratories   Laboratory[]
   payables       Payable[]
   professionalLinks ProfessionalClinic[]
+  anamnesisResponses AnamnesisResponse[]
 
   @@index([organizationId])
 }
@@ -514,6 +516,7 @@ model Patient {
   labCases       LabCase[]
   duplicateDismissalsLow  PatientDuplicateDismissal[] @relation("DuplicateDismissalLow")
   duplicateDismissalsHigh PatientDuplicateDismissal[] @relation("DuplicateDismissalHigh")
+  anamnesisResponses AnamnesisResponse[]
 
   @@unique([organizationId, cpf])
   @@unique([organizationId, passportNumber])
@@ -1112,11 +1115,15 @@ model AnamnesisResponse {
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
   template         AnamnesisTemplate        @relation(fields: [templateId], references: [id])
+  clinic           Clinic                   @relation(fields: [clinicId], references: [id])
+  patient          Patient                  @relation(fields: [patientId], references: [id])
   signatures       AnamnesisSignature[]
   signatureRequests AnamnesisSignatureRequest[]
 
   @@index([organizationId, patientId, createdAt])
   @@index([organizationId, status, createdAt])
+  @@index([clinicId, createdAt])
+  @@index([patientId, createdAt])
 }
 
 model AnamnesisSignature {

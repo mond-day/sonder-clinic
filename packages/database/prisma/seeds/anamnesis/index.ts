@@ -13,7 +13,8 @@ const catalogs = [
   { name: 'Anamnese gestante', audience: 'PREGNANT', schema: pregnantAnamnesisV1, expected: 38 },
 ] as const;
 
-export async function seedAnamnesisCatalogs(prisma: PrismaClient, organizationId: string) {
+/** Bootstrap idempotente dos modelos padrão — chamar ao criar organização. */
+export async function installDefaultAnamnesisTemplates(prisma: PrismaClient, organizationId: string) {
   for (const catalog of catalogs) {
     const questionCount = countQuestions(catalog.schema);
     if (questionCount !== catalog.expected) {
@@ -67,3 +68,6 @@ export async function seedAnamnesisCatalogs(prisma: PrismaClient, organizationId
     console.info(`[anamnesis] ${catalog.name} v1 — ${questionCount} perguntas — hash ${schemaHash}`);
   }
 }
+
+/** @deprecated Use installDefaultAnamnesisTemplates */
+export const seedAnamnesisCatalogs = installDefaultAnamnesisTemplates;

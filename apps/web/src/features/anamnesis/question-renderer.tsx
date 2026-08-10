@@ -19,15 +19,18 @@ export function QuestionRenderer({
   question,
   value,
   onChange,
+  readOnly = false,
 }: {
   question: Question;
   value: AnswerValue;
   onChange: (next: AnswerValue) => void;
+  readOnly?: boolean;
 }) {
   const current = typeof value === 'object' && value && 'value' in (value as object)
     ? (value as { value: unknown; details?: string })
     : { value, details: undefined };
   const setValue = (next: unknown, details = current.details) => {
+    if (readOnly) return;
     if (question.details?.enabled || question.type.includes('DETAILS')) {
       onChange({ value: next, details });
       return;
@@ -36,7 +39,7 @@ export function QuestionRenderer({
   };
 
   return (
-    <div className="question-block" data-question={question.code}>
+    <div className={`question-block${readOnly ? ' read-only' : ''}`} data-question={question.code}>
       <label>
         <span>
           {question.label}
@@ -52,6 +55,7 @@ export function QuestionRenderer({
               key={option.value}
               type="button"
               className={current.value === option.value ? 'active' : ''}
+              disabled={readOnly}
               onClick={() => setValue(option.value)}
             >
               {option.label}
@@ -69,6 +73,7 @@ export function QuestionRenderer({
                 key={option.value}
                 type="button"
                 className={selected ? 'active' : ''}
+                disabled={readOnly}
                 onClick={() => {
                   const list = Array.isArray(current.value) ? [...current.value] : [];
                   if (selected) setValue(list.filter((item) => item !== option.value));
@@ -87,11 +92,13 @@ export function QuestionRenderer({
           <textarea
             rows={3}
             value={String(current.value ?? '')}
+            readOnly={readOnly}
             onChange={(event) => setValue(event.target.value)}
           />
         ) : (
           <input
             value={String(current.value ?? '')}
+            readOnly={readOnly}
             onChange={(event) => setValue(event.target.value)}
           />
         )
@@ -104,6 +111,7 @@ export function QuestionRenderer({
             min={question.type === 'SCALE_0_10' ? 0 : undefined}
             max={question.type === 'SCALE_0_10' ? 10 : undefined}
             value={current.value == null ? '' : String(current.value)}
+            readOnly={readOnly}
             onChange={(event) => setValue(event.target.value === '' ? null : Number(event.target.value))}
           />
           {question.unit ? <span>{question.unit}</span> : null}
@@ -114,6 +122,7 @@ export function QuestionRenderer({
         <input
           type="date"
           value={String(current.value ?? '')}
+          readOnly={readOnly}
           onChange={(event) => setValue(event.target.value)}
         />
       ) : null}
@@ -122,6 +131,7 @@ export function QuestionRenderer({
         <input
           placeholder="Telefone e canal preferencial"
           value={String(current.value ?? '')}
+          readOnly={readOnly}
           onChange={(event) => setValue(event.target.value)}
         />
       ) : null}
@@ -131,6 +141,7 @@ export function QuestionRenderer({
           rows={3}
           placeholder="Medicamento, dose e frequência (um por linha)"
           value={String(current.value ?? '')}
+          readOnly={readOnly}
           onChange={(event) => setValue(event.target.value)}
         />
       ) : null}
@@ -140,6 +151,7 @@ export function QuestionRenderer({
           <input
             type="checkbox"
             checked={current.value === true || current.value === 'yes'}
+            disabled={readOnly}
             onChange={(event) => setValue(event.target.checked)}
           />
           Concordo
@@ -155,6 +167,7 @@ export function QuestionRenderer({
             rows={2}
             placeholder={question.details?.label ?? 'Detalhes'}
             value={String(current.details ?? '')}
+            readOnly={readOnly}
             onChange={(event) => setValue(current.value, event.target.value)}
           />
         ) : null}

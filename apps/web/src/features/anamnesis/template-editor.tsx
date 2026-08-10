@@ -6,11 +6,13 @@ import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, Panel, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
+import { QuestionRenderer } from './question-renderer';
 import {
   CONDITION_OPERATIONS,
   emptyAlertRule,
   emptyConditionGroup,
   emptyRiskRule,
+  isGroupVisible,
   type AlertRule,
   type ConditionGroup,
   type RiskRule,
@@ -57,6 +59,7 @@ type Template = RecordValue & {
   status: string;
   version: number;
   validityMonths?: number;
+  isSystemDefault?: boolean;
   schemaJson: Schema;
 };
 
@@ -239,6 +242,11 @@ export function AnamnesisTemplateEditor() {
   const [rulesOpenId, setRulesOpenId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterAudience, setFilterAudience] = useState('');
+  const [filterQuery, setFilterQuery] = useState('');
+  const [previewMode, setPreviewMode] = useState(false);
+  const [previewAnswers, setPreviewAnswers] = useState<Record<string, unknown>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -276,6 +284,20 @@ export function AnamnesisTemplateEditor() {
   const activeSection = sections.find((item) => item.id === sectionId) ?? sections[0];
   const readOnly = Boolean(draft && draft.status !== 'DRAFT');
   const questionCodes = useMemo(() => allQuestionCodes(sections), [sections]);
+  const filteredTemplates = useMemo(() => templates.filter((template) => {
+    if (filterStatus && template.status !== filterStatus) return false;
+    if (filterAudience && template.audience !== filterAudience) return false;
+    if (filterQuery && !template.name.toLowerCase().includes(filterQuery.toLowerCase())) return false;
+    return true;
+  }), [templates, filterStatus, filterAudience, filterQuery]);
+  const questionCount = useMemo(
+    () => sections.reduce((acc, section) => acc + section.questions.length, 0),
+    [sections],
+  );
+  const previewSections = useMemo(
+    () => sections.filter((section) => isGroupVisible(previewAnswers, section.visibleWhen)),
+    [sections, previewAnswers],
+  );
 
   function selectTemplate(template: Template) {
     setSelectedId(template.id);
@@ -290,6 +312,8 @@ export function AnamnesisTemplateEditor() {
     setSectionId(template.schemaJson.sections[0]?.id ?? null);
     setMessage('');
     setError('');
+    setPreviewMode(false);
+    setPreviewAnswers({});
   }
 
   function updateSchema(mutator: (schema: Schema) => Schema) {
@@ -350,6 +374,10 @@ export function AnamnesisTemplateEditor() {
   }
 
   async function runTemplateAction(templateId: string, action: 'duplicate' | 'archive', success: string) {
+    if (action === 'archive' && !window.confirm('Arquivar este modelo? Ele deixa de ficar disponível para novas anamneses.')) {
+      setMenuOpenId(null);
+      return;
+    }
     setBusy(true);
     setError('');
     setMenuOpenId(null);
@@ -478,12 +506,29 @@ export function AnamnesisTemplateEditor() {
       >
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         {message ? <p className="muted-note">{message}</p> : null}
+        <div className="anamnesis-template-filters mutation-form compact">
+          <label>Busca<input value={filterQuery} placeholder="Nome do modelo" onChange={(e) => setFilterQuery(e.target.value)} /></label>
+          <label>Status
+            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+              <option value="">Todos</option>
+              <option value="DRAFT">Rascunho</option>
+              <option value="PUBLISHED">Publicado</option>
+              <option value="ARCHIVED">Arquivado</option>
+            </select>
+          </label>
+          <label>Público
+            <select value={filterAudience} onChange={(e) => setFilterAudience(e.target.value)}>
+              <option value="">Todos</option>
+              {AUDIENCES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
+          </label>
+        </div>
         <div className="anamnesis-editor-layout">
           <aside className="anamnesis-template-list">
             {loading ? <div className="state-message">Carregando modelos…</div> : null}
-            {!loading && templates.length === 0 ? <EmptyState title="Nenhum modelo" description="Crie o primeiro rascunho." /> : null}
+            {!loading && filteredTemplates.length === 0 ? <EmptyState title="Nenhum modelo" description="Ajuste os filtros ou crie um rascunho." /> : null}
             <div className="template-stack">
-              {templates.map((template) => (
+              {filteredTemplates.map((template) => (
                 <article
                   key={template.id}
                   className={`template-card ${selectedId === template.id ? 'active' : ''}`}
@@ -497,7 +542,12 @@ export function AnamnesisTemplateEditor() {
                     <span>{AUDIENCES.find((item) => item.value === template.audience)?.label ?? template.audience} · v{template.version}</span>
                     <div className="template-meta">
                       <StatusBadge tone={statusTone(template.status)}>{presentationLabel(template.status)}</StatusBadge>
+                      {template.isSystemDefault ? <span className="badge">Sistema</span> : null}
+                      <span className="badge">v{template.version}</span>
                       <span className="badge">{template.schemaJson?.sections?.length ?? 0} seções</span>
+                      <span className="badge">
+                        {(template.schemaJson?.sections ?? []).reduce((acc, section) => acc + (section.questions?.length ?? 0), 0)} perguntas
+                      </span>
                     </div>
                   </button>
                   <div className="template-card-actions">
@@ -575,6 +625,11 @@ export function AnamnesisTemplateEditor() {
                   </div>
                   <div className="toolbar">
                     <StatusBadge tone={statusTone(draft.status)}>{presentationLabel(draft.status)}</StatusBadge>
+                    {draft.isSystemDefault ? <span className="badge">Sistema</span> : null}
+                    <span className="badge">{sections.length} seções · {questionCount} perguntas</span>
+                    <button type="button" className={`button small${!previewMode ? ' primary' : ''}`} onClick={() => setPreviewMode(false)}>Editar</button>
+                    <button type="button" className={`button small${previewMode ? ' primary' : ''}`} onClick={() => { setPreviewMode(true); setPreviewAnswers({}); }}>Pré-visualizar</button>
+                    <button type="button" className="button soft small" disabled={busy} onClick={() => void runAction(`/anamnesis/templates/${draft.id}/validate`, `Validação OK · ${questionCount} perguntas.`)}>Validar</button>
                     {!readOnly ? <button type="button" className="button primary small" disabled={busy} onClick={() => void saveDraft()}>Salvar rascunho</button> : null}
                     {draft.status === 'DRAFT' ? (
                       <button type="button" className="button small" disabled={busy} onClick={() => void runAction(`/anamnesis/templates/${draft.id}/publish`, 'Modelo publicado.')}>Publicar</button>
@@ -584,11 +639,35 @@ export function AnamnesisTemplateEditor() {
                     ) : null}
                     <button type="button" className="button soft small" disabled={busy} onClick={() => void runAction(`/anamnesis/templates/${draft.id}/duplicate`, 'Cópia criada.')}>Duplicar</button>
                     {draft.status !== 'ARCHIVED' ? (
-                      <button type="button" className="button soft small" disabled={busy} onClick={() => void runAction(`/anamnesis/templates/${draft.id}/archive`, 'Modelo arquivado.')}>Arquivar</button>
+                      <button type="button" className="button soft small" disabled={busy} onClick={() => {
+                        if (!window.confirm('Arquivar este modelo?')) return;
+                        void runAction(`/anamnesis/templates/${draft.id}/archive`, 'Modelo arquivado.');
+                      }}>Arquivar</button>
                     ) : null}
                   </div>
                 </header>
 
+                {previewMode ? (
+                  <div className="anamnesis-template-preview">
+                    <p className="muted-note">Pré-visualização do formulário (não cria AnamnesisResponse).</p>
+                    {previewSections.map((section) => (
+                      <section key={section.id} className="panel">
+                        <h3>{section.title}</h3>
+                        {section.questions
+                          .filter((question) => isGroupVisible(previewAnswers, question.visibleWhen))
+                          .map((question) => (
+                            <QuestionRenderer
+                              key={question.id}
+                              question={question}
+                              value={previewAnswers[question.code]}
+                              onChange={(next) => setPreviewAnswers((current) => ({ ...current, [question.code]: next }))}
+                            />
+                          ))}
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                <>
                 <div className="editor-meta mutation-form compact">
                   <label>Nome<input value={draft.name} disabled={readOnly} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
                   <label>Público
@@ -1105,6 +1184,8 @@ export function AnamnesisTemplateEditor() {
                     )}
                   </article>
                 </div>
+                </>
+                )}
               </>
             )}
           </div>

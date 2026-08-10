@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards,
+  Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import {
@@ -53,6 +53,10 @@ class SupersedeDto {
   @IsUUID() clinicId!: string;
 }
 
+class CancelDto {
+  @IsOptional() @IsString() reason?: string;
+}
+
 class PublicSignDto {
   @IsOptional() @IsObject() evidence?: Record<string, unknown>;
 }
@@ -70,11 +74,13 @@ export class AnamnesisController {
     @Query('audience') audience?: string,
     @Query('status') status?: string,
     @Query('includeArchived') includeArchived?: string,
+    @Query('q') q?: string,
   ) {
     return this.anamnesis.listTemplates(req.auth.organizationId, {
       audience,
       status,
       includeArchived: includeArchived === 'true',
+      q,
     });
   }
 
@@ -126,6 +132,12 @@ export class AnamnesisController {
     return this.anamnesis.validateTemplate(req.auth.organizationId, id);
   }
 
+  @Get('patients/:id/anamnesis/summary')
+  @RequirePermissions('anamnesis.view', 'anamnesis.response.view')
+  patientSummary(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.anamnesis.patientSummary(req.auth.organizationId, id);
+  }
+
   @Get('patients/:id/anamnesis')
   @RequirePermissions('anamnesis.view', 'anamnesis.response.view')
   listPatient(
@@ -151,7 +163,19 @@ export class AnamnesisController {
   @Patch('anamnesis/:id/draft')
   @RequirePermissions('anamnesis.manage', 'anamnesis.response.create')
   saveDraft(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: AnswersDto) {
-    return this.anamnesis.saveDraft(req.auth.organizationId, id, body.answers);
+    return this.anamnesis.saveDraft(req.auth.organizationId, id, req.auth.userId, body.answers);
+  }
+
+  @Delete('anamnesis/:id/draft')
+  @RequirePermissions('anamnesis.manage', 'anamnesis.response.create')
+  deleteDraft(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.anamnesis.deleteDraft(req.auth.organizationId, id, req.auth.userId);
+  }
+
+  @Post('anamnesis/:id/reopen-draft')
+  @RequirePermissions('anamnesis.manage', 'anamnesis.response.create')
+  reopenDraft(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.anamnesis.reopenDraft(req.auth.organizationId, id, req.auth.userId);
   }
 
   @Post('anamnesis/:id/recalculate')
@@ -163,7 +187,17 @@ export class AnamnesisController {
   @Post('anamnesis/:id/request-signature')
   @RequirePermissions('anamnesis.manage', 'anamnesis.response.sign')
   requestSignature(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: RequestSignatureDto) {
-    return this.anamnesis.requestSignature(req.auth.organizationId, id, body);
+    return this.anamnesis.requestSignature(req.auth.organizationId, id, req.auth.userId, body);
+  }
+
+  @Post('anamnesis/:id/signature-requests/:requestId/revoke')
+  @RequirePermissions('anamnesis.manage', 'anamnesis.response.sign')
+  revokeRequest(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('requestId') requestId: string,
+  ) {
+    return this.anamnesis.revokeSignatureRequest(req.auth.organizationId, id, requestId, req.auth.userId);
   }
 
   @Post('anamnesis/:id/sign')
@@ -180,6 +214,12 @@ export class AnamnesisController {
   @RequirePermissions('anamnesis.manage', 'anamnesis.response.supersede')
   supersede(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: SupersedeDto) {
     return this.anamnesis.supersede(req.auth.organizationId, id, req.auth.userId, body.clinicId);
+  }
+
+  @Post('anamnesis/:id/cancel')
+  @RequirePermissions('anamnesis.manage', 'anamnesis.response.supersede')
+  cancel(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: CancelDto) {
+    return this.anamnesis.cancel(req.auth.organizationId, id, req.auth.userId, body.reason);
   }
 }
 
