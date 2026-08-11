@@ -39,6 +39,7 @@ import {
   OutboxDeadLetterPanel,
   PriceTablesAdminPanel,
 } from '@/features/settings/settings-catalog-panels';
+import { ProfessionalsPanel } from '@/features/settings/professionals-panel';
 import { PatientDuplicatesPanel } from '@/features/patients/patient-duplicates-panel';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
@@ -691,6 +692,7 @@ export function SettingsView() {
               ) : (
                 <EmptyState title="Nenhum profissional listado" description="Profissionais aparecem aqui a partir do contexto da clínica." />
               )}
+              <ProfessionalsPanel />
               <div className="settings-list">
                 <div className="settings-row">
                   <div>

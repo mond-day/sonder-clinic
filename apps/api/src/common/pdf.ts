@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
 
 export type PdfTableInput = {
   title: string;
@@ -17,7 +18,16 @@ export type PdfDocumentInput = {
   footerLeft?: string;
   footerRight?: string;
   validationCode?: string;
+  /** Override da URL pública; se omitido, usa WEB_URL + /validar/documento?codigo= */
+  validationUrl?: string;
 };
+
+function publicValidationUrl(code: string, override?: string): string {
+  if (override?.trim()) return override.trim();
+  const webUrl = (process.env.WEB_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000')
+    .replace(/\/$/, '');
+  return `${webUrl}/validar/documento?codigo=${encodeURIComponent(code)}`;
+}
 
 function collect(doc: PDFKit.PDFDocument): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -121,7 +131,34 @@ export async function buildClinicalDocumentPdf(input: PdfDocumentInput): Promise
     });
 
   if (input.validationCode) {
-    doc.moveDown(3).fillColor('#6a7d83').fontSize(8)
+    const validationUrl = publicValidationUrl(input.validationCode, input.validationUrl);
+    const qrSize = 88;
+    const blockHeight = qrSize + 52;
+    if (doc.y + blockHeight > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+    }
+
+    doc.moveDown(2.2);
+    const qrBuffer = await QRCode.toBuffer(validationUrl, {
+      type: 'png',
+      width: qrSize * 2,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#183139', light: '#ffffff' },
+    });
+    const qrX = (doc.page.width - qrSize) / 2;
+    const qrY = doc.y;
+    doc.image(qrBuffer, qrX, qrY, { width: qrSize, height: qrSize });
+    doc.y = qrY + qrSize + 8;
+
+    const webUrl = (process.env.WEB_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000')
+      .replace(/\/$/, '');
+    const validatePath = `${webUrl}/validar/documento`;
+    doc.fillColor('#6a7d83').fontSize(8).font('Helvetica')
+      .text('Valide a autenticidade deste documento', { align: 'center' })
+      .text(`Escaneie o QR ou acesse ${validatePath}`, { align: 'center', link: validationUrl })
+      .moveDown(0.25)
+      .fillColor('#183139').fontSize(8).font('Helvetica-Bold')
       .text(`Código de validação: ${input.validationCode}`, { align: 'center' });
   }
 

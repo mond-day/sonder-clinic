@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { prisma } from '@sonder/database';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
@@ -163,7 +163,15 @@ export class PatientsService {
 
   async update(organizationId: string, id: string, input: Omit<CreatePatientInput, 'clinicId'>) {
     const data = parseWithZod(patientDataSchema, input);
-    await this.find(organizationId, id);
+    const existing = await this.find(organizationId, id);
+    if (data.isMinor) {
+      const guardianCount = await prisma.patientGuardian.count({ where: { patientId: id } });
+      // Permite marcar menor sem guardião ainda — a UI envia o guardião em seguida.
+      // Bloqueia apenas se já era menor e ficou sem guardião (desvínculo).
+      if (existing.isMinor && guardianCount === 0) {
+        throw new BadRequestException('Paciente menor de idade exige ao menos um responsável vinculado.');
+      }
+    }
     if (data.cpf) {
       const duplicate = await prisma.patient.findFirst({
         where: { organizationId, cpf: data.cpf, id: { not: id } },

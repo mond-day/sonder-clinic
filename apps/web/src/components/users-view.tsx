@@ -119,6 +119,8 @@ export function UsersView() {
     [allPermissionCodes],
   );
 
+  const isAdminRole = String(role?.code ?? '').toUpperCase() === 'ADMIN';
+
   const matrixDirty = useMemo(() => {
     if (draftPermissions.size !== rolePermissionCodes.size) return true;
     for (const code of draftPermissions) {
@@ -278,10 +280,30 @@ export function UsersView() {
   }
 
   function togglePermission(code: string) {
+    if (isAdminRole) return;
     setDraftPermissions((current) => {
       const next = new Set(current);
       if (next.has(code)) next.delete(code);
       else next.add(code);
+      return next;
+    });
+  }
+
+  function toggleAreaAccess(row: ReturnType<typeof buildPermissionMatrix>[number], enable: boolean) {
+    if (isAdminRole) return;
+    const codes = [
+      row.view,
+      row.create,
+      row.edit,
+      row.cancel,
+      ...row.specials.map((item) => item.code),
+    ].filter(Boolean) as string[];
+    setDraftPermissions((current) => {
+      const next = new Set(current);
+      for (const code of codes) {
+        if (enable) next.add(code);
+        else next.delete(code);
+      }
       return next;
     });
   }
@@ -634,12 +656,14 @@ export function UsersView() {
 
           <Panel
             title={text(role?.name) || 'Permissões deste perfil'}
-            description="Área | Visualizar | Criar | Editar | Cancelar | Ações especiais"
+            description={isAdminRole
+              ? 'Perfil administrador — acesso completo a todas as áreas (não editável).'
+              : 'Use os interruptores por ação ou “Acesso a tudo” para liberar a área inteira.'}
             actions={(
               <button
                 type="button"
                 className="button primary"
-                disabled={!selectedRole || !matrixDirty || savingRole}
+                disabled={!selectedRole || !matrixDirty || savingRole || isAdminRole}
                 onClick={() => void saveRolePermissions()}
               >
                 {savingRole ? 'Salvando…' : 'Salvar perfil'}
@@ -650,10 +674,11 @@ export function UsersView() {
               <EmptyState title="Selecione um perfil" />
             ) : (
               <div className="table-wrap">
-                <table className="data-table">
+                <table className="data-table permission-switch-table">
                   <thead>
                     <tr>
                       <th>Área</th>
+                      <th>Acesso a tudo</th>
                       <th>Visualizar</th>
                       <th>Criar</th>
                       <th>Editar</th>
@@ -662,43 +687,77 @@ export function UsersView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {permissionMatrix.map((row) => (
-                      <tr key={row.area}>
-                        <td><strong>{row.area}</strong></td>
-                        {(['view', 'create', 'edit', 'cancel'] as const).map((action) => {
-                          const code = row[action];
-                          if (!code) return <td key={action}>—</td>;
-                          return (
-                            <td key={action}>
-                              <label className="checkbox-row" title={permissionLabel(code)} style={{ margin: 0 }}>
+                    {permissionMatrix.map((row) => {
+                      const areaCodes = [
+                        row.view,
+                        row.create,
+                        row.edit,
+                        row.cancel,
+                        ...row.specials.map((item) => item.code),
+                      ].filter(Boolean) as string[];
+                      const allOn = areaCodes.length > 0 && areaCodes.every((code) => draftPermissions.has(code));
+                      return (
+                        <tr key={row.area}>
+                          <td><strong>{row.area}</strong></td>
+                          <td>
+                            {areaCodes.length ? (
+                              <label className="switch" title={`Liberar toda a área ${row.area}`}>
                                 <input
                                   type="checkbox"
-                                  checked={draftPermissions.has(code)}
-                                  onChange={() => togglePermission(code)}
-                                  aria-label={permissionLabel(code)}
+                                  role="switch"
+                                  checked={allOn || isAdminRole}
+                                  disabled={isAdminRole}
+                                  onChange={(event) => toggleAreaAccess(row, event.target.checked)}
+                                  aria-label={`Acesso a tudo em ${row.area}`}
                                 />
+                                <span className="switch-track" aria-hidden />
                               </label>
-                            </td>
-                          );
-                        })}
-                        <td>
-                          {row.specials.length ? (
-                            <div style={{ display: 'grid', gap: 6 }}>
-                              {row.specials.map((special) => (
-                                <label key={special.code} className="checkbox-row" style={{ margin: 0 }}>
+                            ) : '—'}
+                          </td>
+                          {(['view', 'create', 'edit', 'cancel'] as const).map((action) => {
+                            const code = row[action];
+                            if (!code) return <td key={action}>—</td>;
+                            return (
+                              <td key={action}>
+                                <label className="switch" title={permissionLabel(code)}>
                                   <input
                                     type="checkbox"
-                                    checked={draftPermissions.has(special.code)}
-                                    onChange={() => togglePermission(special.code)}
+                                    role="switch"
+                                    checked={draftPermissions.has(code) || isAdminRole}
+                                    disabled={isAdminRole}
+                                    onChange={() => togglePermission(code)}
+                                    aria-label={permissionLabel(code)}
                                   />
-                                  <span>{special.label}</span>
+                                  <span className="switch-track" aria-hidden />
                                 </label>
-                              ))}
-                            </div>
-                          ) : '—'}
-                        </td>
-                      </tr>
-                    ))}
+                              </td>
+                            );
+                          })}
+                          <td>
+                            {row.specials.length ? (
+                              <div style={{ display: 'grid', gap: 8 }}>
+                                {row.specials.map((special) => (
+                                  <label key={special.code} className="switch-row" title={special.label}>
+                                    <span className="switch">
+                                      <input
+                                        type="checkbox"
+                                        role="switch"
+                                        checked={draftPermissions.has(special.code) || isAdminRole}
+                                        disabled={isAdminRole}
+                                        onChange={() => togglePermission(special.code)}
+                                        aria-label={special.label}
+                                      />
+                                      <span className="switch-track" aria-hidden />
+                                    </span>
+                                    <span>{special.label}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            ) : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

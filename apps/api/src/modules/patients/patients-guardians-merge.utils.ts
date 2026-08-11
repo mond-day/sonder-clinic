@@ -152,6 +152,14 @@ export async function unlinkPatientGuardian(
   if (!patient) throw new NotFoundException('Paciente não encontrado.');
   const link = await prisma.patientGuardian.findFirst({ where: { patientId, guardianId } });
   if (!link) throw new NotFoundException('Responsável não encontrado.');
+  if (patient.isMinor) {
+    const remaining = await prisma.patientGuardian.count({
+      where: { patientId, guardianId: { not: guardianId } },
+    });
+    if (remaining === 0) {
+      throw new BadRequestException('Paciente menor de idade exige ao menos um responsável vinculado.');
+    }
+  }
   await prisma.$transaction([
     prisma.patientGuardian.delete({ where: { patientId_guardianId: { patientId, guardianId } } }),
     prisma.auditEvent.create({

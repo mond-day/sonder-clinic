@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Eye, Pencil, Plus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { isLocalhostAppUrl, publicAppUrl } from '@/lib/public-url';
@@ -265,25 +265,50 @@ export function AnamnesisWorkspace({
     if (status === 'DRAFT') {
       return (
         <div className="heading-actions compact">
-          <button type="button" className="button small primary" disabled={busy} onClick={() => void continueDraft(row.id)}>
-            Continuar
+          <button
+            type="button"
+            className="icon-button"
+            disabled={busy}
+            title="Continuar"
+            aria-label="Continuar rascunho"
+            onClick={() => void continueDraft(row.id)}
+          >
+            <Pencil size={16} />
           </button>
-          <button type="button" className="button small" onClick={() => setDetailId(row.id)}>
-            Visualizar
+          <button
+            type="button"
+            className="icon-button"
+            title="Visualizar"
+            aria-label="Visualizar anamnese"
+            onClick={() => setDetailId(row.id)}
+          >
+            <Eye size={16} />
           </button>
         </div>
       );
     }
     if (status === 'SIGNED' || status === 'EXPIRED') {
       return (
-        <button type="button" className="button small" onClick={() => setDetailId(row.id)}>
-          Abrir
+        <button
+          type="button"
+          className="icon-button"
+          title="Abrir"
+          aria-label="Abrir anamnese"
+          onClick={() => setDetailId(row.id)}
+        >
+          <Eye size={16} />
         </button>
       );
     }
     return (
-      <button type="button" className="button small" onClick={() => setDetailId(row.id)}>
-        Visualizar
+      <button
+        type="button"
+        className="icon-button"
+        title="Visualizar"
+        aria-label="Visualizar anamnese"
+        onClick={() => setDetailId(row.id)}
+      >
+        <Eye size={16} />
       </button>
     );
   }

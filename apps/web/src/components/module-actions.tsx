@@ -158,12 +158,19 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [resourceRevision, setResourceRevision] = useState(0);
   const [integrationProvider, setIntegrationProvider] = useState<IntegrationProvider>('NIBO');
   const [brandingUrls, setBrandingUrls] = useState<{ logoUrl?: string; faviconUrl?: string }>({});
+  const [patientIsMinor, setPatientIsMinor] = useState(false);
   const lockedPatientEdit = Boolean(selectedPatientId);
   const agendaPatientDefault = selectedPatientId || defaultPatientId || '';
 
   useEffect(() => {
     if (module === 'pacientes' && selectedPatientId) setPatientToEdit(selectedPatientId);
   }, [module, selectedPatientId]);
+
+  useEffect(() => {
+    if (module !== 'pacientes') return;
+    const current = patients.find((patient) => patient.id === patientToEdit);
+    setPatientIsMinor(Boolean(current?.isMinor));
+  }, [module, patientToEdit, patients]);
 
   useEffect(() => {
     if (!initialIntegrationProvider) return;
@@ -232,6 +239,32 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
       ) : null}
       <form className="mutation-form" key={patientToEdit} onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
+        const isMinor = data.get('isMinor') === 'on';
+        const guardianName = optional(data.get('guardianName'));
+        const guardianPhone = optional(data.get('guardianPhone'));
+        const guardianRelationship = optional(data.get('guardianRelationship'));
+        const guardianCpf = optional(data.get('guardianCpf'));
+        const guardianIsLegal = data.get('guardianIsLegalGuardian') === 'on';
+        if (isMinor && !current) {
+          if (!guardianName || !guardianPhone || !guardianRelationship) {
+            setError('Para paciente menor de idade, informe nome, telefone e parentesco do responsável.');
+            return;
+          }
+          if (guardianCpf && !/^\d{11}$/.test(guardianCpf)) {
+            setError('CPF do responsável deve ter 11 dígitos.');
+            return;
+          }
+        }
+        if (isMinor && current && guardianName) {
+          if (!guardianPhone || !guardianRelationship) {
+            setError('Informe telefone e parentesco do responsável.');
+            return;
+          }
+          if (guardianCpf && !/^\d{11}$/.test(guardianCpf)) {
+            setError('CPF do responsável deve ter 11 dígitos.');
+            return;
+          }
+        }
         const parsed = validate(patientSchema, {
           fullName: data.get('fullName'),
           preferredName: optional(data.get('preferredName')),
@@ -241,7 +274,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           email: optional(data.get('email')),
           primaryPhone: data.get('primaryPhone'),
           secondaryPhone: optional(data.get('secondaryPhone')),
-          isMinor: data.get('isMinor') === 'on',
+          isMinor,
           status: optional(data.get('status')) as 'ACTIVE' | 'INACTIVE' | undefined,
           postalCode: optional(data.get('postalCode')),
           street: optional(data.get('street')),
@@ -253,7 +286,23 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           country: optional(data.get('country')) ?? 'Brasil',
         });
         if (!parsed) return;
-        void run(() => current ? api.put(`/patients/${current.id}`, parsed) : api.post('/patients', { ...parsed, clinicId }), current ? 'Paciente atualizado.' : 'Paciente criado.', event.currentTarget);
+        void run(async () => {
+          const saved = current
+            ? await api.put<Item>(`/patients/${current.id}`, parsed)
+            : await api.post<Item>('/patients', { ...parsed, clinicId });
+          const patientId = String(saved.id ?? current?.id ?? '');
+          if (isMinor && guardianName && guardianPhone && guardianRelationship && patientId) {
+            await api.post(`/patients/${patientId}/guardians`, {
+              name: guardianName,
+              phone: guardianPhone,
+              relationship: guardianRelationship,
+              cpf: guardianCpf,
+              isLegalGuardian: guardianIsLegal,
+              canSign: true,
+              isPrimary: true,
+            });
+          }
+        }, current ? 'Paciente atualizado.' : 'Paciente criado.', event.currentTarget);
       }}>
         <Disclosure title="Dados pessoais" description="Identificação do paciente">
           <label>Nome completo<input name="fullName" defaultValue={String(current?.fullName ?? '')} required /></label>
@@ -288,9 +337,37 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             </select>
           </label>
         </Disclosure>
-        <Disclosure title="Responsável" description="Somente quando aplicável">
-          <label className="check-field"><input name="isMinor" type="checkbox" defaultChecked={Boolean(current?.isMinor)} /> Paciente menor de idade</label>
-          <p className="muted-note span-2">Ao marcar menor de idade, vincule o responsável no prontuário — os dados do responsável não misturam com os do paciente.</p>
+        <Disclosure title="Responsável" description="Obrigatório para menor de idade — dados separados do paciente">
+          <label className="check-field span-2">
+            <input
+              name="isMinor"
+              type="checkbox"
+              checked={patientIsMinor}
+              onChange={(event) => setPatientIsMinor(event.target.checked)}
+            />
+            Paciente menor de idade
+          </label>
+          {patientIsMinor ? (
+            <>
+              {current ? (
+                <p className="muted-note span-2">
+                  Responsáveis já vinculados ficam no prontuário. Preencha abaixo para adicionar outro; os dados não misturam com o cadastro do paciente.
+                </p>
+              ) : (
+                <p className="muted-note span-2">Informe o responsável legal. Os dados ficam no cadastro de guardiões, não no paciente.</p>
+              )}
+              <label>Nome do responsável<input name="guardianName" minLength={2} required={!current} placeholder="Nome completo" /></label>
+              <label>Telefone<input name="guardianPhone" minLength={10} required={!current} /></label>
+              <label>Parentesco<input name="guardianRelationship" minLength={2} required={!current} placeholder="Mãe, pai, tutor…" /></label>
+              <label>CPF<input name="guardianCpf" inputMode="numeric" maxLength={11} placeholder="11 dígitos" /></label>
+              <label className="check-field span-2">
+                <input name="guardianIsLegalGuardian" type="checkbox" defaultChecked />
+                Responsável legal
+              </label>
+            </>
+          ) : (
+            <p className="muted-note span-2">Marque se o paciente for menor de idade para cadastrar o responsável neste mesmo formulário.</p>
+          )}
         </Disclosure>
         <button className="button primary" disabled={busy}>{current ? 'Salvar alterações' : 'Criar paciente'}</button>
       </form>

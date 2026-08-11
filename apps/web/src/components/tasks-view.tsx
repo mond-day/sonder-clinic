@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
 import { initials, list, nested, text, type RecordValue } from '@/lib/format';
@@ -384,8 +384,11 @@ export function TasksView() {
                           </label>
                           <button
                             type="button"
-                            className="button small"
+                            className="icon-button"
+                            title="Remover item"
+                            aria-label="Remover item da checklist"
                             onClick={() => {
+                              if (!window.confirm('Remover este item da checklist?')) return;
                               void (async () => {
                                 try {
                                   await api.delete(`/tasks/${String(selectedTask.id)}/checklist/${String(item.id)}`);
@@ -399,7 +402,7 @@ export function TasksView() {
                               })();
                             }}
                           >
-                            Remover
+                            <X size={14} />
                           </button>
                         </div>
                       ))}
@@ -478,8 +481,11 @@ export function TasksView() {
                           <span>{text(nested(row, 'user').name, String(row.userId))}</span>
                           <button
                             type="button"
-                            className="button small"
+                            className="icon-button"
+                            title="Remover participante"
+                            aria-label={`Remover ${text(nested(row, 'user').name, 'participante')}`}
                             onClick={() => {
+                              if (!window.confirm('Remover este participante?')) return;
                               void (async () => {
                                 try {
                                   const next = await api.delete<RecordValue>(
@@ -493,7 +499,7 @@ export function TasksView() {
                               })();
                             }}
                           >
-                            Remover
+                            <X size={14} />
                           </button>
                         </div>
                       ))}
@@ -630,22 +636,27 @@ export function TasksView() {
                                 {isAuthor ? (
                                   <button
                                     type="button"
-                                    className="button small"
+                                    className="icon-button"
                                     disabled={busy}
+                                    title="Editar comentário"
+                                    aria-label="Editar comentário"
                                     onClick={() => {
                                       setEditingCommentId(commentId);
                                       setEditingCommentDraft(text(row.content, ''));
                                       setInlineForm(null);
                                     }}
                                   >
-                                    Editar
+                                    <Pencil size={14} />
                                   </button>
                                 ) : null}
                                 <button
                                   type="button"
-                                  className="button small"
+                                  className="icon-button"
                                   disabled={busy}
+                                  title="Excluir comentário"
+                                  aria-label="Excluir comentário"
                                   onClick={() => {
+                                    if (!window.confirm('Excluir este comentário?')) return;
                                     void (async () => {
                                       setBusy(true);
                                       try {
@@ -666,7 +677,7 @@ export function TasksView() {
                                     })();
                                   }}
                                 >
-                                  Excluir
+                                  <Trash2 size={14} />
                                 </button>
                               </div>
                             ) : null}
@@ -719,8 +730,11 @@ export function TasksView() {
                           <span>{text(nested(row, 'file').originalName, 'Arquivo')}</span>
                           <button
                             type="button"
-                            className="button small"
+                            className="icon-button"
+                            title="Remover anexo"
+                            aria-label="Remover anexo"
                             onClick={() => {
+                              if (!window.confirm('Remover este anexo?')) return;
                               void (async () => {
                                 try {
                                   const next = await api.delete<RecordValue>(
@@ -734,7 +748,7 @@ export function TasksView() {
                               })();
                             }}
                           >
-                            Remover
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       ))}

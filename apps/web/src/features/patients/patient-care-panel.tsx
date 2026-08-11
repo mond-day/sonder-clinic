@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useMemo, useState } from 'react';
+import { BellPlus, Link2Off, Plus, Settings2, UserMinus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, StatusBadge } from '@/components/ui';
@@ -42,11 +43,14 @@ export function PatientCarePanel({
     setBusy(true);
     setError('');
     try {
+      const cpf = String(data.get('cpf') || '').trim();
       await api.post(`/patients/${patientId}/guardians`, {
         name: String(data.get('name') || '').trim(),
         phone: String(data.get('phone') || '').trim(),
         relationship: String(data.get('relationship') || '').trim(),
+        cpf: cpf || undefined,
         email: String(data.get('email') || '').trim() || undefined,
+        isLegalGuardian: data.get('isLegalGuardian') === 'on',
         isPrimary: data.get('isPrimary') === 'on',
         canSign: data.get('canSign') === 'on',
       });
@@ -90,6 +94,7 @@ export function PatientCarePanel({
   }
 
   async function deactivateAlert(alertId: string) {
+    if (!window.confirm('Inativar este alerta clínico?')) return;
     try {
       await api.patch(`/patients/${patientId}/alerts/${alertId}`, { active: false });
       onChanged();
@@ -129,21 +134,40 @@ export function PatientCarePanel({
             <strong>Responsáveis / guardiões</strong>
             <span>{guardians.length ? `${guardians.length} vinculado(s)` : 'Nenhum responsável cadastrado'}</span>
           </div>
-          <button className="button small primary" type="button" onClick={() => setModal('guardian')}>Adicionar</button>
+          <button
+            className="icon-button"
+            type="button"
+            title="Adicionar responsável"
+            aria-label="Adicionar responsável"
+            onClick={() => setModal('guardian')}
+          >
+            <Plus size={16} />
+          </button>
         </div>
         {guardians.map((row) => {
           const guardian = (row.guardian && typeof row.guardian === 'object' ? row.guardian : row) as RecordValue;
           return (
             <div className="settings-row" key={`${String(row.guardianId ?? guardian.id)}`}>
               <div>
-                <strong>{text(guardian.name)}{row.isPrimary ? ' · principal' : ''}</strong>
+                <strong>
+                  {text(guardian.name)}
+                  {row.isPrimary ? ' · principal' : ''}
+                  {row.isLegalGuardian ? ' · responsável legal' : ''}
+                </strong>
                 <span>
                   {text(guardian.relationship)} · {text(guardian.phone)}
+                  {guardian.cpf ? ` · CPF ${text(guardian.cpf)}` : ''}
                   {row.canSign ? ' · pode assinar' : ''}
                 </span>
               </div>
-              <button className="button small" type="button" onClick={() => void unlinkGuardian(String(row.guardianId ?? guardian.id))}>
-                Desvincular
+              <button
+                className="icon-button"
+                type="button"
+                title="Desvincular responsável"
+                aria-label={`Desvincular ${text(guardian.name)}`}
+                onClick={() => void unlinkGuardian(String(row.guardianId ?? guardian.id))}
+              >
+                <Link2Off size={16} />
               </button>
             </div>
           );
@@ -153,7 +177,15 @@ export function PatientCarePanel({
             <strong>Alertas clínicos</strong>
             <span>CRUD com inativação (sem exclusão física)</span>
           </div>
-          <button className="button small primary" type="button" onClick={() => setModal('alert')}>Novo alerta</button>
+          <button
+            className="icon-button"
+            type="button"
+            title="Novo alerta"
+            aria-label="Novo alerta clínico"
+            onClick={() => setModal('alert')}
+          >
+            <BellPlus size={16} />
+          </button>
         </div>
         {alerts.length === 0 ? <EmptyState title="Sem alertas cadastrados" /> : null}
         {alerts.map((alert) => (
@@ -167,7 +199,15 @@ export function PatientCarePanel({
                 {alert.active ? presentationLabel(alert.severity) : 'Inativo'}
               </StatusBadge>
               {alert.active ? (
-                <button className="button small" type="button" onClick={() => void deactivateAlert(String(alert.id))}>Inativar</button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Inativar alerta"
+                  aria-label={`Inativar alerta ${text(alert.type)}`}
+                  onClick={() => void deactivateAlert(String(alert.id))}
+                >
+                  <UserMinus size={16} />
+                </button>
               ) : null}
             </div>
           </div>
@@ -178,11 +218,13 @@ export function PatientCarePanel({
             <span>Preferências por canal/categoria</span>
           </div>
           <button
-            className="button small"
+            className="icon-button"
             type="button"
+            title="Gerenciar preferências"
+            aria-label="Gerenciar preferências de comunicação"
             onClick={() => { void ensurePrefs(); setModal('pref'); }}
           >
-            Gerenciar
+            <Settings2 size={16} />
           </button>
         </div>
         {(prefsLoaded ? prefs : preferences).map((pref) => (
@@ -201,7 +243,9 @@ export function PatientCarePanel({
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label>Telefone<input name="phone" minLength={10} required /></label>
           <label>Parentesco<input name="relationship" minLength={2} required placeholder="Mãe" /></label>
+          <label>CPF<input name="cpf" inputMode="numeric" maxLength={11} placeholder="11 dígitos" /></label>
           <label className="span-2">E-mail<input name="email" type="email" /></label>
+          <label><input name="isLegalGuardian" type="checkbox" defaultChecked /> Responsável legal</label>
           <label><input name="isPrimary" type="checkbox" /> Principal</label>
           <label><input name="canSign" type="checkbox" defaultChecked /> Pode assinar</label>
           <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>

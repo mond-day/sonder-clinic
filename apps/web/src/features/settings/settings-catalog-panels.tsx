@@ -547,7 +547,7 @@ export function OutboxDeadLetterPanel() {
   }
 
   async function discard(id: string) {
-    if (!window.confirm('Descartar permanentemente este evento dead-letter?')) return;
+    if (!window.confirm('Descartar permanentemente este evento da fila de falhas?')) return;
     setBusyId(id);
     try {
       await api.post(`/settings/outbox/dead-letter/${id}/discard`);
@@ -561,14 +561,23 @@ export function OutboxDeadLetterPanel() {
 
   return (
     <div className="form-section" style={{ padding: '0 14px 14px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <h3 style={{ margin: 0 }}>Outbox dead-letter</h3>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Fila de falhas assíncronas</h3>
+          <p className="muted-note" style={{ margin: '6px 0 0' }}>
+            Eventos do outbox que esgotaram tentativas de processamento (integrações, mensagens, jobs em background).
+            Não se trata de retornos clínicos vencidos — é a fila técnica de reprocessamento.
+          </p>
+        </div>
         <button className="button small" type="button" onClick={load} disabled={loading}>Atualizar</button>
       </header>
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
       {loading ? <div className="state-message">Carregando…</div> : null}
       {!loading && rows.length === 0 ? (
-        <EmptyState title="Fila limpa" description="Nenhum evento em dead-letter no momento." />
+        <EmptyState
+          title="Nenhuma falha pendente"
+          description="Quando um job assíncrono falhar após várias tentativas, ele aparece aqui para reprocessar ou descartar."
+        />
       ) : (
         <div className="settings-list">
           {rows.map((row) => (
@@ -576,7 +585,7 @@ export function OutboxDeadLetterPanel() {
               <div>
                 <strong>{text(row.eventType)}</strong>
                 <span>
-                  tentativas {text(row.attempts)} · DLQ {dateOnly(row.deadLetterAt)}
+                  {text(row.attempts)} tentativa(s) · falhou em {dateOnly(row.deadLetterAt)}
                   {row.lastError ? ` · ${text(row.lastError).slice(0, 120)}` : ''}
                 </span>
               </div>

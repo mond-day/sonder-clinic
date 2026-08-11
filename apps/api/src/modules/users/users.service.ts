@@ -353,9 +353,22 @@ export class UsersService {
     });
   }
 
-  async createRole(organizationId: string, input: { name: string; code: string; permissionCodes?: string[] }) {
+  async createRole(organizationId: string, input: { name: string; code?: string; permissionCodes?: string[] }) {
+    const slug = (input.code?.trim() || input.name)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 40) || 'ROLE';
+    let code = slug;
+    let suffix = 1;
+    while (await prisma.role.findFirst({ where: { organizationId, code } })) {
+      suffix += 1;
+      code = `${slug}_${suffix}`.slice(0, 48);
+    }
     const role = await prisma.role.create({
-      data: { organizationId, name: input.name, code: input.code.toUpperCase() },
+      data: { organizationId, name: input.name, code },
     });
     if (input.permissionCodes?.length) {
       await this.setRolePermissions(organizationId, role.id, input.permissionCodes);
@@ -373,12 +386,16 @@ export class UsersService {
   }
 
   async updateRole(organizationId: string, id: string, input: { name?: string; permissionCodes?: string[] }) {
-    await this.getRole(organizationId, id);
+    const role = await this.getRole(organizationId, id);
+    if (String(role.code).toUpperCase() === 'ADMIN' && input.permissionCodes) {
+      // Admin sempre mantém o conjunto completo de permissões do catálogo.
+      const all = await prisma.permission.findMany({ select: { code: true } });
+      await this.setRolePermissions(organizationId, id, all.map((item) => item.code));
+    } else if (input.permissionCodes) {
+      await this.setRolePermissions(organizationId, id, input.permissionCodes);
+    }
     if (input.name) {
       await prisma.role.update({ where: { id }, data: { name: input.name } });
-    }
-    if (input.permissionCodes) {
-      await this.setRolePermissions(organizationId, id, input.permissionCodes);
     }
     return this.getRole(organizationId, id);
   }

@@ -248,6 +248,11 @@ export function DocumentPreview({
               <div className="paper-meta">
                 <span>{presentationLabel(document.template?.type)}</span>
                 <span>Cód. {text(document.validationCode)}</span>
+                {document.validationCode ? (
+                  <a href={`/validar/documento?codigo=${encodeURIComponent(String(document.validationCode))}`} target="_blank" rel="noreferrer">
+                    Validar autenticidade
+                  </a>
+                ) : null}
               </div>
             </header>
             <h2>{title}</h2>

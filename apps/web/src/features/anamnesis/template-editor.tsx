@@ -492,7 +492,7 @@ export function AnamnesisTemplateEditor() {
       </Modal>
       <Panel
         title="Modelos de anamnese"
-        description="Editor visual com seções, perguntas, regras de visibilidade/alerta/risco, reordenação e publicação."
+        description="Lista de modelos. Abra o editor em modal para criar ou revisar seções, perguntas e regras."
         actions={(
           <>
             <button type="button" className="button primary small" disabled={busy} onClick={() => setCreateOpen(true)}>
@@ -523,8 +523,7 @@ export function AnamnesisTemplateEditor() {
             </select>
           </label>
         </div>
-        <div className="anamnesis-editor-layout">
-          <aside className="anamnesis-template-list">
+        <div className="anamnesis-template-list anamnesis-template-list-only">
             {loading ? <div className="state-message">Carregando modelos…</div> : null}
             {!loading && filteredTemplates.length === 0 ? <EmptyState title="Nenhum modelo" description="Ajuste os filtros ou crie um rascunho." /> : null}
             <div className="template-stack">
@@ -554,8 +553,8 @@ export function AnamnesisTemplateEditor() {
                     <button
                       type="button"
                       className="icon-button"
-                      title="Visualizar"
-                      aria-label={`Visualizar ${text(template.name)}`}
+                      title="Abrir editor"
+                      aria-label={`Abrir ${text(template.name)}`}
                       onClick={() => selectTemplate(template)}
                     >
                       <Eye size={14} />
@@ -586,7 +585,7 @@ export function AnamnesisTemplateEditor() {
                             type="button"
                             role="menuitem"
                             disabled={busy}
-                            onClick={() => void runTemplateAction(template.id, 'duplicate', 'Cópia criada.')}
+                            onClick={() => { setMenuOpenId(null); void runTemplateAction(template.id, 'duplicate', 'Cópia criada.'); }}
                           >
                             Duplicar
                           </button>
@@ -595,15 +594,31 @@ export function AnamnesisTemplateEditor() {
                               type="button"
                               role="menuitem"
                               disabled={busy}
-                              onClick={() => void runTemplateAction(template.id, 'archive', 'Modelo arquivado.')}
+                              onClick={() => { setMenuOpenId(null); void runTemplateAction(template.id, 'archive', 'Modelo arquivado.'); }}
                             >
                               Arquivar
                             </button>
-                          ) : (
-                            <button type="button" role="menuitem" disabled>
-                              Inativo
+                          ) : null}
+                          {template.status === 'DRAFT' ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              disabled={busy}
+                              onClick={() => { setMenuOpenId(null); void runAction(`/anamnesis/templates/${template.id}/publish`, 'Modelo publicado.'); }}
+                            >
+                              Publicar
                             </button>
-                          )}
+                          ) : null}
+                          {template.status === 'PUBLISHED' ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              disabled={busy}
+                              onClick={() => { setMenuOpenId(null); void runAction(`/anamnesis/templates/${template.id}/new-version`, 'Nova versão rascunho criada.'); }}
+                            >
+                              Nova versão
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -611,8 +626,16 @@ export function AnamnesisTemplateEditor() {
                 </article>
               ))}
             </div>
-          </aside>
+        </div>
+      </Panel>
 
+      <Modal
+        open={Boolean(draft)}
+        title={draft ? text(draft.name) : 'Editor de modelo'}
+        description={draft ? `${presentationLabel(draft.status)} · v${draft.version}` : undefined}
+        onClose={() => { setDraft(null); setSelectedId(null); setPreviewMode(false); }}
+        size="xlarge"
+      >
           <div className="anamnesis-workspace editor-mode">
             {!draft ? (
               <EmptyState title="Selecione um modelo" description="Edite rascunhos ou crie nova versão a partir de publicados." />
@@ -1189,8 +1212,7 @@ export function AnamnesisTemplateEditor() {
               </>
             )}
           </div>
-        </div>
-      </Panel>
+      </Modal>
     </div>
   );
 }

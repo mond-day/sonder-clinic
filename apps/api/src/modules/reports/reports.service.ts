@@ -31,6 +31,74 @@ export const REPORT_CATALOG = [
   { id: 'clinical-entries', name: 'Evoluções clínicas', domain: 'clinical', permission: 'report.view_clinical' },
 ] as const;
 
+const REPORT_COLUMN_LABELS: Record<string, string> = {
+  professional: 'Profissional',
+  sessions: 'Sessões',
+  clinicalProduction: 'Produção clínica',
+  averagePerSession: 'Média por sessão',
+  procedure: 'Procedimento',
+  procedureName: 'Procedimento',
+  code: 'Código',
+  total: 'Total',
+  netReceipt: 'Recebimento líquido',
+  share: 'Participação',
+  patient: 'Paciente',
+  fullName: 'Paciente',
+  primaryPhone: 'Telefone',
+  createdAt: 'Cadastro',
+  status: 'Status',
+  description: 'Descrição',
+  dueDate: 'Vencimento',
+  netAmount: 'Valor',
+  paidAmount: 'Recebido',
+  outstandingAmount: 'Saldo',
+  effectiveStatus: 'Status',
+  date: 'Data',
+  occurredAt: 'Data',
+  type: 'Tipo',
+  amount: 'Valor',
+  balance: 'Saldo acumulado',
+  count: 'Quantidade',
+  startAt: 'Início',
+  endAt: 'Término',
+  category: 'Categoria',
+  title: 'Título',
+  method: 'Forma de pagamento',
+  paidAt: 'Pago em',
+  clinicalDate: 'Data clínica',
+  toothFdi: 'Elemento',
+  generatedAt: 'Gerado em',
+  laboratoryName: 'Laboratório',
+  daysOverdue: 'Dias em atraso',
+  overdueAmount: 'Valor em atraso',
+  templateName: 'Modelo',
+  templateType: 'Tipo de documento',
+  dueAt: 'Prazo',
+  cost: 'Custo',
+  basisAmount: 'Base de cálculo',
+  commissionAmount: 'Comissão',
+};
+
+const HIDDEN_EXPORT_KEYS = new Set([
+  'id', 'organizationId', 'clinicId', 'patientId', 'professionalId', 'procedureId',
+  'treatmentId', 'treatmentPlanId', 'receivableId', 'paymentId', 'actorId', 'userId',
+  'correlationId', 'idempotencyKey', 'sourceResponseId', 'supersededById', 'version',
+]);
+
+function localizeExportRows(rows: Array<Record<string, unknown>>) {
+  return rows.map((row) => {
+    const next: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (HIDDEN_EXPORT_KEYS.has(key) || key.endsWith('Id')) continue;
+      const label = REPORT_COLUMN_LABELS[key]
+        ?? key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+      if (label in next && next[label] != null) continue;
+      next[label] = value;
+    }
+    return next;
+  });
+}
+
 type Period = { from: Date; to: Date };
 
 function parsePeriod(from?: string, to?: string): Period {
@@ -621,16 +689,18 @@ export class ReportsService {
 
     const format = query.format ?? 'json';
     if (format === 'csv') {
+      const localized = localizeExportRows(rows);
       return {
         format: 'csv',
         filename: `${reportId}-${period.from.toISOString().slice(0, 10)}.csv`,
         contentType: 'text/csv; charset=utf-8',
-        content: toCsv(rows),
+        content: toCsv(localized),
         meta,
       };
     }
     if (format === 'xlsx') {
-      const content = await toXlsx(rows, reportId);
+      const localized = localizeExportRows(rows);
+      const content = await toXlsx(localized, reportId);
       return {
         format: 'xlsx',
         filename: `${reportId}-${period.from.toISOString().slice(0, 10)}.xlsx`,
@@ -641,15 +711,16 @@ export class ReportsService {
     }
     if (format === 'pdf') {
       const catalogItem = REPORT_CATALOG.find((item) => item.id === reportId);
+      const localized = localizeExportRows(rows);
       const pdf = await buildReportPdf({
         title: catalogItem?.name ?? reportId,
-        subtitle: 'Sonder Clinic · exportação gráfica',
+        subtitle: 'Sonder Clinic · exportação',
         meta: [
-          ['Relatório', reportId],
-          ['Período', `${period.from.toISOString().slice(0, 10)} — ${period.to.toISOString().slice(0, 10)}`],
+          ['Relatório', catalogItem?.name ?? reportId],
+          ['Período', `${period.from.toLocaleDateString('pt-BR')} — ${period.to.toLocaleDateString('pt-BR')}`],
           ['Registros', String(rows.length)],
         ],
-        rows,
+        rows: localized,
         footerNote: 'Gerado automaticamente. Layout tabular A4 para impressão e arquivo.',
       });
       return {

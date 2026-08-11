@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { RefreshCw, SlidersHorizontal, UserRound } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import {
   currency,
@@ -479,7 +479,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   return !value;
                 })}
               >
-                <SlidersHorizontal size={14} />Filtros avançados
+                <SlidersHorizontal size={14} />Filtros
               </button>
             }
           >
@@ -566,7 +566,15 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                         <td><StatusBadge tone={statusTone(item.effectiveStatus ?? item.status)}>{presentationLabel(item.effectiveStatus ?? item.status)}</StatusBadge></td>
                         <td className="row-actions">
                           {item.patientId ? (
-                            <Link className="button small" onClick={(event) => event.stopPropagation()} href={`/pacientes/${String(item.patientId)}?tab=financeiro`}>Paciente</Link>
+                            <Link
+                              className="icon-button"
+                              onClick={(event) => event.stopPropagation()}
+                              href={`/pacientes/${String(item.patientId)}?tab=financeiro`}
+                              title="Paciente"
+                              aria-label="Abrir ficha do paciente"
+                            >
+                              <UserRound size={16} />
+                            </Link>
                           ) : null}
                         </td>
                       </tr>
@@ -623,13 +631,13 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
           </Modal>
           <Panel
             title="Comissões e repasses"
-            description="Métricas, regras versionadas (CommissionRule) e eventos gerados (CommissionEvent)."
+            description="Acompanhe regras vigentes, períodos de fechamento e valores gerados a partir dos recebimentos."
             actions={canConfigureCommission ? (
               <button className="button primary small" type="button" onClick={() => setRuleOpen(true)}>Nova regra</button>
             ) : undefined}
           >
             {!canCommission ? (
-              <div className="state-message error" role="alert">Sem permissão commission.view_all.</div>
+              <div className="state-message error" role="alert">Sem permissão para visualizar comissões.</div>
             ) : (
               <div className="commission-layout">
                 <section className="stats">
@@ -639,11 +647,11 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                     value={averagePercent == null ? '—' : `${averagePercent.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`}
                     meta="Regras percentuais"
                   />
-                  <MetricCard label="Eventos no período" value={commissionEvents.length} meta="Competência atual" />
+                  <MetricCard label="Lançamentos no período" value={commissionEvents.length} meta="Competência atual" />
                 </section>
 
                 <div className="dashboard-grid">
-                  <Panel title="Competências" description="Feche o mês para liberar repasses">
+                  <Panel title="Competências" description="Feche o mês para liberar os repasses">
                     {canCloseCommission ? (
                       <div className="heading-actions" style={{ margin: '0 0 10px' }}>
                         <button className="button small" type="button" onClick={() => void ensureOpenPeriod()}>
@@ -652,7 +660,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                       </div>
                     ) : null}
                     {commissionPeriods.length === 0 ? (
-                      <EmptyState title="Nenhuma competência" description="Eventos de pagamento abrem a competência automaticamente." />
+                      <EmptyState title="Nenhuma competência" description="Ao confirmar pagamentos com regra ativa, a competência do mês é aberta automaticamente." />
                     ) : (
                       <div className="table-wrap">
                         <table className="data-table">
@@ -660,7 +668,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                             <tr>
                               <th>Mês</th>
                               <th>Status</th>
-                              <th>Eventos</th>
+                              <th>Lançamentos</th>
                               <th></th>
                             </tr>
                           </thead>
@@ -690,7 +698,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                     )}
                   </Panel>
 
-                  <Panel title="Regras" description="CRUD via create / deactivate (revise na API)">
+                  <Panel title="Regras vigentes" description="Defina base (produção/recebimento), percentual ou valor fixo">
                     {rules.length === 0 ? (
                       <EmptyState title="Nenhuma regra" description="Cadastre regras de comissão para começar a calcular repasses." />
                     ) : (
@@ -733,11 +741,11 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   </Panel>
                 </div>
 
-                <Panel title="Eventos gerados" description="CommissionEvent — nascem de pagamentos confirmados">
+                <Panel title="Lançamentos de comissão" description="Gerados automaticamente quando um pagamento confirmado encontra regra ativa">
                   {commissionEvents.length === 0 ? (
                     <EmptyState
-                      title="Nenhum evento de comissão"
-                      description="Eventos nascem ao confirmar pagamento de recebível vinculado a tratamento com profissional e regra ativa."
+                      title="Nenhum lançamento"
+                      description="Confirme pagamentos de títulos vinculados a tratamento com profissional e regra ativa."
                     />
                   ) : (
                     <div className="table-wrap">
@@ -745,7 +753,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                         <thead>
                           <tr>
                             <th>Data</th>
-                            <th>Base</th>
+                            <th>Base de cálculo</th>
                             <th>Comissão</th>
                             <th>Status</th>
                           </tr>
@@ -984,7 +992,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   aria-expanded={recurrenceFiltersOpen}
                   onClick={() => setRecurrenceFiltersOpen((value) => !value)}
                 >
-                  <SlidersHorizontal size={14} />Filtros avançados
+                  <SlidersHorizontal size={14} />Filtros
                 </button>
                 {canFinanceCreate ? (
                   <button className="button primary small" type="button" onClick={() => setRecurrenceOpen(true)}>
@@ -1076,9 +1084,9 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
         </>
       )}
       {tab === 'cashflow' && (
-        <Panel title="Fluxo de caixa" description="Entradas, saídas, saldo e série diária do período.">
+        <Panel title="Fluxo de caixa" description="Entradas, saídas e saldo do período selecionado.">
           {!canFinance ? (
-            <div className="state-message error" role="alert">Sem permissão financial.view.</div>
+            <div className="state-message error" role="alert">Sem permissão para visualizar o financeiro.</div>
           ) : (
             <>
               <div className="chip-row" role="group" aria-label="Período do fluxo">
@@ -1100,7 +1108,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
               </div>
               {loading ? <div className="state-message">Carregando…</div> : null}
               {!loading && !cashflow ? (
-                <EmptyState title="Sem dados de fluxo" description="O endpoint /cashflow não retornou agregados para o período." />
+                <EmptyState title="Sem dados de fluxo" description="Não há lançamentos agregados para o período." />
               ) : null}
               {cashflow ? (
                 <>

@@ -23,7 +23,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const isPublic =
       pathname === '/login'
       || pathname.startsWith('/legal/')
-      || pathname.startsWith('/assinar/');
+      || pathname.startsWith('/assinar/')
+      || pathname.startsWith('/validar/');
     if (isPublic) {
       setLoading(false);
       return;

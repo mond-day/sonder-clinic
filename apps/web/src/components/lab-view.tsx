@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, CheckCircle2, FlaskConical, Plus, RefreshCw, Truck } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ExternalLink, FlaskConical, Plus, RefreshCw, Truck } from 'lucide-react';
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
 import { currency, dateOnly, list, nested, text, type RecordValue } from '@/lib/format';
@@ -300,10 +300,14 @@ export function LabView() {
                       <div className="lab-card-foot">
                         {patient.id ? (
                           <button
-                            className="button small"
+                            className="icon-button"
                             type="button"
+                            title="Ver ficha"
+                            aria-label={`Ver ficha de ${text(patient.fullName, 'paciente')}`}
                             onClick={() => router.push(`/pacientes/${String(patient.id)}`)}
-                          >Ver ficha</button>
+                          >
+                            <ExternalLink size={16} />
+                          </button>
                         ) : null}
                         {next && (
                           <button

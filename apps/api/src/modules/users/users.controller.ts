@@ -24,7 +24,7 @@ class InviteDto {
 }
 class RoleDto {
   @IsString() @MinLength(2) name!: string;
-  @IsString() @MinLength(2) code!: string;
+  @IsOptional() @IsString() @MinLength(2) code?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) permissionCodes?: string[];
 }
 class UpdateRoleDto {

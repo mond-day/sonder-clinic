@@ -1958,3 +1958,67 @@ button { cursor: pointer; }
   .anamnesis-workspace.filling .anamnesis-grid { grid-template-columns: 1fr; }
   .anamnesis-workspace.filling .risk-panel { order: 3; }
 }
+
+/* Switches da matriz de permissões */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch-track {
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: #d7e0de;
+  border: 1px solid var(--line);
+  transition: background .15s ease, border-color .15s ease;
+  position: relative;
+}
+.switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 40, 36, .2);
+  transition: transform .15s ease;
+}
+.switch input:checked + .switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch input:checked + .switch-track::after {
+  transform: translateX(16px);
+}
+.switch input:disabled + .switch-track {
+  opacity: .55;
+  cursor: not-allowed;
+}
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.permission-switch-table td {
+  vertical-align: middle;
+}
+.anamnesis-template-list-only .template-stack {
+  display: grid;
+  gap: 10px;
+}
+.checkbox-grid {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}

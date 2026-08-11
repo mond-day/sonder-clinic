@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import { FilePenLine, Pencil, PenLine, Trash2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { dateTime, list, nested, presentationLabel, statusTone, text, type RecordValue } from '@/lib/format';
 import { Modal } from '@/components/modal';
@@ -219,11 +220,36 @@ export function ClinicalEntryDetailModal({
           <div className="heading-actions" style={{ marginTop: 16 }}>
             {isDraft && mode === 'view' ? (
               <>
-                <button type="button" className="button soft" disabled={busy} onClick={() => setMode('edit')}>Editar</button>
-                <button type="button" className="button primary" disabled={busy} onClick={() => void signDraft()}>Assinar</button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  disabled={busy}
+                  title="Editar"
+                  aria-label="Editar rascunho"
+                  onClick={() => setMode('edit')}
+                >
+                  <Pencil size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  disabled={busy}
+                  title="Assinar"
+                  aria-label="Assinar evolução"
+                  onClick={() => void signDraft()}
+                >
+                  <PenLine size={16} />
+                </button>
                 {!confirmDelete ? (
-                  <button type="button" className="button danger soft" disabled={busy} onClick={() => setConfirmDelete(true)}>
-                    Excluir rascunho
+                  <button
+                    type="button"
+                    className="icon-button"
+                    disabled={busy}
+                    title="Excluir rascunho"
+                    aria-label="Excluir rascunho"
+                    onClick={() => setConfirmDelete(true)}
+                  >
+                    <Trash2 size={16} />
                   </button>
                 ) : (
                   <>
@@ -236,8 +262,15 @@ export function ClinicalEntryDetailModal({
               </>
             ) : null}
             {isSigned && mode === 'view' ? (
-              <button type="button" className="button soft" disabled={busy} onClick={() => setMode('correct')}>
-                Adicionar correção / adendo
+              <button
+                type="button"
+                className="icon-button"
+                disabled={busy}
+                title="Adicionar correção / adendo"
+                aria-label="Adicionar correção ou adendo"
+                onClick={() => setMode('correct')}
+              >
+                <FilePenLine size={16} />
               </button>
             ) : null}
           </div>
