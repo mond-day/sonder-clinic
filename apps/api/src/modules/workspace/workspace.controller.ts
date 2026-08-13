@@ -459,4 +459,10 @@ export class WorkspaceController {
   updateAutomationRule(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateAutomationRuleDto) {
     return this.workspace.updateAutomationRule(req.auth.organizationId, id, body);
   }
+
+  @Delete('automation-rules/:id')
+  @RequirePermissions('return_alert.manage')
+  deleteAutomationRule(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.workspace.deleteAutomationRule(req.auth.organizationId, id);
+  }
 }

@@ -7,7 +7,7 @@ const money = z
 
 export const treatmentItemDraftSchema = z.object({
   procedureId: z.string().uuid('Selecione o procedimento.'),
-  professionalId: z.string().uuid('Selecione o profissional.'),
+  professionalId: z.string().uuid('Selecione o profissional.').optional(),
   toothFdi: z.string().trim().optional(),
   face: z.string().trim().optional(),
   quantity: z.coerce.number().int().min(1, 'Quantidade inválida.'),
@@ -45,6 +45,7 @@ export const sessionSchema = z.object({
 export const completeItemSchema = z.object({
   clinicalDate: z.string().min(10, 'Informe a data da conclusão.'),
   notes: z.string().trim().optional(),
+  professionalId: z.string().uuid('Selecione o profissional.').optional(),
 });
 
 export const cancelReasonSchema = z.object({

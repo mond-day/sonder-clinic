@@ -4,6 +4,7 @@ import { dateOnly, presentationLabel, statusTone, text } from '@/lib/format';
 import { EmptyState, StatusBadge } from '@/components/ui';
 import type { DocumentFolder, LibraryItem, SelectedLibraryRef } from './document-types';
 import { typeIcon } from './document-types';
+import { countItemsInFolder, itemMatchesFolder } from './document-folder-match';
 
 export function DocumentLibrary({
   folders,
@@ -24,10 +25,10 @@ export function DocumentLibrary({
   onCreateFolder: () => void;
   canManageFolders: boolean;
 }) {
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    if (item.folderId) counts.set(item.folderId, (counts.get(item.folderId) ?? 0) + 1);
-  }
+  const selectedFolder = folderId === 'all' ? null : folders.find((folder) => folder.id === folderId) ?? null;
+  const visibleItems = selectedFolder
+    ? items.filter((item) => itemMatchesFolder(item, selectedFolder))
+    : items;
 
   return (
     <div className="document-library">
@@ -50,7 +51,7 @@ export function DocumentLibrary({
           >
             <span>▱</span>
             <span>{text(folder.name)}</span>
-            <span>{counts.get(folder.id) ?? 0}</span>
+            <span>{countItemsInFolder(items, folder)}</span>
           </button>
         ))}
         {canManageFolders ? (
@@ -61,10 +62,10 @@ export function DocumentLibrary({
       </div>
 
       <div className="document-list">
-        {items.length === 0 ? (
+        {visibleItems.length === 0 ? (
           <EmptyState title="Nenhum arquivo encontrado" description="Ajuste os filtros ou gere um novo documento." />
         ) : (
-          items.map((item) => {
+          visibleItems.map((item) => {
             const active = selected?.id === item.id && selected.source === item.source;
             return (
               <button

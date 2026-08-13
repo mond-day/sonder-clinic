@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { dateOnly, dateTime, presentationLabel, statusTone, text } from '@/lib/format';
+import { printHtmlDocument } from '@/lib/print-document';
 import { EmptyState, Skeleton, StatusBadge } from '@/components/ui';
 import type {
   DocumentEvent,
@@ -21,6 +22,9 @@ function asItems(raw: unknown): PrescriptionItem[] {
 
 function bodyFromFrozen(content?: Record<string, unknown> | null): string {
   if (!content) return 'Conteúdo clínico congelado na geração.';
+  if (typeof content.renderedText === 'string' && content.renderedText.trim()) {
+    return content.renderedText;
+  }
   const parts = [
     text(content.corpo, ''),
     text(content.prescricao, ''),
@@ -53,6 +57,7 @@ export function DocumentPreview({
   onSign,
   onShare,
   onDownload,
+  onPrint,
   onRename,
   onArchive,
   onCancel,
@@ -75,6 +80,7 @@ export function DocumentPreview({
   onSign: (method: 'DRAWN' | 'A1') => void;
   onShare: () => void;
   onDownload: () => void;
+  onPrint?: () => void;
   onRename: () => void;
   onArchive: () => void;
   onCancel: () => void;
@@ -106,6 +112,25 @@ export function DocumentPreview({
         {text(selectedMeta.folderName, 'Biblioteca')} · {dateOnly(selectedMeta.date)}
       </span>
       <div className="right">
+        <button
+          type="button"
+          className="button ghost small"
+          disabled={busy}
+          onClick={() => {
+            if (onPrint) {
+              onPrint();
+              return;
+            }
+            const wrap = window.document.querySelector('.document-preview-panel .preview-wrap');
+            if (!wrap) return;
+            printHtmlDocument(
+              `<!DOCTYPE html><html><head><title>${text(selectedMeta.name)}</title><style>body{font-family:Georgia,serif;padding:24px}img,video,iframe{max-width:100%}</style></head><body>${wrap.innerHTML}</body></html>`,
+              text(selectedMeta.name),
+            );
+          }}
+        >
+          Imprimir
+        </button>
         {selectedMeta.source === 'upload' ? (
           <button type="button" className="button ghost small" disabled={busy} onClick={onRename}>
             ✎ Renomear
@@ -117,22 +142,17 @@ export function DocumentPreview({
           </button>
         ) : null}
         <button type="button" className="button ghost small" disabled={busy} onClick={onDownload}>
-          ↓ Baixar
+          Baixar
         </button>
         {selectedMeta.source === 'generated' && canSign && !['SIGNED', 'CANCELLED'].includes(status) ? (
-          <>
-            <button type="button" className="button soft small" disabled={busy} onClick={() => onSign('DRAWN')}>
-              Assinar
-            </button>
-            <button type="button" className="button primary small" disabled={busy} onClick={() => onSign('A1')}>
-              Assinar A1
-            </button>
-          </>
+          <button type="button" className="button primary small" disabled={busy} onClick={() => onSign('A1')}>
+            Assinar digitalmente
+          </button>
         ) : null}
         {selectedMeta.source === 'prescription' && canSign && status !== 'SIGNED' && status !== 'CANCELLED' ? (
-          <button type="button" className="button primary small" disabled={busy} onClick={() => onSign('A1')}>
-            Assinar RX
-          </button>
+            <button type="button" className="button primary small" disabled={busy} onClick={() => onSign('A1')}>
+              Assinar digitalmente
+            </button>
         ) : null}
         {canArchive ? (
           <button type="button" className="button danger small" disabled={busy} onClick={onArchive}>
@@ -269,7 +289,13 @@ export function DocumentPreview({
             </section>
             <div className="paper-signatures">
               <div>
-                <span>{document.status === 'SIGNED' ? 'Assinado digitalmente' : 'Assinatura do profissional'}</span>
+                <span>{
+                  document.status === 'SIGNED'
+                    ? ((document.signatures ?? []).some((row) => row.method === 'A1')
+                      ? 'Assinado com certificado digital'
+                      : 'Assinado eletronicamente')
+                    : 'Assinaturas'
+                }</span>
                 <small>{text(identity.professionalName, professionalName(document.professionalId))}</small>
               </div>
               <div>

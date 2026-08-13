@@ -5,6 +5,18 @@ import { z } from 'zod';
 import { buildClinicalDocumentPdf } from '../../common/pdf';
 import { parseWithZod } from '../../common/zod-validation';
 import { CertificateService } from '../settings/certificate.service';
+import { TreatmentContractService } from '../documents/treatment-contract.service';
+import {
+  assertContractSignatureAllowed,
+  ELECTRONIC_SIGNATURE_CONSENT_V1,
+  normalizeSignatureMethod,
+} from '../documents/document-signature-policy';
+import {
+  addCalendarMonthsUtc,
+  isTreatmentPaymentMethod,
+  resolvePaymentProfile,
+  splitInstallmentAmounts,
+} from '../documents/payment-terms';
 import {
   buildReceivableFinanceView,
   computePayableStatus,
@@ -141,10 +153,16 @@ const financeRecurrencePatchSchema = z.object({
 
 @Injectable()
 export class OperationsService {
-  constructor(private readonly certificates: CertificateService) {}
+  constructor(
+    private readonly certificates: CertificateService,
+    private readonly contracts: TreatmentContractService,
+  ) {}
 
-  procedures(organizationId: string) {
-    return prisma.procedure.findMany({ where: { organizationId, active: true }, orderBy: { name: 'asc' } });
+  procedures(organizationId: string, includeInactive = false) {
+    return prisma.procedure.findMany({
+      where: { organizationId, ...(includeInactive ? {} : { active: true }) },
+      orderBy: { name: 'asc' },
+    });
   }
 
   createProcedure(organizationId: string, input: {
@@ -278,6 +296,16 @@ export class OperationsService {
     if (!professional) throw new NotFoundException('Profissional não encontrado ou inativo.');
   }
 
+  private withItemProfessional<T extends { professionalId?: string }>(
+    items: T[],
+    planProfessionalId: string,
+  ): Array<T & { professionalId: string }> {
+    return items.map((item) => ({
+      ...item,
+      professionalId: item.professionalId || planProfessionalId,
+    }));
+  }
+
   private async assertProcedureItems(
     organizationId: string,
     items: Array<{
@@ -388,13 +416,14 @@ export class OperationsService {
   async createTreatment(organizationId: string, actorId: string | undefined, input: {
     clinicId: string; patientId: string; professionalId: string; title: string;
     discount?: string; notes?: string; validUntil?: string; items: Array<{
-      procedureId: string; professionalId: string; toothFdi?: string; face?: string;
+      procedureId: string; professionalId?: string; toothFdi?: string; face?: string;
       quantity: number; unitPrice: string; discount?: string; plannedSessions?: number; urgent?: boolean;
     }>;
   }) {
     await this.assertTreatmentScope(organizationId, input);
-    await this.assertProcedureItems(organizationId, input.items);
-    const itemValues = this.mapItemCreates(input.items);
+    const items = this.withItemProfessional(input.items, input.professionalId);
+    await this.assertProcedureItems(organizationId, items);
+    const itemValues = this.mapItemCreates(items);
     const planDiscount = money(input.discount ?? '0');
     const totals = this.recalculateTotals(itemValues, planDiscount);
     return prisma.$transaction(async (tx) => {
@@ -436,7 +465,7 @@ export class OperationsService {
     id: string,
     itemIds: string[],
     expectedVersion?: number,
-    options?: { paymentMethod?: string; dueDate?: string },
+    options?: { paymentMethod?: string; dueDate?: string; installments?: number },
   ) {
     const plan = await prisma.treatmentPlan.findFirst({ where: { id, organizationId }, include: { items: true } });
     if (!plan) throw new NotFoundException('Plano de tratamento não encontrado.');
@@ -455,10 +484,18 @@ export class OperationsService {
     if (!paymentMethod) {
       throw new BadRequestException('Informe a forma de pagamento na aprovação.');
     }
+    if (!isTreatmentPaymentMethod(paymentMethod)) {
+      throw new BadRequestException('Forma de pagamento inválida.');
+    }
+    const installments = Math.min(24, Math.max(1, Math.floor(options?.installments ?? 1)));
+    if (paymentMethod === 'CLINIC_INSTALLMENT' && installments < 2) {
+      throw new BadRequestException('Informe o número de parcelas do acordo com a clínica.');
+    }
     const dueDate = options?.dueDate
       ? new Date(`${options.dueDate}T00:00:00Z`)
       : new Date(Date.now() + 7 * 86400_000);
-    return prisma.$transaction(async (tx) => {
+    const paymentLabel = installments > 1 ? `${paymentMethod} ${installments}x` : paymentMethod;
+    const updated = await prisma.$transaction(async (tx) => {
       await tx.treatmentItem.updateMany({
         where: { id: { in: itemIds }, treatmentPlanId: id },
         data: { status: 'APPROVED', approvedAt: new Date() },
@@ -476,21 +513,33 @@ export class OperationsService {
         new Prisma.Decimal(0),
       );
       if (receivableAmount.gt(0)) {
-        await tx.receivable.create({
-          data: {
-            organizationId,
-            clinicId: plan.clinicId,
-            patientId: plan.patientId,
-            treatmentId: plan.id,
-            description: `Tratamento · ${plan.title}`,
-            originalAmount: receivableAmount,
-            discount: money('0'),
-            surcharge: money('0'),
-            netAmount: receivableAmount,
-            dueDate,
-            paymentMethod,
-          },
-        });
+        const profile = resolvePaymentProfile({ paymentMethod, installments });
+        const splitClinicInstallments = profile === 'INSTALLMENT' && installments > 1;
+        const amounts = splitClinicInstallments
+          ? splitInstallmentAmounts(receivableAmount.toString(), installments).map((value) => money(value))
+          : [receivableAmount];
+        for (let index = 0; index < amounts.length; index += 1) {
+          const amount = amounts[index]!;
+          const installmentDue = splitClinicInstallments ? addCalendarMonthsUtc(dueDate, index) : dueDate;
+          const installmentLabel = splitClinicInstallments
+            ? `${plan.title} · ${index + 1}/${amounts.length} · ${paymentLabel}`
+            : `${plan.title} · ${paymentLabel}`;
+          await tx.receivable.create({
+            data: {
+              organizationId,
+              clinicId: plan.clinicId,
+              patientId: plan.patientId,
+              treatmentId: plan.id,
+              description: `Tratamento · ${installmentLabel}`,
+              originalAmount: amount,
+              discount: money('0'),
+              surcharge: money('0'),
+              netAmount: amount,
+              dueDate: installmentDue,
+              paymentMethod,
+            },
+          });
+        }
       }
       const updated = await tx.treatmentPlan.update({
         where: { id },
@@ -501,16 +550,51 @@ export class OperationsService {
         treatmentPlanId: id,
         type: 'APPROVED',
         actorId,
-        payload: { itemIds, status: nextStatus, paymentMethod, receivableAmount: receivableAmount.toString() },
+        payload: { itemIds, status: nextStatus, paymentMethod, installments, receivableAmount: receivableAmount.toString() },
       });
       await this.auditTreatment(tx, {
         actorId,
         action: 'treatment.approve',
         entityId: id,
         clinicId: plan.clinicId,
-        changes: { itemIds, status: nextStatus, paymentMethod },
+        changes: { itemIds, status: nextStatus, paymentMethod, installments },
       });
       return updated;
+    });
+    if (updated.status === 'APPROVED') {
+      try {
+        await this.contracts.ensureTreatmentContract({
+          organizationId,
+          actorId,
+          treatmentId: id,
+          paymentMethod,
+          installments,
+          dueDate,
+        });
+      } catch {
+        // A aprovação não é desfeita. O contrato pode ser gerado pela ação "Gerar contrato".
+      }
+    }
+    return updated;
+  }
+
+  listTreatmentDocuments(organizationId: string, treatmentId: string) {
+    return this.contracts.listTreatmentDocuments(organizationId, treatmentId);
+  }
+
+  ensureTreatmentContract(
+    organizationId: string,
+    actorId: string | undefined,
+    treatmentId: string,
+    options?: { paymentMethod?: string; installments?: number; dueDate?: string },
+  ) {
+    return this.contracts.ensureTreatmentContract({
+      organizationId,
+      actorId,
+      treatmentId,
+      paymentMethod: options?.paymentMethod ?? 'OTHER',
+      installments: options?.installments,
+      dueDate: options?.dueDate ? new Date(`${options.dueDate}T00:00:00Z`) : undefined,
     });
   }
 
@@ -833,7 +917,7 @@ export class OperationsService {
   }
 
   async addTreatmentItem(organizationId: string, actorId: string | undefined, planId: string, input: {
-    procedureId: string; professionalId: string; toothFdi?: string; face?: string;
+    procedureId: string; professionalId?: string; toothFdi?: string; face?: string;
     quantity: number; unitPrice: string; discount?: string; plannedSessions?: number; urgent?: boolean;
   }, expectedVersion?: number) {
     const plan = await prisma.treatmentPlan.findFirst({ where: { id: planId, organizationId }, include: { items: true } });
@@ -844,8 +928,9 @@ export class OperationsService {
     if (expectedVersion != null && plan.version !== expectedVersion) {
       throw new ConflictException('Versão do plano desatualizada. Recarregue e tente novamente.');
     }
-    await this.assertProcedureItems(organizationId, [input]);
-    const [mapped] = this.mapItemCreates([input]);
+    const items = this.withItemProfessional([input], plan.professionalId);
+    await this.assertProcedureItems(organizationId, items);
+    const [mapped] = this.mapItemCreates(items);
     if (!mapped) throw new BadRequestException('Falha ao montar item de tratamento.');
     return prisma.$transaction(async (tx) => {
       await tx.treatmentItem.create({
@@ -1250,7 +1335,7 @@ export class OperationsService {
     organizationId: string,
     actorId: string | undefined,
     itemId: string,
-    input: { notes?: string; clinicalDate?: string } | string | undefined = {},
+    input: { notes?: string; clinicalDate?: string; professionalId?: string } | string | undefined = {},
   ) {
     const options = typeof input === 'string' ? { notes: input } : (input ?? {});
     const clinicalDate = options.clinicalDate ? new Date(options.clinicalDate) : new Date();
@@ -1261,8 +1346,8 @@ export class OperationsService {
       where: { id: itemId, plan: { organizationId } },
       include: {
         procedure: { select: { name: true } },
-        plan: { select: { id: true, clinicId: true, patientId: true, title: true, status: true, archivedAt: true } },
-        sessions: { select: { id: true, correctionOfId: true } },
+        plan: { select: { id: true, clinicId: true, patientId: true, title: true, status: true, archivedAt: true, professionalId: true } },
+        sessions: { select: { id: true, correctionOfId: true, professionalId: true } },
       },
     });
     if (!item) throw new NotFoundException('Item de tratamento não encontrado.');
@@ -1270,6 +1355,18 @@ export class OperationsService {
     if (item.status === 'COMPLETED') return item;
     if (!['APPROVED', 'IN_PROGRESS'].includes(item.status)) {
       throw new ConflictException('Somente itens aprovados ou em andamento podem ser concluídos.');
+    }
+    const lastSessionProfessional = [...item.sessions].reverse().find((session) => !session.correctionOfId)?.professionalId;
+    const actingProfessionalId = options.professionalId
+      || lastSessionProfessional
+      || item.professionalId
+      || item.plan.professionalId;
+    if (options.professionalId) {
+      const professional = await prisma.professional.findFirst({
+        where: { id: options.professionalId, user: { organizationId }, status: 'ACTIVE' },
+        select: { id: true },
+      });
+      if (!professional) throw new NotFoundException('Profissional não encontrado ou inativo.');
     }
     const notes = options.notes?.trim();
     return prisma.$transaction(async (tx) => {
@@ -1279,7 +1376,7 @@ export class OperationsService {
         const session = await tx.treatmentSession.create({
           data: {
             treatmentItemId: itemId,
-            professionalId: item.professionalId,
+            professionalId: actingProfessionalId,
             executionNotes: notes || `Procedimento concluído: ${item.procedure.name}.`,
             completedAt: clinicalDate,
           },
@@ -1305,7 +1402,7 @@ export class OperationsService {
         organizationId,
         clinicId: item.plan.clinicId,
         patientId: item.plan.patientId,
-        professionalId: item.professionalId,
+        professionalId: actingProfessionalId,
         treatmentId: item.plan.id,
         treatmentItemId: item.id,
         treatmentSessionId: sessionId,
@@ -1422,7 +1519,11 @@ export class OperationsService {
         name: input.name.trim(),
         structuredContent: json(input.structuredContent),
         allowedVariables: json(input.allowedVariables),
-        signatureRules: json(input.signatureRules ?? { requiredRoles: ['PROFESSIONAL'], minSignatures: 1 }),
+        signatureRules: json(input.signatureRules ?? (
+          type === 'CONTRACT'
+            ? { requiredRoles: ['PATIENT', 'CLINIC'], minSignatures: 2, serviceProviderSigner: 'CLINIC' }
+            : { requiredRoles: ['PROFESSIONAL'], minSignatures: 1 }
+        )),
         isSystem: input.isSystem === true,
         status: 'DRAFT',
         active: true,
@@ -1652,18 +1753,21 @@ export class OperationsService {
     });
     const content = (document.frozenContent ?? {}) as Record<string, unknown>;
     const identity = (content.identity ?? {}) as Record<string, unknown>;
+    const renderedText = typeof content.renderedText === 'string' ? content.renderedText : '';
     const bodyLines = [
-      content.titulo ? String(content.titulo) : '',
+      renderedText,
+      content.titulo && !renderedText ? String(content.titulo) : '',
       content.prescricao ? String(content.prescricao) : '',
       content.observacoes ? String(content.observacoes) : '',
-      content.corpo ? String(content.corpo) : '',
+      content.corpo && !renderedText ? String(content.corpo) : '',
       content.indication ? `Indicação: ${String(content.indication)}` : '',
       Array.isArray(content.exams) ? `Exames: ${(content.exams as unknown[]).map(String).join(', ')}` : '',
       content.cid ? `CID: ${String(content.cid)}` : '',
       ...Object.entries(content)
         .filter(([key]) => ![
           'titulo', 'prescricao', 'observacoes', 'corpo', 'paciente', 'data', 'identity', 'template',
-          'cidConsent', 'exams', 'indication', 'cid',
+          'cidConsent', 'exams', 'indication', 'cid', 'renderedText', 'renderedHtml', 'payment',
+          'treatmentSnapshot',
         ].includes(key))
         .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`),
     ].filter(Boolean);
@@ -1682,8 +1786,10 @@ export class OperationsService {
       patientDocument,
       bodyLines,
       validationCode: document.validationCode,
-      footerLeft: 'Assinatura do profissional\nA1 ou assinatura na tela',
-      footerRight: 'Assinatura do paciente\nPresencial ou link remoto',
+      footerLeft: document.template.type === 'CONTRACT'
+        ? 'Assinatura com certificado digital da clínica'
+        : 'Assinatura do profissional',
+      footerRight: 'Assinatura eletrônica do paciente\nPresencial ou link remoto',
     });
     return {
       filename: `${document.template.name.replaceAll(/\s+/g, '-').toLowerCase()}.pdf`,
@@ -1699,9 +1805,11 @@ export class OperationsService {
       where: { organizationId, patientId, archivedAt: null },
       orderBy: { sortOrder: 'asc' },
     });
-    if (existing.length) return existing;
+    const existingNames = new Set(existing.map((folder) => folder.name));
+    const missing = DEFAULT_PATIENT_FOLDERS.filter((folder) => !existingNames.has(folder.name));
+    if (!missing.length && existing.length) return existing;
     await prisma.patientDocumentFolder.createMany({
-      data: DEFAULT_PATIENT_FOLDERS.map((folder) => ({
+      data: (missing.length ? missing : DEFAULT_PATIENT_FOLDERS).map((folder) => ({
         organizationId,
         patientId,
         name: folder.name,
@@ -1758,7 +1866,13 @@ export class OperationsService {
         take: 200,
       }),
       prisma.patientMedia.findMany({
-        where: { organizationId, patientId, ...archivedFilter, ...folderFilter },
+        where: {
+          organizationId,
+          patientId,
+          type: { not: 'PROFILE_PHOTO' },
+          ...archivedFilter,
+          ...folderFilter,
+        },
         include: {
           folder: { select: { id: true, name: true } },
           file: { select: { originalName: true, mimeType: true, sizeBytes: true, antivirusStatus: true, status: true } },
@@ -1952,6 +2066,18 @@ export class OperationsService {
     }
 
     const rules = parseSignatureRules(document.template.signatureRules);
+    const method = normalizeSignatureMethod(input.method);
+    try {
+      assertContractSignatureAllowed({
+        templateType: document.template.type,
+        role: input.role,
+        method: input.method,
+        existingRoles: document.signatures.map((row) => row.role),
+        serviceProviderSigner: rules.serviceProviderSigner,
+      });
+    } catch (error) {
+      throw new ConflictException(error instanceof Error ? error.message : 'Assinatura não permitida para este documento.');
+    }
     let nextStatus: DocumentStatus;
     try {
       nextStatus = nextDocumentStatusAfterSign({
@@ -1965,7 +2091,12 @@ export class OperationsService {
     }
 
     let a1Evidence: Record<string, unknown> | undefined;
-    if (input.method === 'A1') {
+    if (method === 'A1') {
+      if (document.template.type === 'CONTRACT' && input.role === 'PROFESSIONAL') {
+        throw new BadRequestException(
+          'A assinatura do profissional com certificado próprio ainda não está disponível. Use um modelo em que a clínica seja a prestadora.',
+        );
+      }
       const clinicId = input.clinicId ?? document.clinicId;
       const signed = await this.certificates.signWithA1(
         organizationId,
@@ -1995,12 +2126,19 @@ export class OperationsService {
           signerId: input.signerId,
           signerName: input.signerName,
           role: input.role,
-          method: input.method,
-          evidence: json({ ...(input.evidence ?? {}), ...(a1Evidence ?? {}) }),
+          method,
+          evidence: json({
+            ...(input.evidence ?? {}),
+            ...(a1Evidence ?? {}),
+            documentHash: document.contentHash,
+            consentVersion: typeof input.evidence?.consentVersion === 'string'
+              ? input.evidence.consentVersion
+              : undefined,
+          }),
           signedHash: hash({
             documentHash: document.contentHash,
             signer: input.signerName,
-            method: input.method,
+            method,
             a1: a1Evidence?.signature ?? null,
             at: new Date().toISOString(),
           }),
@@ -2014,7 +2152,7 @@ export class OperationsService {
           generatedDocumentId: id,
           type: 'SIGNED',
           actorId: input.actorId ?? input.signerId,
-          payload: json({ role: input.role, method: input.method, status: nextStatus }),
+          payload: json({ role: input.role, method, status: nextStatus }),
         },
       });
       await tx.auditEvent.create({
@@ -2024,7 +2162,7 @@ export class OperationsService {
           entity: 'GeneratedDocument',
           entityId: id,
           clinicId: document.clinicId,
-          changes: json({ role: input.role, method: input.method, status: nextStatus }),
+          changes: json({ role: input.role, method, status: nextStatus }),
           correlationId: randomUUID(),
         },
       });
@@ -2167,12 +2305,22 @@ export class OperationsService {
       where: { id: request.document.clinicId },
       select: { tradeName: true, legalName: true },
     });
-    const identity = ((request.document.frozenContent as Record<string, unknown>)?.identity ?? {}) as Record<string, unknown>;
+    const frozen = (request.document.frozenContent ?? {}) as Record<string, unknown>;
+    const identity = (frozen.identity ?? {}) as Record<string, unknown>;
+    const renderedText = typeof frozen.renderedText === 'string'
+      ? frozen.renderedText
+      : [frozen.titulo, frozen.corpo, frozen.prescricao, frozen.observacoes]
+        .filter((value) => typeof value === 'string' && value.trim())
+        .join('\n\n');
     return {
       requestId: request.id,
       signerName: request.signerName,
       signerRole: request.signerRole,
       expiresAt: request.expiresAt,
+      consent: {
+        version: ELECTRONIC_SIGNATURE_CONSENT_V1.version,
+        text: ELECTRONIC_SIGNATURE_CONSENT_V1.text,
+      },
       document: {
         id: request.document.id,
         status: request.document.status,
@@ -2180,7 +2328,8 @@ export class OperationsService {
         templateType: request.document.template.type,
         clinicName: clinic?.tradeName ?? clinic?.legalName ?? null,
         patientName: typeof identity.patientName === 'string' ? identity.patientName : null,
-        // sem CPF completo / conteúdo clínico livre
+        contentHash: request.document.contentHash,
+        renderedText,
       },
     };
   }
@@ -2198,11 +2347,26 @@ export class OperationsService {
     }
     const document = await prisma.generatedDocument.findUnique({ where: { id: request.generatedDocumentId } });
     if (!document) throw new NotFoundException('Documento não encontrado.');
+    const evidence = (input.evidence ?? {}) as Record<string, unknown>;
+    if (evidence.consentAccepted !== true) {
+      throw new BadRequestException('Confirme que revisou o documento e concorda com a assinatura eletrônica.');
+    }
+    const dataUrl = typeof evidence.dataUrl === 'string' ? evidence.dataUrl : '';
+    if (!dataUrl.startsWith('data:image')) {
+      throw new BadRequestException('Desenhe a assinatura para continuar.');
+    }
     const signature = await this.signDocument(document.organizationId, document.id, {
       signerName: request.signerName,
       role: request.signerRole,
-      method: 'REMOTE',
-      evidence: input.evidence,
+      method: 'ELECTRONIC_REMOTE',
+      evidence: {
+        ...evidence,
+        documentHash: document.contentHash,
+        consentVersion: ELECTRONIC_SIGNATURE_CONSENT_V1.version,
+        consentTextHash: createHash('sha256').update(ELECTRONIC_SIGNATURE_CONSENT_V1.text).digest('hex'),
+        signatureImageHash: createHash('sha256').update(dataUrl).digest('hex'),
+        authenticationMethod: 'PUBLIC_LINK',
+      },
       ipAddress: input.ipAddress,
       userAgent: input.userAgent,
     });
@@ -2314,6 +2478,30 @@ export class OperationsService {
     if (discount.greaterThan(originalAmount.add(surcharge))) throw new ConflictException('Desconto supera o valor do título.');
     return prisma.receivable.create({
       data: { organizationId, ...input, originalAmount, discount, surcharge, netAmount: originalAmount.sub(discount).add(surcharge), dueDate: new Date(`${input.dueDate}T00:00:00Z`) },
+    });
+  }
+
+  async updateReceivable(
+    organizationId: string,
+    id: string,
+    input: { description?: string; dueDate?: string; paymentMethod?: string | null },
+  ) {
+    const receivable = await prisma.receivable.findFirst({
+      where: { id, organizationId },
+      include: { treatment: { select: { id: true, title: true, status: true } } },
+    });
+    if (!receivable) throw new NotFoundException('Recebível não encontrado.');
+    if (['PAID', 'CANCELLED'].includes(receivable.status)) {
+      throw new ConflictException('Títulos pagos ou cancelados não podem ser editados.');
+    }
+    return prisma.receivable.update({
+      where: { id },
+      data: {
+        description: input.description?.trim(),
+        dueDate: input.dueDate ? new Date(`${input.dueDate}T00:00:00Z`) : undefined,
+        paymentMethod: input.paymentMethod === undefined ? undefined : (input.paymentMethod || null),
+      },
+      include: { treatment: { select: { id: true, title: true, status: true } } },
     });
   }
 

@@ -282,7 +282,7 @@ export class AnamnesisService {
         signatures: { orderBy: { signedAt: 'asc' } },
         signatureRequests: { orderBy: { createdAt: 'desc' } },
         clinic: { select: { id: true, tradeName: true, legalName: true } },
-        patient: { select: { id: true, fullName: true } },
+        patient: { select: { id: true, fullName: true, birthDate: true } },
       },
     });
     if (!response) throw new NotFoundException('Anamnese não encontrada.');

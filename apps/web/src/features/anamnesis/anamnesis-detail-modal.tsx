@@ -372,7 +372,7 @@ export function AnamnesisDetailModal({
               {remoteLink ? <p className="muted-note">Link copiado: {remoteLink}</p> : null}
             </Panel>
 
-            <div className="heading-actions sticky-actions">
+            <div className="heading-actions sticky-actions anamnesis-detail-actions">
               {status === 'DRAFT' ? (
                 <>
                   <button type="button" className="button primary" disabled={busy} onClick={() => { onContinueDraft(detail.id); onClose(); }}>
@@ -441,24 +441,26 @@ export function AnamnesisDetailModal({
         description="O registro e as assinaturas serão preservados no histórico."
         onClose={() => { setConfirmCancel(false); setCancelReason(''); }}
       >
-        <label>
-          Motivo
-          <textarea
-            rows={3}
-            value={cancelReason}
-            onChange={(event) => setCancelReason(event.target.value)}
-            placeholder="Descreva o motivo do cancelamento"
-            required
-            minLength={3}
-          />
-        </label>
-        <div className="heading-actions">
-          <button type="button" className="button" disabled={busy} onClick={() => { setConfirmCancel(false); setCancelReason(''); }}>
-            Voltar
-          </button>
-          <button type="button" className="button danger" disabled={busy || cancelReason.trim().length < 3} onClick={() => void cancelResponse()}>
-            Cancelar anamnese
-          </button>
+        <div className="mutation-form nested-modal-form">
+          <label className="span-2">
+            Motivo
+            <textarea
+              rows={3}
+              value={cancelReason}
+              onChange={(event) => setCancelReason(event.target.value)}
+              placeholder="Descreva o motivo do cancelamento"
+              required
+              minLength={3}
+            />
+          </label>
+          <div className="form-actions span-2">
+            <button type="button" className="button" disabled={busy} onClick={() => { setConfirmCancel(false); setCancelReason(''); }}>
+              Voltar
+            </button>
+            <button type="button" className="button danger" disabled={busy || cancelReason.trim().length < 3} onClick={() => void cancelResponse()}>
+              Cancelar anamnese
+            </button>
+          </div>
         </div>
       </Modal>
     </>

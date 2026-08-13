@@ -188,10 +188,13 @@ export function typeIcon(type: string, source: LibrarySource): string {
   if (value.includes('IMAGE') || value === 'PHOTO') return 'IMG';
   if (value.includes('VIDEO')) return 'VID';
   if (value.includes('PDF')) return 'PDF';
-  if (value === 'ATTESTATION') return 'AT';
+  if (value === 'ATTESTATION' || value === 'CERTIFICATE' || value === 'ATESTADO') return 'AT';
   if (value === 'EXAM_REQUEST') return 'EX';
   if (value === 'CONSENT' || value === 'CONSENTIMENTO') return 'TR';
   if (value === 'REFERRAL' || value === 'ENCAMINHAMENTO') return 'EN';
+  if (value === 'CONTRACT') return 'CT';
+  if (value === 'TREATMENT_PLAN') return 'PL';
+  if (value === 'ODONTOGRAM') return 'OD';
   return 'DOC';
 }
 

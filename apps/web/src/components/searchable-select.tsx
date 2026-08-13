@@ -2,10 +2,14 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
+export type SelectBadgeTone = 'teal' | 'green' | 'amber' | 'red' | 'blue' | 'gray';
+
 export type SelectOption = {
   value: string;
   label: string;
   description?: string;
+  badge?: string;
+  badgeTone?: SelectBadgeTone;
 };
 
 export function SearchableSelect({
@@ -49,7 +53,7 @@ export function SearchableSelect({
     const normalized = query.trim().toLocaleLowerCase('pt-BR');
     if (!normalized) return options;
     return options.filter((option) =>
-      `${option.label} ${option.description ?? ''}`.toLocaleLowerCase('pt-BR').includes(normalized),
+      `${option.label} ${option.badge ?? ''} ${option.description ?? ''}`.toLocaleLowerCase('pt-BR').includes(normalized),
     );
   }, [options, query]);
 
@@ -112,7 +116,12 @@ export function SearchableSelect({
             queueMicrotask(() => inputRef.current?.focus());
           }}
         >
-          <span className={selected ? '' : 'placeholder'}>{selected?.label ?? placeholder}</span>
+          <span className="combobox-trigger-main">
+            <span className={selected ? 'combobox-trigger-label' : 'placeholder'}>{selected?.label ?? placeholder}</span>
+            {selected?.badge ? (
+              <span className={`combobox-badge ${selected.badgeTone ?? 'gray'}`}>{selected.badge}</span>
+            ) : null}
+          </span>
           <span aria-hidden>⌄</span>
         </button>
         {open ? (
@@ -141,8 +150,13 @@ export function SearchableSelect({
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => choose(option.value)}
                 >
-                  <strong>{option.label}</strong>
-                  {option.description ? <small>{option.description}</small> : null}
+                  <span className="combobox-option-copy">
+                    <strong>{option.label}</strong>
+                    {option.description ? <small>{option.description}</small> : null}
+                  </span>
+                  {option.badge ? (
+                    <span className={`combobox-badge ${option.badgeTone ?? 'gray'}`}>{option.badge}</span>
+                  ) : null}
                 </button>
               ))}
             </div>

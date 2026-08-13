@@ -27,6 +27,8 @@ import {
 } from '@/lib/format';
 import { useAuth } from '@/components/auth-provider';
 import { useSelection, type Professional } from '@/components/selection-provider';
+import { fetchPrintBranding } from '@/lib/print/fetch-branding';
+import { formatPrintCro, type PrintStatusTone } from '@/lib/print/print-layout';
 import { printTreatmentDocument, buildTreatmentPrintHtml } from './print-treatment';
 import { completeItemSchema } from './treatment-schemas';
 import { EmptyState, ErrorState, Panel, Skeleton, StatusBadge } from '@/components/ui';
@@ -40,6 +42,7 @@ import { TreatmentItemTable } from './treatment-item-table';
 import { TreatmentPlanEditor } from './treatment-plan-editor';
 import { TreatmentPlanList } from './treatment-plan-list';
 import { TreatmentSessionDialog } from './treatment-session-dialog';
+import { TreatmentDocumentsPanel } from './treatment-documents-panel';
 import { TreatmentSummary } from './treatment-summary';
 import { TreatmentToolbar } from './treatment-toolbar';
 import {
@@ -53,6 +56,7 @@ import {
   type TreatmentPlanEvent,
   type TreatmentSession,
 } from './treatment-types';
+import type { GeneratedDocument } from '@/features/documents/document-types';
 
 export function TreatmentWorkspace({
   clinicId,
@@ -80,6 +84,7 @@ export function TreatmentWorkspace({
   const canCancel = hasPermission(permissions, 'treatment.cancel');
   const canArchive = hasPermission(permissions, 'treatment.archive');
   const canRestore = canArchive || hasPermission(permissions, 'treatment.reopen');
+  const canSignDocuments = hasPermission(permissions, 'document.sign');
 
   const [plans, setPlans] = useState<TreatmentPlan[]>([]);
   const [procedures, setProcedures] = useState<Procedure[]>([]);
@@ -103,7 +108,12 @@ export function TreatmentWorkspace({
   const [itemEditor, setItemEditor] = useState<{ mode: 'create' | 'edit'; item?: TreatmentItem | null } | null>(null);
   const [sessionItem, setSessionItem] = useState<TreatmentItem | null>(null);
   const [approveIds, setApproveIds] = useState<string[]>([]);
-  const [approvePaymentMethod, setApprovePaymentMethod] = useState('PIX');
+  const [approvePaymentMethod, setApprovePaymentMethod] = useState('');
+  const [approveInstallments, setApproveInstallments] = useState(1);
+  const [approveDueDate, setApproveDueDate] = useState(() => defaultFirstDueDate());
+  const [showEvolutionForm, setShowEvolutionForm] = useState(false);
+  const [completeProfessionalId, setCompleteProfessionalId] = useState('');
+  const [linkedDocuments, setLinkedDocuments] = useState<GeneratedDocument[]>([]);
   const [reasonModal, setReasonModal] = useState<null | {
     title: string;
     description: string;
@@ -125,6 +135,22 @@ export function TreatmentWorkspace({
     (id: string) => professionals.find((row) => row.id === id)?.name ?? 'Profissional',
     [professionals],
   );
+
+  function treatmentItemPrintTone(status: string): PrintStatusTone {
+    const key = status.toUpperCase();
+    if (key === 'COMPLETED') return 'green';
+    if (key === 'IN_PROGRESS' || key === 'APPROVED') return 'teal';
+    if (key === 'CANCELLED') return 'red';
+    return 'amber';
+  }
+
+  function treatmentPlanPrintTone(status: string): PrintStatusTone {
+    const key = status.toUpperCase();
+    if (key === 'COMPLETED') return 'green';
+    if (key === 'CANCELLED') return 'red';
+    if (key === 'DRAFT') return 'amber';
+    return 'teal';
+  }
 
   const notify = useCallback(() => {
     onChanged?.();
@@ -160,14 +186,16 @@ export function TreatmentWorkspace({
     setDetailLoading(true);
     setActionError('');
     try {
-      const [plan, events, entries] = await Promise.all([
+      const [plan, events, entries, docs] = await Promise.all([
         treatmentApi.getTreatmentPlan(id),
         treatmentApi.getTreatmentHistory(id).catch(() => [] as TreatmentPlanEvent[]),
         treatmentApi.listPlanEvolutions(patientId, clinicId, id).catch(() => [] as RecordValue[]),
+        treatmentApi.listTreatmentDocuments(id).catch(() => [] as GeneratedDocument[]),
       ]);
       setDetail(plan);
       setHistory(events);
       setEvolutions(list(entries));
+      setLinkedDocuments(docs as GeneratedDocument[]);
       setApproveIds([]);
     } catch (cause) {
       setActionError(cause instanceof ApiError ? cause.message : 'Falha ao carregar o plano.');
@@ -187,6 +215,7 @@ export function TreatmentWorkspace({
         setDetail(null);
         setHistory([]);
         setEvolutions([]);
+        setLinkedDocuments([]);
       }
       return;
     }
@@ -233,6 +262,10 @@ export function TreatmentWorkspace({
     setDetailTab('procedures');
     setItemEditor(null);
     setActionError('');
+    setApprovePaymentMethod('');
+    setApproveDueDate(defaultFirstDueDate());
+    setShowEvolutionForm(false);
+    setApproveInstallments(1);
   }
 
   function closePlanModal() {
@@ -324,6 +357,7 @@ export function TreatmentWorkspace({
                         const parsed = completeItemSchema.safeParse({
                           clinicalDate: completeDate,
                           notes: completeNotes.trim() || undefined,
+                          professionalId: completeProfessionalId || undefined,
                         });
                         if (!parsed.success) {
                           setCompleteError(parsed.error.issues[0]?.message ?? 'Dados inválidos.');
@@ -334,11 +368,20 @@ export function TreatmentWorkspace({
                         void runAction(() => treatmentApi.completeTreatmentItem(itemId, {
                           notes: parsed.data.notes,
                           clinicalDate: dateInputToIso(parsed.data.clinicalDate),
+                          professionalId: parsed.data.professionalId,
                         }));
                       }}
                     >
                       <label>Data da conclusão
                         <input type="date" required value={completeDate} onChange={(event) => setCompleteDate(event.target.value)} />
+                      </label>
+                      <label>Profissional da execução
+                        <select required value={completeProfessionalId} onChange={(event) => setCompleteProfessionalId(event.target.value)}>
+                          <option value="">Selecione</option>
+                          {professionals.map((professional) => (
+                            <option key={professional.id} value={professional.id}>{professional.name}</option>
+                          ))}
+                        </select>
                       </label>
                       <label>Notas clínicas (opcional)
                         <textarea rows={3} value={completeNotes} onChange={(event) => setCompleteNotes(event.target.value)} placeholder="O que foi realizado, materiais, oclusão…" />
@@ -408,46 +451,69 @@ export function TreatmentWorkspace({
                   <div className="detail-actions">
                     <button
                       type="button"
-                      className="button small"
+                      className="icon-button"
+                      title="Imprimir orçamento"
+                      aria-label="Imprimir orçamento"
                       onClick={() => {
-                        const clinic = clinics.find((item) => item.id === clinicId);
-                        const html = buildTreatmentPrintHtml({
-                          title: text(selected.title),
-                          patientName,
-                          clinicName: clinic?.tradeName,
-                          professionalName: professionalName(selected.professionalId),
-                          statusLabel: presentationLabel(selected.status),
-                          notes: selected.notes,
-                          items: (selected.items ?? []).map((item) => ({
-                            name: text(item.procedure?.name, 'Procedimento'),
-                            tooth: item.toothFdi,
-                            face: item.face,
-                            quantity: item.quantity,
-                            sessions: `${(item.sessions ?? []).filter((session) => !session.correctionOfId).length}/${item.plannedSessions}`,
-                            unitPrice: currency(item.unitPrice),
-                            total: currency(item.total),
-                            status: presentationLabel(item.status),
-                          })),
-                          subtotal: currency(selected.subtotal),
-                          discount: currency(selected.discount),
-                          total: currency(selected.total),
-                        });
-                        if (!printTreatmentDocument(html)) {
-                          setActionError('Permita a impressão para gerar o orçamento.');
-                        }
+                        void (async () => {
+                          const clinic = clinics.find((item) => item.id === clinicId);
+                          const professional = professionals.find((row) => row.id === selected.professionalId);
+                          const branding = await fetchPrintBranding(clinicId, clinic?.tradeName);
+                          const doneSessions = (item: TreatmentItem) =>
+                            (item.sessions ?? []).filter((session) => !session.correctionOfId).length;
+                          const html = buildTreatmentPrintHtml({
+                            title: text(selected.title),
+                            patientName,
+                            clinicName: branding.clinicName || clinic?.tradeName,
+                            branding,
+                            professionalName: professional?.name ?? professionalName(selected.professionalId),
+                            professionalCro: formatPrintCro(professional),
+                            statusLabel: presentationLabel(selected.status),
+                            statusTone: treatmentPlanPrintTone(String(selected.status)),
+                            versionLabel: `versão ${selected.version}`,
+                            createdAtLabel: dateOnly(selected.createdAt),
+                            validUntilLabel: selected.validUntil ? dateOnly(selected.validUntil) : 'Não definida',
+                            notes: selected.notes,
+                            items: (selected.items ?? []).map((item) => ({
+                              name: text(item.procedure?.name, 'Procedimento'),
+                              tooth: item.toothFdi,
+                              face: item.face,
+                              sessions: `${doneSessions(item)} / ${item.plannedSessions}`,
+                              total: currency(item.total),
+                              status: presentationLabel(item.status),
+                              statusTone: treatmentItemPrintTone(String(item.status)),
+                              urgent: Boolean(item.urgent),
+                            })),
+                            subtotal: currency(selected.subtotal),
+                            discount: currency(selected.discount),
+                            total: currency(selected.total),
+                          });
+                          if (!printTreatmentDocument(html)) {
+                            setActionError('Permita a impressão para gerar o orçamento.');
+                          }
+                        })();
                       }}
                     >
-                      <Printer size={14} /> Imprimir orçamento
+                      <Printer size={16} />
                     </button>
                     {canEditPlan ? (
-                      <button type="button" className="button small" disabled={busy} onClick={() => setEditorMode('edit')}>
-                        <Pencil size={14} /> Editar
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title="Editar"
+                        aria-label="Editar plano"
+                        disabled={busy}
+                        onClick={() => setEditorMode('edit')}
+                      >
+                        <Pencil size={16} />
                       </button>
                     ) : null}
                     {canCreate ? (
                       <button
                         type="button"
-                        className="button small"
+                        className="icon-button"
+                        title="Duplicar"
+                        aria-label="Duplicar plano"
                         disabled={busy}
                         onClick={() => {
                           void (async () => {
@@ -466,7 +532,7 @@ export function TreatmentWorkspace({
                           })();
                         }}
                       >
-                        <Copy size={14} /> Duplicar
+                        <Copy size={16} />
                       </button>
                     ) : null}
                     {canPresent && String(selected.status) === 'DRAFT' ? (
@@ -480,41 +546,40 @@ export function TreatmentWorkspace({
                       </button>
                     ) : null}
                     {canApprove && ['PRESENTED', 'PARTIALLY_APPROVED'].includes(String(selected.status)) ? (
-                      <div className="approve-action-group">
-                        <label className="approve-payment-field">
-                          Forma de Pagamento
-                          <select
-                            value={approvePaymentMethod}
-                            onChange={(event) => setApprovePaymentMethod(event.target.value)}
-                            aria-label="Forma de Pagamento na aprovação"
-                          >
-                            <option value="PIX">PIX</option>
-                            <option value="CREDIT_CARD">Cartão de crédito</option>
-                            <option value="DEBIT_CARD">Cartão de débito</option>
-                            <option value="CASH">Dinheiro</option>
-                            <option value="TRANSFER">Transferência</option>
-                            <option value="OTHER">Outro</option>
-                          </select>
-                        </label>
-                        <button
-                          type="button"
-                          className="button primary small"
-                          disabled={busy || !approveIds.length || !approvePaymentMethod}
-                          onClick={() => void runAction(() => treatmentApi.approveTreatmentPlan(
-                            selected.id,
-                            approveIds,
-                            selected.version,
-                            { paymentMethod: approvePaymentMethod },
-                          ))}
-                        >
-                          <Check size={14} /> Aprovar selecionados
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        className="button primary small"
+                        disabled={busy || !approveIds.length}
+                        onClick={() => {
+                          if (!approvePaymentMethod || !approveDueDate) {
+                            setDetailTab('payment');
+                            setActionError('Preencha forma de pagamento e vencimento na aba Pagamento antes de aprovar.');
+                            return;
+                          }
+                          void runAction(async () => {
+                            await treatmentApi.approveTreatmentPlan(
+                              selected.id,
+                              approveIds,
+                              selected.version,
+                              {
+                                paymentMethod: approvePaymentMethod,
+                                installments: approveInstallments,
+                                dueDate: approveDueDate,
+                              },
+                            );
+                            setDetailTab('documents');
+                          });
+                        }}
+                      >
+                        <Check size={14} /> Aprovar selecionados
+                      </button>
                     ) : null}
                     {canCancel && !readonly && String(selected.status) !== 'CANCELLED' ? (
                       <button
                         type="button"
-                        className="button danger small"
+                        className="icon-button"
+                        title="Cancelar plano"
+                        aria-label="Cancelar plano"
                         disabled={busy}
                         onClick={() => {
                           setReasonText('');
@@ -528,7 +593,7 @@ export function TreatmentWorkspace({
                           });
                         }}
                       >
-                        <Ban size={14} /> Cancelar
+                        <Ban size={16} />
                       </button>
                     ) : null}
                     {canArchive && ['COMPLETED', 'CANCELLED'].includes(String(selected.status)) && !selected.archivedAt ? (
@@ -568,6 +633,8 @@ export function TreatmentWorkspace({
                     ['procedures', 'Procedimentos'],
                     ['sessions', 'Sessões'],
                     ['evolutions', 'Evoluções'],
+                    ['documents', 'Documentos'],
+                    ['payment', 'Pagamento'],
                     ['history', 'Histórico'],
                     ['notes', 'Resumo'],
                   ] as const).map(([id, label]) => (
@@ -631,6 +698,7 @@ export function TreatmentWorkspace({
                           setCompleteDate(toDateInputValue());
                           setCompleteNotes('');
                           setCompleteError('');
+                          setCompleteProfessionalId(item.professionalId || selected.professionalId || professionals[0]?.id || '');
                         }}
                       />
                     </>
@@ -661,6 +729,42 @@ export function TreatmentWorkspace({
 
                   {detailTab === 'evolutions' ? (
                     <div className="session-stack">
+                      {canExecute && !readonly ? (
+                        <div className="tab-actions">
+                          <button
+                            type="button"
+                            className="button soft small"
+                            disabled={busy}
+                            onClick={() => setShowEvolutionForm((current) => !current)}
+                          >
+                            {showEvolutionForm ? 'Fechar formulário' : 'Registrar evolução'}
+                          </button>
+                        </div>
+                      ) : null}
+                      {showEvolutionForm && canExecute && !readonly ? (
+                        <div className="form-section">
+                          <header><h3>Nova evolução</h3></header>
+                          <TreatmentEvolutionComposer
+                            professionals={professionals}
+                            items={selected.items ?? []}
+                            busy={busy}
+                            error={actionError}
+                            onSubmit={async (input) => {
+                              await runAction(() => treatmentApi.createClinicalEvolution(patientId, {
+                                clinicId,
+                                professionalId: input.professionalId,
+                                type: 'EVOLUTION',
+                                renderedText: input.renderedText,
+                                structuredData: {},
+                                treatmentId: selected.id,
+                                treatmentItemId: input.treatmentItemId,
+                                clinicalDate: new Date().toISOString(),
+                              }));
+                              setShowEvolutionForm(false);
+                            }}
+                          />
+                        </div>
+                      ) : null}
                       {!evolutions.length ? (
                         <EmptyState
                           title="Evoluções do plano"
@@ -681,30 +785,97 @@ export function TreatmentWorkspace({
                           </article>
                         ))
                       )}
-                      {canExecute && !readonly ? (
-                        <div className="form-section">
-                          <header><h3>Nova evolução</h3></header>
-                          <TreatmentEvolutionComposer
-                            professionals={professionals}
-                            items={selected.items ?? []}
-                            busy={busy}
-                            error={actionError}
-                            onSubmit={async (input) => {
-                              await runAction(() => treatmentApi.createClinicalEvolution(patientId, {
-                                clinicId,
-                                professionalId: input.professionalId,
-                                type: 'EVOLUTION',
-                                renderedText: input.renderedText,
-                                structuredData: {},
-                                treatmentId: selected.id,
-                                treatmentItemId: input.treatmentItemId,
-                                clinicalDate: new Date().toISOString(),
-                              }));
-                            }}
-                          />
-                        </div>
-                      ) : null}
                     </div>
+                  ) : null}
+
+                  {detailTab === 'payment' ? (
+                    <div className="form-section payment-tab">
+                      <header>
+                        <h3>Forma de pagamento</h3>
+                        <p className="muted-note">Obrigatória para aprovar o plano, gerar o contrato e lançar os títulos no financeiro.</p>
+                      </header>
+                      <div className="mutation-form">
+                        <label>
+                          Forma de pagamento
+                          <select
+                            value={approvePaymentMethod}
+                            required
+                            onChange={(event) => {
+                              setApprovePaymentMethod(event.target.value);
+                              setActionError('');
+                              if (event.target.value === 'CLINIC_INSTALLMENT' && approveInstallments < 2) {
+                                setApproveInstallments(2);
+                              }
+                              if (!['CREDIT_CARD', 'CLINIC_INSTALLMENT'].includes(event.target.value)) {
+                                setApproveInstallments(1);
+                              }
+                            }}
+                            aria-label="Forma de pagamento na aprovação"
+                          >
+                            <option value="">Selecione</option>
+                            <option value="PIX">PIX</option>
+                            <option value="CASH">Dinheiro</option>
+                            <option value="DEBIT_CARD">Cartão de débito</option>
+                            <option value="TRANSFER">Transferência</option>
+                            <option value="CREDIT_CARD">Cartão de crédito</option>
+                            <option value="CLINIC_INSTALLMENT">Parcelado na clínica</option>
+                            <option value="OTHER">Outro</option>
+                          </select>
+                        </label>
+                        {['CREDIT_CARD', 'CLINIC_INSTALLMENT'].includes(approvePaymentMethod) ? (
+                          <label>
+                            Parcelas
+                            <select
+                              value={approveInstallments}
+                              onChange={(event) => setApproveInstallments(Number(event.target.value))}
+                              aria-label="Número de parcelas"
+                            >
+                              {(approvePaymentMethod === 'CLINIC_INSTALLMENT' ? [2, 3, 4, 5, 6, 8, 10, 12] : [1, 2, 3, 4, 5, 6, 10, 12]).map((count) => (
+                                <option key={count} value={count}>{count}x</option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : null}
+                        <label>
+                          {approvePaymentMethod === 'CLINIC_INSTALLMENT' && approveInstallments > 1
+                            ? 'Primeiro vencimento'
+                            : 'Vencimento'}
+                          <input
+                            type="date"
+                            required
+                            value={approveDueDate}
+                            onChange={(event) => {
+                              setApproveDueDate(event.target.value);
+                              setActionError('');
+                            }}
+                            aria-label="Vencimento do título"
+                          />
+                        </label>
+                      </div>
+                      {approvePaymentMethod === 'CLINIC_INSTALLMENT' && approveInstallments > 1 ? (
+                        <p className="muted-note">
+                          Serão gerados {approveInstallments} títulos mensais a partir de {approveDueDate ? new Date(`${approveDueDate}T00:00:00`).toLocaleDateString('pt-BR') : 'esta data'}.
+                        </p>
+                      ) : null}
+                      {!approvePaymentMethod || !approveDueDate ? (
+                        <p className="muted-note">Selecione a forma de pagamento e o vencimento para habilitar a aprovação.</p>
+                      ) : (
+                        <p className="muted-note">Pagamento definido. Volte aos procedimentos, selecione os itens e aprove.</p>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {detailTab === 'documents' ? (
+                    <TreatmentDocumentsPanel
+                      plan={selected}
+                      patientName={patientName ?? 'Paciente'}
+                      clinicName={clinics.find((clinic) => clinic.id === clinicId)?.tradeName ?? 'Clínica'}
+                      canApprove={canApprove}
+                      canSign={canSignDocuments}
+                      busy={busy}
+                      documents={linkedDocuments}
+                      onChanged={() => loadDetail(selected.id)}
+                    />
                   ) : null}
 
                   {detailTab === 'history' ? <TreatmentHistory events={history} /> : null}
@@ -836,6 +1007,12 @@ export function TreatmentWorkspace({
       />
     </div>
   );
+}
+
+function defaultFirstDueDate() {
+  const date = new Date();
+  date.setDate(date.getDate() + 7);
+  return toDateInputValue(date);
 }
 
 function collectSessions(plan: TreatmentPlan | null) {

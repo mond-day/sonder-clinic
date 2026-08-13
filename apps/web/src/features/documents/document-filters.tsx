@@ -37,12 +37,17 @@ export function DocumentFilters({
           </button>
         ))}
       </div>
-      <label className="check-field compact">
-        <input
-          type="checkbox"
-          checked={value.includeArchived}
-          onChange={(event) => onChange({ ...value, includeArchived: event.target.checked })}
-        />
+      <label className="switch-row">
+        <span className="switch">
+          <input
+            type="checkbox"
+            role="switch"
+            checked={value.includeArchived}
+            onChange={(event) => onChange({ ...value, includeArchived: event.target.checked })}
+            aria-label="Incluir arquivados"
+          />
+          <span className="switch-track" aria-hidden />
+        </span>
         Incluir arquivados
       </label>
     </div>

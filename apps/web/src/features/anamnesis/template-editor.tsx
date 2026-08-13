@@ -1,11 +1,11 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Eye, MoreHorizontal, Pencil } from 'lucide-react';
+import { Archive, CircleCheck, Copy, CopyPlus, Eye, MoreHorizontal, Pencil } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, Panel, StatusBadge } from '@/components/ui';
-import { Modal } from '@/components/modal';
+import { DirtyFormModal, Modal } from '@/components/modal';
 import { QuestionRenderer } from './question-renderer';
 import {
   CONDITION_OPERATIONS,
@@ -471,13 +471,12 @@ export function AnamnesisTemplateEditor() {
 
   return (
     <div className="anamnesis-editor">
-      <Modal
+      <DirtyFormModal
         open={createOpen}
         title="Novo modelo de anamnese"
         description="Cria um rascunho editável com seções e perguntas iniciais."
         onClose={() => setCreateOpen(false)}
         size="small"
-        confirmOnClose
       >
         <form className="mutation-form" onSubmit={createTemplate}>
           <label>Nome<input name="name" minLength={2} required placeholder="Modelo personalizado" autoFocus /></label>
@@ -490,7 +489,7 @@ export function AnamnesisTemplateEditor() {
           <label className="span-2">Descrição<input name="description" placeholder="Opcional" /></label>
           <button className="button primary" disabled={busy}>Criar rascunho</button>
         </form>
-      </Modal>
+      </DirtyFormModal>
       <Panel
         title="Modelos de anamnese"
         description="Lista de modelos. Abra o editor em modal para criar ou revisar seções, perguntas e regras."
@@ -636,7 +635,7 @@ export function AnamnesisTemplateEditor() {
         description={draft ? `${presentationLabel(draft.status)} · v${draft.version}` : undefined}
         onClose={() => { setDraft(null); setSelectedId(null); setPreviewMode(false); }}
         size="xlarge"
-        confirmOnClose
+        confirmOnCloseAlways
       >
           <div className="anamnesis-workspace editor-mode">
             {!draft ? (
@@ -652,22 +651,74 @@ export function AnamnesisTemplateEditor() {
                     <StatusBadge tone={statusTone(draft.status)}>{presentationLabel(draft.status)}</StatusBadge>
                     {draft.isSystemDefault ? <span className="badge">Sistema</span> : null}
                     <span className="badge">{sections.length} seções · {questionCount} perguntas</span>
-                    <button type="button" className={`button small${!previewMode ? ' primary' : ''}`} onClick={() => setPreviewMode(false)}>Editar</button>
-                    <button type="button" className={`button small${previewMode ? ' primary' : ''}`} onClick={() => { setPreviewMode(true); setPreviewAnswers({}); }}>Pré-visualizar</button>
-                    <button type="button" className="button soft small" disabled={busy} onClick={() => void runAction(`/anamnesis/templates/${draft.id}/validate`, `Validação OK · ${questionCount} perguntas.`)}>Validar</button>
+                    <button
+                      type="button"
+                      className={`icon-button${!previewMode ? ' primary' : ''}`}
+                      title="Editar"
+                      aria-label="Editar"
+                      onClick={() => setPreviewMode(false)}
+                    >
+                      <Pencil size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className={`icon-button${previewMode ? ' primary' : ''}`}
+                      title="Pré-visualizar"
+                      aria-label="Pré-visualizar"
+                      onClick={() => { setPreviewMode(true); setPreviewAnswers({}); }}
+                    >
+                      <Eye size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      title="Validar"
+                      aria-label="Validar"
+                      disabled={busy}
+                      onClick={() => void runAction(`/anamnesis/templates/${draft.id}/validate`, `Validação OK · ${questionCount} perguntas.`)}
+                    >
+                      <CircleCheck size={15} />
+                    </button>
                     {!readOnly ? <button type="button" className="button primary small" disabled={busy} onClick={() => void saveDraft()}>Salvar rascunho</button> : null}
                     {draft.status === 'DRAFT' ? (
                       <button type="button" className="button small" disabled={busy} onClick={() => void runAction(`/anamnesis/templates/${draft.id}/publish`, 'Modelo publicado.')}>Publicar</button>
                     ) : null}
                     {draft.status === 'PUBLISHED' ? (
-                      <button type="button" className="button primary small" disabled={busy} onClick={() => void runAction(`/anamnesis/templates/${draft.id}/new-version`, 'Nova versão rascunho criada.')}>Nova versão</button>
+                      <button
+                        type="button"
+                        className="icon-button primary"
+                        title="Nova versão"
+                        aria-label="Nova versão"
+                        disabled={busy}
+                        onClick={() => void runAction(`/anamnesis/templates/${draft.id}/new-version`, 'Nova versão rascunho criada.')}
+                      >
+                        <CopyPlus size={15} />
+                      </button>
                     ) : null}
-                    <button type="button" className="button soft small" disabled={busy} onClick={() => void runAction(`/anamnesis/templates/${draft.id}/duplicate`, 'Cópia criada.')}>Duplicar</button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      title="Duplicar"
+                      aria-label="Duplicar"
+                      disabled={busy}
+                      onClick={() => void runAction(`/anamnesis/templates/${draft.id}/duplicate`, 'Cópia criada.')}
+                    >
+                      <Copy size={15} />
+                    </button>
                     {draft.status !== 'ARCHIVED' ? (
-                      <button type="button" className="button soft small" disabled={busy} onClick={() => {
-                        if (!window.confirm('Arquivar este modelo?')) return;
-                        void runAction(`/anamnesis/templates/${draft.id}/archive`, 'Modelo arquivado.');
-                      }}>Arquivar</button>
+                      <button
+                        type="button"
+                        className="icon-button danger"
+                        title="Arquivar"
+                        aria-label="Arquivar"
+                        disabled={busy}
+                        onClick={() => {
+                          if (!window.confirm('Arquivar este modelo?')) return;
+                          void runAction(`/anamnesis/templates/${draft.id}/archive`, 'Modelo arquivado.');
+                        }}
+                      >
+                        <Archive size={15} />
+                      </button>
                     ) : null}
                   </div>
                 </header>

@@ -10,6 +10,7 @@ import {
   normalizePrescriptionItems,
   parseSignatureRules,
   stripClientIdentity,
+  defaultFolderNameForTemplateType,
   validateDocumentTemplateStructure,
   validateTemplateVariables,
 } from './operations-documents.utils';
@@ -111,6 +112,16 @@ describe('operations-documents.utils', () => {
       expect(status).toBe('SIGNED');
     });
 
+    it('aceita responsável no lugar do paciente', () => {
+      const status = nextDocumentStatusAfterSign({
+        currentStatus: 'GENERATED',
+        signatures: [],
+        newRole: 'GUARDIAN',
+        rules: parseSignatureRules({ requiredRoles: ['PATIENT', 'CLINIC'], minSignatures: 2 }),
+      });
+      expect(status).toBe('PARTIALLY_SIGNED');
+    });
+
     it('impede assinatura duplicada do mesmo papel', () => {
       expect(() => nextDocumentStatusAfterSign({
         currentStatus: 'PARTIALLY_SIGNED',
@@ -183,6 +194,22 @@ describe('operations-documents.utils', () => {
         signatureRules: { requiredRoles: ['PROFESSIONAL'], minSignatures: 1 },
       });
       expect(errors).toEqual([]);
+    });
+
+    it('classifica atestado legado CERTIFICATE na pasta Atestados', () => {
+      expect(defaultFolderNameForTemplateType('CERTIFICATE')).toBe('Atestados');
+      expect(defaultFolderNameForTemplateType('ATTESTATION')).toBe('Atestados');
+    });
+
+    it('exige paciente e prestador no contrato', () => {
+      const errors = validateDocumentTemplateStructure({
+        name: 'Contrato',
+        type: 'CONTRACT',
+        structuredContent: { body: 'Contrato {{patient.fullName}} {{payment.clause}}' },
+        allowedVariables: ['patient.fullName', 'payment.clause'],
+        signatureRules: { requiredRoles: ['PROFESSIONAL'], minSignatures: 1 },
+      });
+      expect(errors.some((row) => row.includes('paciente'))).toBe(true);
     });
   });
 });

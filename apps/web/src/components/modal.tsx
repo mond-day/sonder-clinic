@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { useDirtyFlag } from '@/lib/use-dirty-flag';
 
 const focusableSelector = [
   'a[href]',
@@ -25,20 +26,28 @@ export function Modal({
   onClose,
   closeOnBackdrop = true,
   confirmOnClose = false,
+  confirmOnCloseAlways = false,
+  extraDirty = false,
   confirmCloseMessage,
   size = 'medium',
+  actions,
 }: {
   open: boolean;
   title: string;
   description?: string;
   children: React.ReactNode;
+  actions?: ReactNode;
   onClose(): void;
   closeOnBackdrop?: boolean;
   /**
-   * Se true, Esc / backdrop / botão fechar pedem confirmação in-app.
-   * Use em modais de criar/editar formulário. Diálogos somente leitura e confirms aninhados devem ficar false.
+   * Se true, Esc / backdrop / botão fechar pedem confirmação só quando o formulário foi alterado.
+   * Use em modais de criar/editar. Diálogos somente leitura e confirms aninhados devem ficar false.
    */
   confirmOnClose?: boolean;
+  /** Confirma mesmo sem alteração detectada (editores com drag-and-drop, etc.). */
+  confirmOnCloseAlways?: boolean;
+  /** Estado sujo controlado pelo chamador (ex.: toggles fora de eventos nativos). */
+  extraDirty?: boolean;
   /** Mensagem customizada; se omitida com confirmOnClose, usa CONFIRM_CLOSE_DEFAULT. */
   confirmCloseMessage?: string;
   size?: 'small' | 'medium' | 'large' | 'xlarge';
@@ -49,12 +58,15 @@ export function Modal({
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const stackIdRef = useRef(Symbol('modal'));
   const onCloseRef = useRef(onClose);
+  const { isDirty, markDirty } = useDirtyFlag(open);
+  const shouldConfirm = confirmOnCloseAlways || (confirmOnClose && (isDirty || extraDirty));
   const resolveConfirmMessage = () =>
-    confirmCloseMessage ?? (confirmOnClose ? CONFIRM_CLOSE_DEFAULT : undefined);
+    shouldConfirm ? (confirmCloseMessage ?? CONFIRM_CLOSE_DEFAULT) : undefined;
   const confirmCloseMessageRef = useRef(resolveConfirmMessage());
   const [confirmOpen, setConfirmOpen] = useState(false);
   onCloseRef.current = onClose;
   confirmCloseMessageRef.current = resolveConfirmMessage();
+  const trackDirty = confirmOnClose || confirmOnCloseAlways;
 
   function requestClose() {
     if (confirmCloseMessageRef.current) {
@@ -154,11 +166,20 @@ export function Modal({
               <h2 id={titleId}>{title}</h2>
               {description ? <p id={descriptionId}>{description}</p> : null}
             </div>
-            <button className="close-btn" type="button" onClick={requestClose} aria-label="Fechar modal">
-              <X size={17} />
-            </button>
+            <div className="modal-head-end">
+              {actions ? <div className="heading-actions modal-head-actions">{actions}</div> : null}
+              <button className="close-btn" type="button" onClick={requestClose} aria-label="Fechar modal">
+                <X size={17} />
+              </button>
+            </div>
           </header>
-          <div className="modal-body">{children}</div>
+          <div
+            className="modal-body"
+            onInput={trackDirty ? markDirty : undefined}
+            onChange={trackDirty ? markDirty : undefined}
+          >
+            {children}
+          </div>
         </div>
       </div>
       <Modal
@@ -188,4 +209,17 @@ export function Modal({
       </Modal>
     </>
   );
+}
+
+type ModalProps = ComponentProps<typeof Modal>;
+
+/**
+ * Modal de formulário que só pede “Descartar alterações?” depois de o usuário
+ * alterar algum campo. Abrir “Novo X” e fechar na hora não confirma.
+ */
+export function DirtyFormModal({
+  extraDirty = false,
+  ...props
+}: Omit<ModalProps, 'confirmOnClose'> & { extraDirty?: boolean }) {
+  return <Modal {...props} confirmOnClose extraDirty={extraDirty} />;
 }

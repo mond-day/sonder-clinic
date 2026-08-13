@@ -82,6 +82,9 @@ describe('format helpers', () => {
     expect(presentationLabel('NO_SHOW')).toBe('Falta');
     expect(presentationLabel('PARTIALLY_APPROVED')).toBe('Parcialmente aprovado');
     expect(presentationLabel('IN_LAB')).toBe('No laboratório');
+    expect(presentationLabel('ATTESTATION')).toBe('Atestado');
+    expect(presentationLabel('CERTIFICATE')).toBe('Atestado');
+    expect(presentationLabel('PRESCRIPTION')).toBe('Receita');
   });
 
   it('formata moeda em pt-BR', () => {

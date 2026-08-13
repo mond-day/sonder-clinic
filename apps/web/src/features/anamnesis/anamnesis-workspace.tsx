@@ -3,8 +3,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Eye, MoreHorizontal, Pencil, Plus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { dateOnly, list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { isLocalhostAppUrl, publicAppUrl } from '@/lib/public-url';
+import { fetchPrintBranding } from '@/lib/print/fetch-branding';
+import { formatPrintCro, type PrintStatusTone } from '@/lib/print/print-layout';
+import { useSelection } from '@/components/selection-provider';
 import { EmptyState, ErrorState, Panel, Skeleton, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
 import { AnamnesisDetailModal } from './anamnesis-detail-modal';
@@ -61,8 +64,28 @@ type ResponseRow = RecordValue & {
   riskAssessment?: { score?: number; level?: string };
   answers?: Record<string, unknown>;
   template?: { id?: string; name?: string; audience?: string; version?: number };
-  signatures?: Array<{ id: string }>;
+  signatures?: Array<{
+    id: string;
+    signerName?: string;
+    signerRole?: string;
+    signerId?: string | null;
+  }>;
 };
+
+function anamnesisStatusTone(status: string): PrintStatusTone {
+  if (status === 'SIGNED') return 'green';
+  if (status === 'DRAFT' || status === 'AWAITING_SIGNATURE') return 'amber';
+  if (status === 'EXPIRED' || status === 'CANCELLED' || status === 'SUPERSEDED') return 'red';
+  return 'teal';
+}
+
+function riskPrintLabel(level?: string) {
+  const key = String(level ?? '').toUpperCase();
+  if (key === 'LOW') return { label: 'Risco baixo', tone: 'green' as const };
+  if (key === 'MODERATE') return { label: 'Risco moderado', tone: 'amber' as const };
+  if (key === 'HIGH') return { label: 'Risco alto', tone: 'red' as const };
+  return level ? { label: `Risco ${presentationLabel(level)}`, tone: 'teal' as const } : undefined;
+}
 
 type Summary = {
   vigente: number;
@@ -119,6 +142,7 @@ export function AnamnesisWorkspace({
   patientId: string;
   clinicId: string;
 }) {
+  const { professionals } = useSelection();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [history, setHistory] = useState<ResponseRow[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -140,6 +164,7 @@ export function AnamnesisWorkspace({
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [patientPhone, setPatientPhone] = useState<string | null>(null);
   const [patientName, setPatientName] = useState<string>('');
+  const [patientBirthDate, setPatientBirthDate] = useState<string>('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -158,6 +183,7 @@ export function AnamnesisWorkspace({
       if (patientRaw) {
         setPatientPhone(text(patientRaw.primaryPhone, '') || null);
         setPatientName(text(patientRaw.fullName, ''));
+        setPatientBirthDate(patientRaw.birthDate ? dateOnly(patientRaw.birthDate) : '');
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Falha ao carregar anamnese.');
@@ -432,17 +458,47 @@ export function AnamnesisWorkspace({
     try {
       const detail = await api.get<ResponseRow & {
         template?: Template & { schemaJson?: AnamnesisSchema };
+        templateVersion?: number;
         clinic?: { tradeName?: string; legalName?: string };
-        patient?: { fullName?: string };
+        patient?: { fullName?: string; birthDate?: string | null };
+        alerts?: Array<{ message?: string }>;
+        signedAt?: string | null;
+        completedAt?: string | null;
       }>(`/anamnesis/${row.id}`);
+      const clinicFallback = text(detail.clinic?.tradeName, text(detail.clinic?.legalName, '')) || undefined;
+      const branding = await fetchPrintBranding(clinicId, clinicFallback);
+      const signatures = detail.signatures ?? [];
+      const professionalSig = signatures.find((item) => item.signerRole === 'PROFESSIONAL');
+      const patientSig = signatures.find((item) => item.signerRole === 'PATIENT' || item.signerRole === 'GUARDIAN');
+      const matchedProfessional = professionalSig?.signerId
+        ? professionals.find((item) => item.userId === professionalSig.signerId)
+        : undefined;
+      const status = detail.effectiveStatus ?? detail.status;
+      const risk = riskPrintLabel(detail.riskAssessment?.level);
+      const documentDate = detail.signedAt ?? detail.completedAt ?? detail.createdAt;
+      const templateName = text(detail.template?.name, text(row.template?.name, 'Anamnese'));
+      const templateVersion = detail.template?.version ?? detail.templateVersion;
+      const audience = detail.template?.audience ? presentationLabel(detail.template.audience) : undefined;
+      const templateSubtitle = [templateName, audience, templateVersion ? `versão ${templateVersion}` : null]
+        .filter(Boolean)
+        .join(' · ');
       const html = buildAnamnesisPrintHtml({
-        title: text(detail.template?.name, text(row.template?.name, 'Anamnese')),
+        title: templateName,
+        templateSubtitle,
         patientName: text(detail.patient?.fullName, patientName) || undefined,
-        clinicName: text(detail.clinic?.tradeName, text(detail.clinic?.legalName, '')) || undefined,
-        statusLabel: presentationLabel(detail.effectiveStatus ?? detail.status),
-        riskLabel: detail.riskAssessment?.level
-          ? presentationLabel(detail.riskAssessment.level)
-          : undefined,
+        birthDateLabel: detail.patient?.birthDate ? dateOnly(detail.patient.birthDate) : (patientBirthDate || undefined),
+        professionalName: professionalSig?.signerName || matchedProfessional?.name,
+        professionalCro: formatPrintCro(matchedProfessional),
+        documentDateLabel: documentDate ? dateOnly(documentDate) : undefined,
+        clinicName: branding.clinicName || clinicFallback,
+        branding,
+        statusLabel: presentationLabel(status),
+        statusTone: anamnesisStatusTone(status),
+        riskLabel: risk?.label,
+        riskTone: risk?.tone,
+        alerts: Array.isArray(detail.alerts) ? detail.alerts : [],
+        patientSignatureName: patientSig?.signerName,
+        professionalSignatureName: professionalSig?.signerName || matchedProfessional?.name,
         schema: (detail.template?.schemaJson ?? null) as AnamnesisSchema | null,
         answers: (detail.answers ?? {}) as Record<string, unknown>,
       });

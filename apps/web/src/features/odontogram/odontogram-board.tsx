@@ -1,44 +1,24 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Printer } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import { dateTime, list, nested, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { dateOnly, dateTime, list, nested, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { fetchPrintBranding } from '@/lib/print/fetch-branding';
+import { formatPrintCro } from '@/lib/print/print-layout';
 import { EmptyState, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
-
-type DentitionType = 'PERMANENT' | 'DECIDUOUS' | 'MIXED';
-
-const PERMANENT_UPPER = [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28];
-const PERMANENT_LOWER = [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38];
-const DECIDUOUS_UPPER = [55, 54, 53, 52, 51, 61, 62, 63, 64, 65];
-const DECIDUOUS_LOWER = [85, 84, 83, 82, 81, 71, 72, 73, 74, 75];
-
-const ARCH_BY_TYPE: Record<DentitionType, { upper: number[]; lower: number[] }> = {
-  PERMANENT: { upper: PERMANENT_UPPER, lower: PERMANENT_LOWER },
-  DECIDUOUS: { upper: DECIDUOUS_UPPER, lower: DECIDUOUS_LOWER },
-  MIXED: {
-    upper: [...PERMANENT_UPPER.slice(0, 3), ...DECIDUOUS_UPPER, ...PERMANENT_UPPER.slice(-3)],
-    lower: [...PERMANENT_LOWER.slice(0, 3), ...DECIDUOUS_LOWER, ...PERMANENT_LOWER.slice(-3)],
-  },
-};
-
-/** 5 faces clínicas: V, L/P, M, D, O/I */
-const FACES = [
-  { key: 'V', label: 'Vestibular', short: 'V' },
-  { key: 'L', label: 'Lingual/Palatina', short: 'L/P' },
-  { key: 'M', label: 'Mesial', short: 'M' },
-  { key: 'D', label: 'Distal', short: 'D' },
-  { key: 'O', label: 'Oclusal/Incisal', short: 'O/I' },
-] as const;
-
-type FaceKey = (typeof FACES)[number]['key'];
-
-const DENTITION_OPTIONS: Array<{ value: DentitionType; label: string }> = [
-  { value: 'PERMANENT', label: 'Permanente' },
-  { value: 'DECIDUOUS', label: 'Decídua' },
-  { value: 'MIXED', label: 'Mista' },
-];
+import {
+  ARCH_BY_TYPE,
+  DENTITION_OPTIONS,
+  FACES,
+  isUpperArch,
+  normalizeFaceKey,
+  parseDentitionType,
+  type DentitionType,
+  type FaceKey,
+} from './odontogram-anatomy';
+import { buildOdontogramPrintHtml, printOdontogramDocument } from './print-odontogram';
 
 function faceClass(status?: string) {
   const value = String(status ?? '').toUpperCase();
@@ -48,14 +28,11 @@ function faceClass(status?: string) {
   return '';
 }
 
-function isUpperArch(tooth: number) {
-  const decade = Math.floor(tooth / 10);
-  return decade === 1 || decade === 2 || decade === 5 || decade === 6;
-}
-
 export function OdontogramBoard({
   patientId,
   clinicId,
+  patientName,
+  clinicName,
   professionals,
   conditions,
   odontograms,
@@ -63,21 +40,19 @@ export function OdontogramBoard({
 }: {
   patientId: string;
   clinicId: string;
-  professionals: Array<{ id: string; name: string }>;
+  patientName?: string;
+  clinicName?: string;
+  professionals: Array<{ id: string; name: string; croNumber?: string; croState?: string }>;
   conditions: RecordValue[];
   odontograms: RecordValue[];
   onSaved: () => void;
 }) {
-  const [dentitionType, setDentitionType] = useState<DentitionType>(() => {
-    const fromLatest = String(odontograms[0]?.dentitionType ?? 'PERMANENT').toUpperCase();
-    if (fromLatest === 'DECIDUOUS' || fromLatest === 'MIXED') return fromLatest;
-    return 'PERMANENT';
-  });
+  const [dentitionType, setDentitionType] = useState<DentitionType>(() => parseDentitionType(odontograms[0]?.dentitionType));
   const versionsForType = useMemo(
-    () => odontograms.filter((item) => String(item.dentitionType ?? 'PERMANENT').toUpperCase() === dentitionType),
+    () => odontograms.filter((item) => parseDentitionType(item.dentitionType) === dentitionType),
     [odontograms, dentitionType],
   );
-  const latest = versionsForType[0] ?? odontograms.find((item) => String(item.dentitionType).toUpperCase() === dentitionType);
+  const latest = versionsForType[0] ?? odontograms.find((item) => parseDentitionType(item.dentitionType) === dentitionType);
   const findings = list(latest?.findings);
   const arches = ARCH_BY_TYPE[dentitionType];
 
@@ -99,10 +74,9 @@ export function OdontogramBoard({
   const findingsByToothFace = useMemo(() => {
     const map = new Map<string, RecordValue>();
     for (const finding of findings) {
-      const face = String(finding.face ?? '').toUpperCase();
-      const normalized = face === 'P' || face === 'L/P' ? 'L' : face === 'I' || face === 'O/I' ? 'O' : face;
+      const normalized = normalizeFaceKey(finding.face);
       map.set(`${finding.toothFdi}:${normalized}`, finding);
-      if (!face || face === 'V') map.set(`${finding.toothFdi}:`, finding);
+      if (!normalized || normalized === 'V') map.set(`${finding.toothFdi}:`, finding);
     }
     return map;
   }, [findings]);
@@ -207,6 +181,43 @@ export function OdontogramBoard({
       onSaved();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Falha ao salvar odontograma.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function printCurrent() {
+    if (!latest) {
+      setError('Não há versão de odontograma para imprimir.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const professional = professionals.find((item) => item.id === String(latest.professionalId ?? ''));
+      const branding = await fetchPrintBranding(clinicId, clinicName);
+      const html = buildOdontogramPrintHtml({
+        patientName: patientName || undefined,
+        clinicName: branding.clinicName || clinicName,
+        branding,
+        professionalName: professional?.name,
+        professionalCro: formatPrintCro(professional),
+        dentitionType,
+        updatedAtLabel: dateOnly(latest.recordedAt ?? latest.createdAt),
+        versionLabel: `Odontograma #${text(latest.version, '1')}`,
+        findings: findings.map((finding) => ({
+          toothFdi: text(finding.toothFdi, ''),
+          face: finding.face ? String(finding.face) : null,
+          status: finding.status ? String(finding.status) : null,
+          notes: finding.notes ? String(finding.notes) : null,
+          conditionName: text(nested(finding, 'condition').name, ''),
+        })),
+      });
+      if (!printOdontogramDocument(html)) {
+        setError('Permita a impressão para gerar o odontograma.');
+      }
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Falha ao preparar impressão.');
     } finally {
       setBusy(false);
     }
@@ -391,37 +402,41 @@ export function OdontogramBoard({
       </Modal>
 
       <div className="odontogram-toolbar compact">
-        <div>
-          <p className="muted-note">
-            {latest
-              ? `Versão ${text(latest.version, '1')} · ${presentationLabel(latest.dentitionType)} · ${dateTime(latest.createdAt ?? latest.recordedAt)}`
-              : `Nenhuma versão ${presentationLabel(dentitionType)}.`}
-          </p>
+        <p className="muted-note odontogram-toolbar-meta">
+          {latest
+            ? `Versão ${text(latest.version, '1')} · ${presentationLabel(latest.dentitionType)} · ${dateTime(latest.createdAt ?? latest.recordedAt)}`
+            : `Nenhuma versão ${presentationLabel(dentitionType)}.`}
+        </p>
+        <div className="segmented" role="group" aria-label="Tipo de dentição">
+          {DENTITION_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={dentitionType === option.value ? 'active' : ''}
+              onClick={() => changeDentition(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
-        <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <div className="segmented" role="group" aria-label="Tipo de dentição">
-            {DENTITION_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={dentitionType === option.value ? 'active' : ''}
-                onClick={() => changeDentition(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <div className="lote-field">
-            <label className="checkbox-row" style={{ margin: 0 }}>
-              <input type="checkbox" checked={multiTooth} onChange={(event) => setMultiTooth(event.target.checked)} />
-              Pintura em lote
-            </label>
-            <small>Marque para selecionar vários dentes e aplicar a mesma condição de uma vez.</small>
-          </div>
+        <label
+          className="checkbox-row lote-toggle"
+          title="Selecione vários dentes e aplique a mesma condição de uma vez."
+        >
+          <input type="checkbox" checked={multiTooth} onChange={(event) => setMultiTooth(event.target.checked)} />
+          Pintura em lote
+        </label>
+        <div className="heading-actions odontogram-toolbar-action">
+          <button type="button" className="button small" disabled={busy || !latest} onClick={() => void printCurrent()}>
+            <Printer size={14} /> Imprimir
+          </button>
           <button type="button" className="button primary small" onClick={openInspectorForNew}>
             <Plus size={14} /> Registrar condição
           </button>
         </div>
+        {multiTooth ? (
+          <p className="muted-note odontogram-lote-hint">Selecione os dentes na arcada e depois registre a condição.</p>
+        ) : null}
       </div>
 
       {versionsForType.length === 0 && !selectedTeeth.length ? (

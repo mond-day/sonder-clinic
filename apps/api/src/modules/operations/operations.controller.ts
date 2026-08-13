@@ -1,6 +1,6 @@
 import { Body, ConflictException, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Matches, Min, MinLength, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Matches, Max, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { Request, Response } from 'express';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
@@ -66,7 +66,8 @@ class CostCenterPatchDto {
   @IsOptional() @IsBoolean() active?: boolean;
 }
 class TreatmentItemDto {
-  @IsUUID() procedureId!: string; @IsUUID() professionalId!: string;
+  @IsUUID() procedureId!: string;
+  @IsOptional() @IsUUID() professionalId?: string;
   @IsOptional() @IsString() toothFdi?: string; @IsOptional() @IsString() face?: string;
   @IsInt() @Min(1) quantity!: number; @IsString() unitPrice!: string;
   @IsOptional() @IsString() discount?: string;
@@ -82,6 +83,12 @@ class ApprovalDto {
   @IsArray() @IsUUID(undefined, { each: true }) itemIds!: string[];
   @IsOptional() @IsInt() @Min(1) version?: number;
   @IsOptional() @IsString() paymentMethod?: string;
+  @IsOptional() @IsDateString() dueDate?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(24) installments?: number;
+}
+class EnsureContractDto {
+  @IsOptional() @IsString() paymentMethod?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(24) installments?: number;
   @IsOptional() @IsDateString() dueDate?: string;
 }
 class SessionDto {
@@ -102,6 +109,7 @@ class SessionCorrectionDto {
 class CompleteItemDto {
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsDateString() clinicalDate?: string;
+  @IsOptional() @IsUUID() professionalId?: string;
 }
 class DocumentTemplateDto {
   @IsString() @MinLength(2) type!: string;
@@ -133,7 +141,7 @@ class SignDocumentDto {
   @IsOptional() @IsString() signerId?: string;
   @IsString() signerName!: string;
   @IsString() role!: string;
-  @IsIn(['DRAWN', 'REMOTE', 'A1']) method!: string;
+  @IsIn(['DRAWN', 'REMOTE', 'A1', 'ELECTRONIC_LOCAL', 'ELECTRONIC_REMOTE']) method!: string;
   @IsOptional() @IsObject() evidence?: Record<string, unknown>;
   @IsOptional() @IsUUID() clinicId?: string;
 }
@@ -229,6 +237,11 @@ class ReceivableDto {
   @IsString() description!: string; @IsString() originalAmount!: string; @IsOptional() @IsString() discount?: string;
   @IsOptional() @IsString() surcharge?: string; @IsDateString() dueDate!: string; @IsOptional() @IsString() paymentMethod?: string;
 }
+class ReceivablePatchDto {
+  @IsOptional() @IsString() @MinLength(3) description?: string;
+  @IsOptional() @IsDateString() dueDate?: string;
+  @IsOptional() @IsString() paymentMethod?: string | null;
+}
 class PaymentDto {
   @IsString() @Matches(/^(?!0+(?:\.0+)?$)\d+(\.\d{1,2})?$/) amount!: string;
   @IsString() method!: string;
@@ -316,7 +329,9 @@ export class OperationsController {
   constructor(private readonly operations: OperationsService) {}
 
   @Get('procedures') @RequirePermissions('treatment.view')
-  procedures(@Req() req: AuthenticatedRequest) { return this.operations.procedures(req.auth.organizationId); }
+  procedures(@Req() req: AuthenticatedRequest, @Query('includeInactive') includeInactive?: string) {
+    return this.operations.procedures(req.auth.organizationId, includeInactive === 'true');
+  }
   @Post('procedures') @RequirePermissions('procedure_table.manage')
   createProcedure(@Req() req: AuthenticatedRequest, @Body() body: ProcedureDto) { return this.operations.createProcedure(req.auth.organizationId, body); }
   @Patch('procedures/:id') @RequirePermissions('procedure_table.manage')
@@ -414,8 +429,16 @@ export class OperationsController {
       id,
       body.itemIds,
       body.version,
-      { paymentMethod: body.paymentMethod, dueDate: body.dueDate },
+      { paymentMethod: body.paymentMethod, dueDate: body.dueDate, installments: body.installments },
     );
+  }
+  @Get('treatment-plans/:id/documents') @RequirePermissions('treatment.view', 'document.view')
+  treatmentDocuments(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.operations.listTreatmentDocuments(req.auth.organizationId, id);
+  }
+  @Post('treatment-plans/:id/contract') @RequirePermissions('treatment.approve', 'document.create')
+  ensureContract(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: EnsureContractDto) {
+    return this.operations.ensureTreatmentContract(req.auth.organizationId, req.auth.userId, id, body);
   }
   @Post('treatment-plans/:id/cancel') @RequirePermissions('treatment.cancel')
   cancel(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: CancelReasonDto) {
@@ -477,6 +500,7 @@ export class OperationsController {
     return this.operations.completeTreatmentItem(req.auth.organizationId, req.auth.userId, id, {
       notes: body.notes,
       clinicalDate: body.clinicalDate,
+      professionalId: body.professionalId,
     });
   }
   @Post('treatment-sessions/:id/corrections') @RequirePermissions('treatment.execute', 'medical_record.correct')
@@ -623,6 +647,10 @@ export class OperationsController {
   }
   @Post('receivables') @RequirePermissions('financial.create')
   createReceivable(@Req() req: AuthenticatedRequest, @Body() body: ReceivableDto) { return this.operations.createReceivable(req.auth.organizationId, body); }
+  @Patch('receivables/:id') @RequirePermissions('financial.create')
+  updateReceivable(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: ReceivablePatchDto) {
+    return this.operations.updateReceivable(req.auth.organizationId, id, body);
+  }
   @Post('receivables/:id/payments') @RequirePermissions('financial.create')
   payment(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Headers('idempotency-key') key: string, @Body() body: PaymentDto) {
     if (!key) throw new ConflictException('Idempotency-Key é obrigatório.');

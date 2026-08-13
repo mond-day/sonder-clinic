@@ -1,10 +1,12 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { Pencil, Power } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { currency, dateOnly, list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
+import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-inputs';
 
 type Props = {
   clinicId: string;
@@ -19,6 +21,7 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
+  const [editing, setEditing] = useState<RecordValue | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -36,19 +39,22 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
     const data = new FormData(event.currentTarget);
     setBusy(true);
     setFormError('');
+    const body = {
+      legalName: String(data.get('legalName') || '').trim(),
+      tradeName: String(data.get('tradeName') || '').trim(),
+      taxId: String(data.get('taxId') || '').trim() || undefined,
+      email: String(data.get('email') || '').trim() || undefined,
+      phone: String(data.get('phone') || '').trim() || undefined,
+    };
     try {
-      await api.post('/settings/clinics', {
-        legalName: String(data.get('legalName') || '').trim(),
-        tradeName: String(data.get('tradeName') || '').trim(),
-        taxId: String(data.get('taxId') || '').trim() || undefined,
-        email: String(data.get('email') || '').trim() || undefined,
-        phone: String(data.get('phone') || '').trim() || undefined,
-      });
+      if (editing) await api.patch(`/settings/clinics/${String(editing.id)}`, body);
+      else await api.post('/settings/clinics', body);
       setOpen(false);
+      setEditing(null);
       load();
       onClinicsChanged?.();
     } catch (cause) {
-      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar a clínica.');
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar a clínica.');
     } finally {
       setBusy(false);
     }
@@ -93,6 +99,9 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
                 <StatusBadge tone={row.status === 'ACTIVE' ? 'green' : 'gray'}>
                   {presentationLabel(row.status)}
                 </StatusBadge>
+                <button className="button small" type="button" onClick={() => { setEditing(row); setFormError(''); setOpen(true); }}>
+                  Editar
+                </button>
                 <button className="button small" type="button" onClick={() => void toggleStatus(row)}>
                   {row.status === 'ACTIVE' ? 'Inativar' : 'Reativar'}
                 </button>
@@ -102,15 +111,22 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
         </div>
       )}
       <p className="muted-note">Contexto ativo: {clinics.length} clínica(s) no seletor. A última clínica ativa não pode ser inativada.</p>
-      <Modal open={open} title="Nova clínica" description="Cadastro administrativo da unidade." onClose={() => setOpen(false)} size="small" confirmOnClose>
-        <form className="mutation-form" onSubmit={createClinic}>
-          <label className="span-2">Nome fantasia<input name="tradeName" minLength={2} required autoFocus /></label>
-          <label className="span-2">Razão social<input name="legalName" minLength={2} required /></label>
-          <label>CNPJ<input name="taxId" /></label>
-          <label>Telefone<input name="phone" /></label>
-          <label className="span-2">E-mail<input name="email" type="email" /></label>
+      <Modal
+        open={open}
+        title={editing ? 'Editar clínica' : 'Nova clínica'}
+        description="Cadastro administrativo da unidade."
+        onClose={() => { setOpen(false); setEditing(null); }}
+        size="small"
+        confirmOnClose
+      >
+        <form className="mutation-form" onSubmit={createClinic} key={editing ? String(editing.id) : 'new'}>
+          <label className="span-2">Nome fantasia<input name="tradeName" minLength={2} required autoFocus defaultValue={text(editing?.tradeName, '')} /></label>
+          <label className="span-2">Razão social<input name="legalName" minLength={2} required defaultValue={text(editing?.legalName, '')} /></label>
+          <label>CNPJ<input name="taxId" defaultValue={text(editing?.taxId, '')} /></label>
+          <label>Telefone<input name="phone" defaultValue={text(editing?.phone, '')} /></label>
+          <label className="span-2">E-mail<input name="email" type="email" defaultValue={text(editing?.email, '')} /></label>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
-          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar clínica'}</button>
+          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : editing ? 'Salvar' : 'Criar clínica'}</button>
         </form>
       </Modal>
     </div>
@@ -123,6 +139,9 @@ export function PriceTablesAdminPanel({ clinicId, procedures }: { clinicId: stri
   const [error, setError] = useState('');
   const [open, setOpen] = useState(false);
   const [itemTableId, setItemTableId] = useState('');
+  const [editingTable, setEditingTable] = useState<RecordValue | null>(null);
+  const [viewingTable, setViewingTable] = useState<RecordValue | null>(null);
+  const [editingItem, setEditingItem] = useState<{ tableId: string; item: RecordValue } | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -131,7 +150,13 @@ export function PriceTablesAdminPanel({ clinicId, procedures }: { clinicId: stri
     setLoading(true);
     setError('');
     api.get<RecordValue[]>(`/price-tables?clinicId=${clinicId}`)
-      .then((data) => setTables(list(data)))
+      .then((data) => {
+        const next = list(data);
+        setTables(next);
+        setViewingTable((current) => (
+          current ? next.find((row) => String(row.id) === String(current.id)) ?? current : current
+        ));
+      })
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao listar tabelas.'))
       .finally(() => setLoading(false));
   }, [clinicId]);
@@ -169,8 +194,8 @@ export function PriceTablesAdminPanel({ clinicId, procedures }: { clinicId: stri
     try {
       await api.post(`/price-tables/${itemTableId}/items`, {
         procedureId: String(data.get('procedureId')),
-        price: String(data.get('price')).replace(',', '.'),
-        cost: String(data.get('cost') || '0').replace(',', '.'),
+        price: String(data.get('price') || '0'),
+        cost: String(data.get('cost') || '0'),
       });
       setItemTableId('');
       load();
@@ -187,6 +212,62 @@ export function PriceTablesAdminPanel({ clinicId, procedures }: { clinicId: stri
       load();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Falha ao atualizar tabela.');
+    }
+  }
+
+  async function saveTable(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingTable) return;
+    const data = new FormData(event.currentTarget);
+    setBusy(true);
+    setFormError('');
+    try {
+      await api.patch(`/price-tables/${String(editingTable.id)}`, {
+        name: String(data.get('name') || '').trim(),
+        type: String(data.get('type') || '').trim(),
+        validFrom: String(data.get('validFrom') || ''),
+        validUntil: String(data.get('validUntil') || '') || null,
+      });
+      setEditingTable(null);
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar a tabela.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingItem) return;
+    const data = new FormData(event.currentTarget);
+    setBusy(true);
+    setFormError('');
+    try {
+      await api.post(`/price-tables/${editingItem.tableId}/items`, {
+        procedureId: String(editingItem.item.procedureId),
+        price: String(data.get('price') || '0'),
+        cost: String(data.get('cost') || '0'),
+      });
+      setEditingItem(null);
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar o preço.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeItem(tableId: string, itemId: string) {
+    try {
+      await api.delete(`/price-tables/${tableId}/items/${itemId}`);
+      load();
+      setViewingTable((current) => {
+        if (!current || String(current.id) !== tableId) return current;
+        return { ...current, items: list(current.items).filter((item) => String(item.id) !== itemId) };
+      });
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Falha ao remover item.');
     }
   }
 
@@ -219,6 +300,8 @@ export function PriceTablesAdminPanel({ clinicId, procedures }: { clinicId: stri
                 </div>
                 <div className="row-actions">
                   <StatusBadge tone={row.active ? 'green' : 'gray'}>{row.active ? 'Ativa' : 'Inativa'}</StatusBadge>
+                  <button className="button small" type="button" onClick={() => setViewingTable(row)}>Ver</button>
+                  <button className="button small" type="button" onClick={() => { setEditingTable(row); setFormError(''); }}>Editar</button>
                   <button className="button small" type="button" onClick={() => setItemTableId(String(row.id))}>+ Preço</button>
                   <button className="button small" type="button" onClick={() => void toggleActive(row)}>
                     {row.active ? 'Inativar' : 'Ativar'}
@@ -255,11 +338,71 @@ export function PriceTablesAdminPanel({ clinicId, procedures }: { clinicId: stri
               ))}
             </select>
           </label>
-          <label>Preço<input name="price" type="number" min="0" step="0.01" required /></label>
-          <label>Custo<input name="cost" type="number" min="0" step="0.01" defaultValue="0" /></label>
+          <label>Preço<UncontrolledMoneyInput name="price" required /></label>
+          <label>Custo<UncontrolledMoneyInput name="cost" defaultValue="0" /></label>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
           <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar item'}</button>
         </form>
+      </Modal>
+      <Modal open={Boolean(editingTable)} title="Editar tabela" onClose={() => { setEditingTable(null); setFormError(''); }} size="small" confirmOnClose>
+        {editingTable ? (
+          <form className="mutation-form" onSubmit={saveTable} key={String(editingTable.id)}>
+            <label className="span-2">Nome<input name="name" minLength={2} required defaultValue={text(editingTable.name, '')} /></label>
+            <label>Tipo
+              <select name="type" defaultValue={text(editingTable.type, 'PRIVATE')}>
+                <option value="PRIVATE">Particular</option>
+                <option value="INSURANCE">Convênio</option>
+                <option value="PROMOTIONAL">Promocional</option>
+              </select>
+            </label>
+            <label>Válida de<input name="validFrom" type="date" required defaultValue={String(editingTable.validFrom ?? '').slice(0, 10)} /></label>
+            <label className="span-2">Válida até<input name="validUntil" type="date" defaultValue={String(editingTable.validUntil ?? '').slice(0, 10)} /></label>
+            {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
+            <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar tabela'}</button>
+          </form>
+        ) : null}
+      </Modal>
+      <Modal open={Boolean(viewingTable)} title={text(viewingTable?.name, 'Itens da tabela')} description="Preços vinculados aos procedimentos." onClose={() => setViewingTable(null)}>
+        {viewingTable ? (
+          list(viewingTable.items).length === 0 ? (
+            <EmptyState title="Sem itens" description="Adicione um preço a esta tabela." />
+          ) : (
+            <div className="settings-list">
+              {list(viewingTable.items).map((item) => {
+                const procedure = item.procedure && typeof item.procedure === 'object' ? item.procedure as RecordValue : null;
+                return (
+                  <div className="settings-row" key={String(item.id)}>
+                    <div>
+                      <strong>{text(procedure?.name ?? item.procedureId)}</strong>
+                      <span>{currency(item.price)} · custo {currency(item.cost)}</span>
+                    </div>
+                    <div className="row-actions">
+                      <button className="button small" type="button" onClick={() => { setEditingItem({ tableId: String(viewingTable.id), item }); setFormError(''); }}>Editar</button>
+                      <button className="button small" type="button" onClick={() => void removeItem(String(viewingTable.id), String(item.id))}>Inativar</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : null}
+      </Modal>
+      <Modal open={Boolean(editingItem)} title="Editar preço" onClose={() => { setEditingItem(null); setFormError(''); }} size="small" confirmOnClose>
+        {editingItem ? (
+          <form className="mutation-form" onSubmit={saveItem} key={String(editingItem.item.id)}>
+            <p className="muted-note span-2">
+              {text(
+                editingItem.item.procedure && typeof editingItem.item.procedure === 'object'
+                  ? (editingItem.item.procedure as RecordValue).name
+                  : editingItem.item.procedureId,
+              )}
+            </p>
+            <label>Preço<UncontrolledMoneyInput name="price" required defaultValue={String(editingItem.item.price ?? '')} /></label>
+            <label>Custo<UncontrolledMoneyInput name="cost" defaultValue={String(editingItem.item.cost ?? '0')} /></label>
+            {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
+            <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar preço'}</button>
+          </form>
+        ) : null}
       </Modal>
     </div>
   );
@@ -389,7 +532,7 @@ export function FinanceCatalogAdminPanel() {
         ))}
       </div>
       {!loading && categories.length === 0 && centers.length === 0 ? (
-        <EmptyState title="Catálogo vazio" description="Categorias alimentam Payables (A32). Expense legado permanece só em seed/relatório." />
+        <EmptyState title="Catálogo vazio" description="Cadastre categorias de receita e despesa e centros de custo para classificar os lançamentos." />
       ) : null}
       <Modal open={open === 'category'} title="Nova categoria financeira" onClose={() => setOpen(null)} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={createCategory}>
@@ -423,6 +566,7 @@ export function LaboratoriesAdminPanel({ clinicId }: { clinicId: string }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
+  const [editing, setEditing] = useState<RecordValue | null>(null);
 
   const load = useCallback(() => {
     if (!clinicId) return;
@@ -441,16 +585,19 @@ export function LaboratoriesAdminPanel({ clinicId }: { clinicId: string }) {
     const data = new FormData(event.currentTarget);
     setBusy(true);
     setFormError('');
+    const body = {
+      clinicId,
+      name: String(data.get('name') || '').trim(),
+      phone: String(data.get('phone') || '').trim() || undefined,
+      email: String(data.get('email') || '').trim() || undefined,
+      defaultLeadDays: data.get('defaultLeadDays') ? Number(data.get('defaultLeadDays')) : undefined,
+      notes: String(data.get('notes') || '').trim() || undefined,
+    };
     try {
-      await api.post('/laboratories', {
-        clinicId,
-        name: String(data.get('name') || '').trim(),
-        phone: String(data.get('phone') || '').trim() || undefined,
-        email: String(data.get('email') || '').trim() || undefined,
-        defaultLeadDays: data.get('defaultLeadDays') ? Number(data.get('defaultLeadDays')) : undefined,
-        notes: String(data.get('notes') || '').trim() || undefined,
-      });
+      if (editing) await api.patch(`/laboratories/${String(editing.id)}`, body);
+      else await api.post('/laboratories', body);
       setOpen(false);
+      setEditing(null);
       load();
     } catch (cause) {
       setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o laboratório.');
@@ -479,7 +626,7 @@ export function LaboratoriesAdminPanel({ clinicId }: { clinicId: string }) {
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
       {loading ? <div className="state-message">Carregando…</div> : null}
       {!loading && rows.length === 0 ? (
-        <EmptyState title="Nenhum laboratório" description="Cadastre parceiros para seleção por ID nos casos." />
+        <EmptyState title="Nenhum laboratório" description="Cadastre laboratórios parceiros para usar nos casos clínicos." />
       ) : (
         <div className="settings-list">
           {rows.map((row) => (
@@ -494,6 +641,7 @@ export function LaboratoriesAdminPanel({ clinicId }: { clinicId: string }) {
               </div>
               <div className="row-actions">
                 <StatusBadge tone={row.status === 'ACTIVE' ? 'green' : 'gray'}>{presentationLabel(row.status)}</StatusBadge>
+                <button className="button small" type="button" onClick={() => { setEditing(row); setFormError(''); setOpen(true); }}>Editar</button>
                 <button className="button small" type="button" onClick={() => void toggleStatus(row)}>
                   {row.status === 'ACTIVE' ? 'Inativar' : 'Reativar'}
                 </button>
@@ -502,15 +650,15 @@ export function LaboratoriesAdminPanel({ clinicId }: { clinicId: string }) {
           ))}
         </div>
       )}
-      <Modal open={open} title="Novo laboratório" onClose={() => setOpen(false)} size="small" confirmOnClose>
-        <form className="mutation-form" onSubmit={createLab}>
-          <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
-          <label>Telefone<input name="phone" /></label>
-          <label>Lead (dias)<input name="defaultLeadDays" type="number" min={0} /></label>
-          <label className="span-2">E-mail<input name="email" type="email" /></label>
-          <label className="span-2">Notas<textarea name="notes" rows={2} /></label>
+      <Modal open={open} title={editing ? 'Editar laboratório' : 'Novo laboratório'} onClose={() => { setOpen(false); setEditing(null); }} size="small" confirmOnClose>
+        <form className="mutation-form" onSubmit={createLab} key={editing ? String(editing.id) : 'new'}>
+          <label className="span-2">Nome<input name="name" minLength={2} required autoFocus defaultValue={text(editing?.name, '')} /></label>
+          <label>Telefone<input name="phone" defaultValue={text(editing?.phone, '')} /></label>
+          <label>Prazo médio (dias)<input name="defaultLeadDays" type="number" min={0} defaultValue={editing?.defaultLeadDays != null ? String(editing.defaultLeadDays) : ''} /></label>
+          <label className="span-2">E-mail<input name="email" type="email" defaultValue={text(editing?.email, '')} /></label>
+          <label className="span-2">Notas<textarea name="notes" rows={2} defaultValue={text(editing?.notes, '')} /></label>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
-          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar'}</button>
+          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : editing ? 'Salvar' : 'Criar'}</button>
         </form>
       </Modal>
     </div>
@@ -528,7 +676,7 @@ export function OutboxDeadLetterPanel() {
     setError('');
     api.get<RecordValue[]>('/settings/outbox/dead-letter?limit=50')
       .then((data) => setRows(list(data)))
-      .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao listar dead-letters (requer organization.manage ou audit.view).'))
+      .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Não foi possível listar os envios com falha. Verifique sua permissão de administração.'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -563,10 +711,9 @@ export function OutboxDeadLetterPanel() {
     <div className="form-section" style={{ padding: '0 14px 14px' }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div>
-          <h3 style={{ margin: 0 }}>Fila de falhas assíncronas</h3>
+          <h3 style={{ margin: 0 }}>Fila de falhas de envio</h3>
           <p className="muted-note" style={{ margin: '6px 0 0' }}>
-            Eventos do outbox que esgotaram tentativas de processamento (integrações, mensagens, jobs em background).
-            Não se trata de retornos clínicos vencidos — é a fila técnica de reprocessamento.
+            Integrações e mensagens que não foram concluídas após várias tentativas. Use reprocessar ou descartar.
           </p>
         </div>
         <button className="button small" type="button" onClick={load} disabled={loading}>Atualizar</button>
@@ -576,7 +723,7 @@ export function OutboxDeadLetterPanel() {
       {!loading && rows.length === 0 ? (
         <EmptyState
           title="Nenhuma falha pendente"
-          description="Quando um job assíncrono falhar após várias tentativas, ele aparece aqui para reprocessar ou descartar."
+          description="Quando um envio automático falhar após várias tentativas, ele aparece aqui para reprocessar ou descartar."
         />
       ) : (
         <div className="settings-list">
@@ -618,7 +765,7 @@ export function CommunicationTemplatesPanel() {
     setError('');
     api.get<RecordValue[]>('/communication/templates')
       .then((data) => setTemplates(list(data)))
-      .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao listar templates.'))
+      .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao listar modelos de mensagem.'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -639,7 +786,7 @@ export function CommunicationTemplatesPanel() {
       setOpen(false);
       load();
     } catch (cause) {
-      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o template.');
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o modelo.');
     } finally {
       setBusy(false);
     }
@@ -650,20 +797,20 @@ export function CommunicationTemplatesPanel() {
       await api.patch(`/communication/templates/${String(row.id)}`, { active: !row.active });
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Falha ao atualizar template.');
+      setError(cause instanceof ApiError ? cause.message : 'Falha ao atualizar o modelo.');
     }
   }
 
   return (
     <div className="form-section" style={{ padding: '0 14px 14px' }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <h3 style={{ margin: 0 }}>Templates de mensagem</h3>
-        <button className="button small primary" type="button" onClick={() => setOpen(true)}>Novo template</button>
+        <h3 style={{ margin: 0 }}>Modelos de mensagem</h3>
+        <button className="button small primary" type="button" onClick={() => setOpen(true)}>Novo modelo</button>
       </header>
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
       {loading ? <div className="state-message">Carregando…</div> : null}
       {!loading && templates.length === 0 ? (
-        <EmptyState title="Nenhum template" description="Cadastre textos com variáveis {{patientName}}, {{date}}, {{clinicName}}." />
+        <EmptyState title="Nenhum modelo" description="Cadastre textos com espaços para o nome do paciente, a data e o nome da clínica." />
       ) : (
         <div className="settings-list">
           {templates.map((row) => (
@@ -686,7 +833,7 @@ export function CommunicationTemplatesPanel() {
         </div>
       )}
       <p className="muted-note">E-mail e WhatsApp usam os canais configurados abaixo. Sem canal ativo, os envios ficam pendentes.</p>
-      <Modal open={open} title="Novo template" description="Variáveis: {{patientName}}, {{date}}, {{clinicName}}, {{professionalName}}." onClose={() => setOpen(false)} confirmOnClose>
+      <Modal open={open} title="Novo modelo" description="Use {{patientName}}, {{date}}, {{clinicName}} e {{professionalName}} para preencher automaticamente." onClose={() => setOpen(false)} confirmOnClose>
         <form className="mutation-form" onSubmit={createTemplate}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label>Categoria
@@ -704,7 +851,7 @@ export function CommunicationTemplatesPanel() {
           </label>
           <label className="span-2">Conteúdo<textarea name="content" rows={4} required minLength={5} placeholder="Olá {{patientName}}, lembrete da consulta em {{date}}." /></label>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
-          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar template'}</button>
+          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar modelo'}</button>
         </form>
       </Modal>
     </div>
@@ -860,7 +1007,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
               ))}
             </select>
           </label>
-          <label className="span-2">Template (opcional)
+          <label className="span-2">Modelo (opcional)
             <select name="templateId" defaultValue="">
               <option value="">Texto livre</option>
               {templates.map((t) => (
@@ -868,8 +1015,8 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
               ))}
             </select>
           </label>
-          <label className="span-2">Destinatário<input name="recipient" placeholder="email@ou.telefone" required /></label>
-          <label className="span-2">Conteúdo (se sem template)<textarea name="content" rows={3} placeholder="Mensagem…" /></label>
+          <label className="span-2">Destinatário<input name="recipient" placeholder="e-mail ou telefone" required /></label>
+          <label className="span-2">Conteúdo (se não usar modelo)<textarea name="content" rows={3} placeholder="Mensagem…" /></label>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
           {sendResult ? <p className="form-success span-2" role="status">{sendResult}</p> : null}
           <button className="button primary" disabled={busy}>{busy ? 'Enviando…' : 'Enviar'}</button>
@@ -884,6 +1031,7 @@ export function OdontogramConditionsAdminPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<RecordValue | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -927,6 +1075,28 @@ export function OdontogramConditionsAdminPanel() {
     }
   }
 
+  async function saveCondition(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editing) return;
+    const data = new FormData(event.currentTarget);
+    setBusy(true);
+    setFormError('');
+    try {
+      await api.patch(`/odontogram-conditions/${String(editing.id)}`, {
+        code: String(data.get('code') || '').trim().toUpperCase(),
+        name: String(data.get('name') || '').trim(),
+        color: String(data.get('color') || '#159a96'),
+        active: data.get('active') === 'true',
+      });
+      setEditing(null);
+      load();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar a condição.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="form-section" style={{ padding: '0 14px 14px' }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
@@ -950,8 +1120,23 @@ export function OdontogramConditionsAdminPanel() {
               </div>
               <div className="row-actions">
                 <StatusBadge tone={row.active ? 'green' : 'gray'}>{row.active ? 'Ativa' : 'Inativa'}</StatusBadge>
-                <button className="button small" type="button" onClick={() => void toggleActive(row)}>
-                  {row.active ? 'Inativar' : 'Ativar'}
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Editar"
+                  aria-label={`Editar ${text(row.code)}`}
+                  onClick={() => { setEditing(row); setFormError(''); }}
+                >
+                  <Pencil size={15} />
+                </button>
+                <button
+                  type="button"
+                  className={`icon-button ${row.active ? 'danger' : ''}`}
+                  title={row.active ? 'Inativar' : 'Reativar'}
+                  aria-label={`${row.active ? 'Inativar' : 'Reativar'} ${text(row.code)}`}
+                  onClick={() => void toggleActive(row)}
+                >
+                  <Power size={15} />
                 </button>
               </div>
             </div>
@@ -966,6 +1151,23 @@ export function OdontogramConditionsAdminPanel() {
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
           <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar'}</button>
         </form>
+      </Modal>
+      <Modal open={Boolean(editing)} title="Editar condição" onClose={() => { setEditing(null); setFormError(''); }} size="small" confirmOnClose>
+        {editing ? (
+          <form className="mutation-form" onSubmit={saveCondition} key={String(editing.id)}>
+            <label>Código<input name="code" minLength={1} maxLength={20} required defaultValue={text(editing.code, '')} /></label>
+            <label>Cor<input name="color" type="color" defaultValue={text(editing.color, '#c45c26')} required /></label>
+            <label className="span-2">Nome<input name="name" minLength={2} required defaultValue={text(editing.name, '')} /></label>
+            <label className="span-2">Status
+              <select name="active" defaultValue={editing.active ? 'true' : 'false'}>
+                <option value="true">Ativa</option>
+                <option value="false">Inativa</option>
+              </select>
+            </label>
+            {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
+            <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
+          </form>
+        ) : null}
       </Modal>
     </div>
   );
@@ -986,6 +1188,7 @@ function CatalogList({
   onStatusFilter,
   onCreate,
   onEdit,
+  onToggleActive,
   renderSecondary,
 }: {
   title: string;
@@ -1000,6 +1203,7 @@ function CatalogList({
   onStatusFilter: (value: 'all' | 'active' | 'inactive') => void;
   onCreate: () => void;
   onEdit: (row: CatalogRow) => void;
+  onToggleActive?: (row: CatalogRow) => void;
   renderSecondary: (row: CatalogRow) => string;
 }) {
   const filtered = rows.filter((row) => {
@@ -1009,6 +1213,7 @@ function CatalogList({
     const q = search.toLowerCase();
     return String(row.name ?? '').toLowerCase().includes(q);
   });
+  const [pendingToggle, setPendingToggle] = useState<CatalogRow | null>(null);
 
   return (
     <div className="form-section" style={{ padding: '0 14px 14px' }}>
@@ -1019,9 +1224,9 @@ function CatalogList({
         </div>
         <button className="button small primary" type="button" onClick={onCreate}>{createLabel}</button>
       </header>
-      <div className="catalog-search" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <input placeholder="Buscar…" value={search} onChange={(e) => onSearch(e.target.value)} style={{ flex: 1 }} />
-        <select value={statusFilter} onChange={(e) => onStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}>
+      <div className="catalog-search">
+        <input placeholder="Buscar…" value={search} onChange={(e) => onSearch(e.target.value)} aria-label={`Buscar em ${title}`} />
+        <select value={statusFilter} onChange={(e) => onStatusFilter(e.target.value as 'all' | 'active' | 'inactive')} aria-label="Filtrar por status">
           <option value="all">Todos os status</option>
           <option value="active">Ativos</option>
           <option value="inactive">Inativos</option>
@@ -1041,12 +1246,55 @@ function CatalogList({
               </div>
               <div className="row-actions">
                 <StatusBadge tone={row.active ? 'green' : 'gray'}>{row.active ? 'Ativo' : 'Inativo'}</StatusBadge>
-                <button className="button small" type="button" onClick={() => onEdit(row)}>Editar</button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Editar"
+                  aria-label={`Editar ${text(row.name)}`}
+                  onClick={() => onEdit(row)}
+                >
+                  <Pencil size={15} />
+                </button>
+                {onToggleActive ? (
+                  <button
+                    type="button"
+                    className={`icon-button ${row.active ? 'danger' : ''}`}
+                    title={row.active ? 'Inativar' : 'Reativar'}
+                    aria-label={`${row.active ? 'Inativar' : 'Reativar'} ${text(row.name)}`}
+                    onClick={() => {
+                      if (row.active) setPendingToggle(row);
+                      else onToggleActive(row);
+                    }}
+                  >
+                    <Power size={15} />
+                  </button>
+                ) : null}
               </div>
             </div>
           ))}
         </div>
       )}
+      <Modal
+        open={Boolean(pendingToggle)}
+        title="Inativar item?"
+        description={pendingToggle ? `Inativar “${text(pendingToggle.name)}”? Ele deixa de aparecer nas buscas ativas.` : undefined}
+        size="small"
+        onClose={() => setPendingToggle(null)}
+      >
+        <div className="modal-footer">
+          <button type="button" className="button" onClick={() => setPendingToggle(null)}>Cancelar</button>
+          <button
+            type="button"
+            className="button danger"
+            onClick={() => {
+              if (pendingToggle && onToggleActive) onToggleActive(pendingToggle);
+              setPendingToggle(null);
+            }}
+          >
+            Inativar
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -1115,6 +1363,11 @@ export function MedicationCatalogPanel() {
         onStatusFilter={setStatusFilter}
         onCreate={() => { setEditing(null); setOpen(true); }}
         onEdit={(row) => { setEditing(row); setOpen(true); }}
+        onToggleActive={(row) => {
+          void api.patch(`/medication-catalog/${String(row.id)}`, { active: !row.active })
+            .then(() => load())
+            .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao atualizar medicamento.'));
+        }}
         renderSecondary={(row) => [row.concentration, row.pharmaceuticalForm, row.defaultRoute ? `via ${row.defaultRoute}` : ''].filter(Boolean).join(' · ') || '—'}
       />
       <Modal
@@ -1211,6 +1464,11 @@ export function ExamCatalogPanel() {
         onStatusFilter={setStatusFilter}
         onCreate={() => { setEditing(null); setOpen(true); }}
         onEdit={(row) => { setEditing(row); setOpen(true); }}
+        onToggleActive={(row) => {
+          void api.patch(`/exam-catalog/${String(row.id)}`, { active: !row.active })
+            .then(() => load())
+            .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao atualizar tipo de exame.'));
+        }}
         renderSecondary={(row) => `${categoryLabel(row.category)} · ${presentationLabel(row.lateralityBehavior ?? 'OPTIONAL')}`}
       />
       <Modal

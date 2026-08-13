@@ -1,22 +1,37 @@
-import { escapePrintHtml, formatPrintTimestamp, printHtmlDocument } from '../../lib/print-document';
+import { escapePrintHtml, printHtmlDocument } from '../../lib/print-document';
+import {
+  buildPrintDocument,
+  printStatusBadge,
+  type PrintBranding,
+  type PrintIdentityItem,
+  type PrintStatusTone,
+} from '../../lib/print/print-layout';
 
 export type TreatmentPrintItem = {
   name: string;
   tooth?: string | null;
   face?: string | null;
-  quantity: number;
+  quantity?: number;
   sessions?: string;
-  unitPrice: string;
+  unitPrice?: string;
   total: string;
   status: string;
+  statusTone?: PrintStatusTone;
+  urgent?: boolean;
 };
 
 type PrintInput = {
   title: string;
   patientName?: string;
   clinicName?: string;
+  branding?: PrintBranding;
   professionalName?: string;
+  professionalCro?: string;
   statusLabel?: string;
+  statusTone?: PrintStatusTone;
+  versionLabel?: string;
+  createdAtLabel?: string;
+  validUntilLabel?: string;
   notes?: string | null;
   items: TreatmentPrintItem[];
   subtotal: string;
@@ -25,188 +40,139 @@ type PrintInput = {
   printedAt?: Date;
 };
 
-export function buildTreatmentPrintHtml(input: PrintInput): string {
-  const printedAt = input.printedAt ?? new Date();
-  const metaItems = [
-    input.patientName ? { label: 'Paciente', value: input.patientName } : null,
-    input.clinicName ? { label: 'Clínica', value: input.clinicName } : null,
-    input.professionalName ? { label: 'Profissional', value: input.professionalName } : null,
-    input.statusLabel ? { label: 'Status', value: input.statusLabel } : null,
-  ].filter((item): item is { label: string; value: string } => Boolean(item));
+const EXTRA_CSS = `
+.plan-hero{
+  display:grid;grid-template-columns:1fr auto;gap:18px;align-items:start;
+  margin:2px 0 15px
+}
+.plan-hero h2{margin:0;font-size:15pt;letter-spacing:-.02em;color:var(--nav-deep);overflow-wrap:anywhere}
+.table-wrap{border-top:1.5px solid var(--nav);border-bottom:1px solid var(--line)}
+table{width:100%;border-collapse:collapse}
+th{
+  padding:7px 6px;text-align:left;color:var(--muted);font-size:7pt;
+  text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid var(--line);
+  font-weight:800
+}
+td{padding:9px 6px;border-bottom:1px solid var(--line-soft);vertical-align:top;font-size:9.5pt;overflow-wrap:anywhere}
+tbody tr:last-child td{border-bottom:0}
+.proc strong{display:block;font-size:9.5pt}
+.proc small{display:block;color:var(--muted);font-size:7.5pt;margin-top:2px}
+.num{text-align:right;white-space:nowrap}
+.center{text-align:center;white-space:nowrap}
+.priority{font-size:7pt;font-weight:800;color:var(--danger)}
+.summary{
+  margin-top:14px;display:grid;grid-template-columns:1fr 240px;gap:22px;align-items:start
+}
+.notes{
+  min-height:70px;padding:10px 0;border-top:1px solid var(--line);
+  color:#415b61;break-inside:avoid;overflow-wrap:anywhere
+}
+.totals{border-top:1.5px solid var(--nav);padding-top:7px}
+.totals-row{display:flex;justify-content:space-between;gap:16px;padding:3px 0;font-size:9pt}
+.totals-row.total{margin-top:4px;padding-top:7px;border-top:1px solid var(--line);font-size:13pt;font-weight:800;color:var(--nav-deep)}
+.acceptance{
+  margin-top:19px;padding:10px 12px;background:#fbfcfc;border:1px solid var(--line);
+  font-size:8.5pt;color:#476168;break-inside:avoid
+}
+@media(max-width:700px){.summary{grid-template-columns:1fr}}
+`;
 
+function identityItems(input: PrintInput): PrintIdentityItem[] {
+  const items: PrintIdentityItem[] = [];
+  if (input.patientName) items.push({ label: 'Paciente', value: input.patientName });
+  if (input.professionalName) items.push({ label: 'Profissional', value: input.professionalName });
+  if (input.createdAtLabel) items.push({ label: 'Criado em', value: input.createdAtLabel });
+  if (input.validUntilLabel) items.push({ label: 'Validade', value: input.validUntilLabel });
+  return items;
+}
+
+export function buildTreatmentPrintHtml(input: PrintInput): string {
   const rows = input.items.map((item) => {
     const location = [item.tooth, item.face].filter(Boolean).join(' · ') || '—';
     return `<tr>
-      <td>
+      <td class="proc">
         <strong>${escapePrintHtml(item.name)}</strong>
-        <span class="sub">${escapePrintHtml(item.status)}</span>
+        ${item.urgent ? '<small class="priority">Urgente</small>' : ''}
       </td>
       <td>${escapePrintHtml(location)}</td>
-      <td class="num">${escapePrintHtml(String(item.quantity))}</td>
-      <td class="num">${escapePrintHtml(item.sessions ?? '—')}</td>
-      <td class="num">${escapePrintHtml(item.unitPrice)}</td>
+      <td class="center">${escapePrintHtml(item.sessions ?? '—')}</td>
+      <td class="center">${printStatusBadge(item.status, item.statusTone ?? 'amber')}</td>
       <td class="num">${escapePrintHtml(item.total)}</td>
     </tr>`;
   }).join('');
 
   const notes = input.notes?.trim()
-    ? `<section class="notes">
-        <h2>Observações</h2>
-        <p>${escapePrintHtml(input.notes.trim()).replaceAll('\n', '<br />')}</p>
-      </section>`
-    : '';
+    ? `<div class="notes">
+        <span class="label">Observações</span>
+        ${escapePrintHtml(input.notes.trim()).replaceAll('\n', '<br />')}
+      </div>`
+    : `<div class="notes"><span class="label">Observações</span></div>`;
 
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <title>${escapePrintHtml(input.title)}</title>
-  <style>
-    :root {
-      --ink: #183139;
-      --muted: #6a7d83;
-      --line: #dce5e6;
-      --accent: #159a96;
-      --surface: #f4faf9;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      color: var(--ink);
-      font-family: "Manrope", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-      font-size: 13px;
-      line-height: 1.45;
-      background: #fff;
-    }
-    .sheet { max-width: 820px; margin: 0 auto; padding: 28px 32px 36px; }
-    .header {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 14px;
-      align-items: start;
-      padding-bottom: 18px;
-      border-bottom: 2px solid var(--accent);
-      margin-bottom: 20px;
-    }
-    .mark {
-      width: 42px; height: 42px; border-radius: 12px;
-      background: #153d46; color: #f0fffd;
-      display: grid; place-items: center;
-      font-size: 18px; font-weight: 800;
-    }
-    .kicker {
-      margin: 0 0 4px;
-      color: var(--accent);
-      font-size: 10px;
-      font-weight: 800;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-    }
-    h1 {
-      margin: 0;
-      font-family: "Source Serif 4", Georgia, serif;
-      font-size: 24px;
-      font-weight: 650;
-      letter-spacing: -.02em;
-    }
-    .clinic { margin: 4px 0 0; color: var(--muted); font-size: 12px; font-weight: 600; }
-    .meta {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 10px 14px;
-      margin: 0 0 22px;
-      padding: 14px 16px;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-    }
-    .meta span {
-      display: block; color: var(--muted); font-size: 9px; font-weight: 700;
-      letter-spacing: .05em; text-transform: uppercase;
-    }
-    .meta strong { display: block; margin-top: 4px; font-size: 13px; }
-    table { width: 100%; border-collapse: collapse; }
-    th {
-      text-align: left; font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
-      color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line);
-    }
-    td { padding: 10px; border-bottom: 1px solid #edf1f1; vertical-align: top; }
-    td strong { display: block; font-size: 13px; }
-    td .sub { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
-    .num { text-align: right; white-space: nowrap; }
-    .totals {
-      margin-top: 16px;
-      margin-left: auto;
-      width: min(280px, 100%);
-      display: grid;
-      gap: 6px;
-    }
-    .totals div { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; }
-    .totals .grand { padding-top: 8px; border-top: 2px solid var(--accent); font-weight: 750; font-size: 15px; }
-    .notes { margin-top: 24px; page-break-inside: avoid; }
-    .notes h2 {
-      margin: 0 0 8px; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted);
-    }
-    .notes p { margin: 0; white-space: pre-wrap; }
-    .footer {
-      margin-top: 28px; padding-top: 12px; border-top: 1px solid var(--line);
-      color: var(--muted); font-size: 10px; display: flex; justify-content: space-between; gap: 12px;
-    }
-    @media print {
-      body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-      .sheet { max-width: none; padding: 0; }
-      @page { margin: 16mm 14mm; }
-    }
-  </style>
-</head>
-<body>
-  <div class="sheet">
-    <header class="header">
-      <div class="mark" aria-hidden="true">S</div>
-      <div>
-        <p class="kicker">Orçamento e plano de tratamento</p>
-        <h1>${escapePrintHtml(input.title)}</h1>
-        ${input.clinicName ? `<p class="clinic">${escapePrintHtml(input.clinicName)}</p>` : ''}
-      </div>
-    </header>
-    ${metaItems.length ? `
-      <div class="meta">
-        ${metaItems.map((item) => `
-          <div>
-            <span>${escapePrintHtml(item.label)}</span>
-            <strong>${escapePrintHtml(item.value)}</strong>
-          </div>
-        `).join('')}
-      </div>
-    ` : ''}
-    <table>
-      <thead>
-        <tr>
-          <th>Procedimento</th>
-          <th>Dente / face</th>
-          <th class="num">Qtd</th>
-          <th class="num">Sessões</th>
-          <th class="num">Unitário</th>
-          <th class="num">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows || '<tr><td colspan="6">Nenhum procedimento neste plano.</td></tr>'}
-      </tbody>
-    </table>
-    <div class="totals">
-      <div><span>Subtotal</span><strong>${escapePrintHtml(input.subtotal)}</strong></div>
-      <div><span>Desconto</span><strong>${escapePrintHtml(input.discount)}</strong></div>
-      <div class="grand"><span>Total</span><strong>${escapePrintHtml(input.total)}</strong></div>
+  const branding: PrintBranding = {
+    ...input.branding,
+    clinicName: input.branding?.clinicName || input.clinicName,
+  };
+  const clinicName = branding.clinicName?.trim() || 'Clínica';
+  const professionalLine = input.professionalCro
+    ? `${input.professionalName ?? ''} · ${input.professionalCro}`.replace(/^ · /, '')
+    : input.professionalName;
+
+  const body = `
+  <div class="plan-hero">
+    <div>
+      <span class="label">Plano</span>
+      <h2>${escapePrintHtml(input.title)}</h2>
     </div>
-    ${notes}
-    <footer class="footer">
-      <span>Sonder Clinic</span>
-      <span>Impresso em ${escapePrintHtml(formatPrintTimestamp(printedAt))}</span>
-    </footer>
+    ${input.statusLabel ? printStatusBadge(input.statusLabel, input.statusTone ?? 'teal') : ''}
   </div>
-</body>
-</html>`;
+  <section class="section">
+    <h2 class="section-title">Procedimentos</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Procedimento</th>
+            <th>Dente / face</th>
+            <th class="center">Sessões</th>
+            <th class="center">Situação</th>
+            <th class="num">Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="5">Nenhum procedimento neste plano.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+    <div class="summary">
+      ${notes}
+      <div class="totals">
+        <div class="totals-row"><span>Subtotal</span><strong>${escapePrintHtml(input.subtotal)}</strong></div>
+        <div class="totals-row"><span>Desconto</span><strong>${escapePrintHtml(input.discount)}</strong></div>
+        <div class="totals-row total"><span>Total</span><strong>${escapePrintHtml(input.total)}</strong></div>
+      </div>
+    </div>
+  </section>
+  <div class="acceptance">
+    <strong>Ciência do plano:</strong> os procedimentos, valores e etapas acima representam o planejamento atual e podem ser ajustados conforme evolução clínica, exames complementares ou necessidade identificada durante o tratamento.
+  </div>`;
+
+  return buildPrintDocument({
+    documentTitle: input.title,
+    eyebrow: 'Planejamento clínico',
+    heading: 'Plano de Tratamento',
+    subtitle: input.versionLabel,
+    branding,
+    identity: identityItems(input),
+    body,
+    footerLeft: `${clinicName} · Plano de tratamento`,
+    signatures: [
+      { name: input.patientName, caption: 'Paciente / responsável' },
+      { name: professionalLine, caption: 'Cirurgião-dentista' },
+    ],
+    printedAt: input.printedAt,
+    orientation: 'portrait',
+    extraCss: EXTRA_CSS,
+  });
 }
 
 export function printTreatmentDocument(html: string) {

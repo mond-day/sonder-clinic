@@ -10,13 +10,17 @@ import {
   currency,
   dateOnly,
   dateTime,
+  toDateInputValue,
   daysUntilBirthday,
   formatCpf,
+  formatMoneyInputFromValue,
   formatPhone,
   hasPermission,
   initials,
   list,
   maskCpf,
+  maskMoneyInput,
+  moneyInputToApi,
   nested,
   presentationLabel,
   statusTone,
@@ -54,7 +58,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const tabParam = searchParams.get('tab') as TabId | null;
   const activeTab: TabId = TABS.some((tab) => tab.id === tabParam) ? (tabParam as TabId) : 'resumo';
   const { user } = useAuth();
-  const { clinicId, professionals } = useSelection();
+  const { clinicId, clinics, professionals } = useSelection();
   const { enabled: presentationMode, toggle: togglePresentation } = usePresentation();
   const canFinance = hasPermission(user?.permissions, 'financial.view');
 
@@ -65,6 +69,9 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const [receivables, setReceivables] = useState<RecordValue[]>([]);
   const [odontogramConditions, setOdontogramConditions] = useState<RecordValue[]>([]);
   const [activeModal, setActiveModal] = useState<'evolution' | 'receive' | null>(null);
+  const [financeDetail, setFinanceDetail] = useState<RecordValue | null>(null);
+  const [financeEdit, setFinanceEdit] = useState(false);
+  const [financeBusy, setFinanceBusy] = useState(false);
   const [detailEntryId, setDetailEntryId] = useState<string | null>(null);
   const [receiveId, setReceiveId] = useState('');
   const [receiveMethod, setReceiveMethod] = useState('PIX');
@@ -172,7 +179,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
           clinicalDate: new Date().toISOString(),
         });
       } else if (activeModal === 'receive') {
-        const amount = Number(receiveAmount);
+        const amount = Number(moneyInputToApi(receiveAmount));
         if (!receiveId || !Number.isFinite(amount) || amount <= 0) {
           throw new Error('Selecione um título e informe um valor válido.');
         }
@@ -259,7 +266,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
                   const id = event.target.value;
                   setReceiveId(id);
                   const row = openReceivables.find((item) => String(item.id) === id);
-                  setReceiveAmount(row ? String(row.outstandingAmount ?? row.netAmount ?? '') : '');
+                  setReceiveAmount(row ? formatMoneyInputFromValue(row.outstandingAmount ?? row.netAmount ?? '') : '');
                 }}>
                   <option value="">Selecione</option>
                   {openReceivables.map((item) => (
@@ -278,7 +285,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
                   <option value="TRANSFER">Transferência</option>
                 </select>
               </label>
-              <label>Valor<input type="number" min="0.01" step="0.01" required value={receiveAmount} onChange={(event) => setReceiveAmount(event.target.value)} /></label>
+              <label>Valor<input inputMode="numeric" required value={receiveAmount} placeholder="0,00" onChange={(event) => setReceiveAmount(maskMoneyInput(event.target.value))} /></label>
             </>
           ) : null}
           <button className="button primary" disabled={saving}>
@@ -286,6 +293,97 @@ export function PatientChart({ patientId }: { patientId: string }) {
           </button>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
         </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(financeDetail)}
+        title="Detalhe do título"
+        description="Origem clínica e dados do recebível."
+        onClose={() => { setFinanceDetail(null); setFinanceEdit(false); setFormError(''); }}
+        size="medium"
+        confirmOnClose={financeEdit}
+      >
+        {financeDetail ? (
+          financeEdit ? (
+            <form
+              className="mutation-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const data = new FormData(event.currentTarget);
+                setFinanceBusy(true);
+                setFormError('');
+                void (async () => {
+                  try {
+                    await api.patch(`/receivables/${String(financeDetail.id)}`, {
+                      description: String(data.get('description') ?? '').trim(),
+                      dueDate: String(data.get('dueDate') ?? ''),
+                      paymentMethod: String(data.get('paymentMethod') ?? '') || undefined,
+                    });
+                    setFinanceEdit(false);
+                    setFinanceDetail(null);
+                    load();
+                  } catch (cause) {
+                    setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar o título.');
+                  } finally {
+                    setFinanceBusy(false);
+                  }
+                })();
+              }}
+            >
+              <label className="span-2">Descrição<input name="description" required minLength={3} defaultValue={text(financeDetail.description, '')} /></label>
+              <label>Vencimento<input name="dueDate" type="date" required defaultValue={toDateInputValue(financeDetail.dueDate)} /></label>
+              <label>Forma de pagamento
+                <select name="paymentMethod" defaultValue={text(financeDetail.paymentMethod, '')}>
+                  <option value="">Não informado</option>
+                  <option value="PIX">PIX</option>
+                  <option value="CASH">Dinheiro</option>
+                  <option value="DEBIT_CARD">Cartão de débito</option>
+                  <option value="TRANSFER">Transferência</option>
+                  <option value="CREDIT_CARD">Cartão de crédito</option>
+                  <option value="CLINIC_INSTALLMENT">Parcelado na clínica</option>
+                  <option value="OTHER">Outro</option>
+                </select>
+              </label>
+              {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
+              <div className="form-actions span-2">
+                <button type="button" className="button" onClick={() => setFinanceEdit(false)}>Voltar</button>
+                <button type="submit" className="button primary" disabled={financeBusy}>{financeBusy ? 'Salvando…' : 'Salvar'}</button>
+              </div>
+            </form>
+          ) : (
+            <div>
+              <div className="info-grid">
+                <div className="info-item"><small>Descrição</small><strong>{text(financeDetail.description)}</strong></div>
+                <div className="info-item"><small>Status</small><strong>{presentationLabel(financeDetail.effectiveStatus ?? financeDetail.status)}</strong></div>
+                <div className="info-item"><small>Valor</small><strong>{currency(financeDetail.netAmount)}</strong></div>
+                <div className="info-item"><small>Saldo</small><strong>{currency(financeDetail.outstandingAmount ?? financeDetail.netAmount)}</strong></div>
+                <div className="info-item"><small>Vencimento</small><strong>{dateOnly(financeDetail.dueDate)}</strong></div>
+                <div className="info-item"><small>Forma de pagamento</small><strong>{presentationLabel(financeDetail.paymentMethod)}</strong></div>
+                <div className="info-item span-2">
+                  <small>Origem</small>
+                  <strong>
+                    {nested(financeDetail, 'treatment').title
+                      ? `Plano de tratamento: ${text(nested(financeDetail, 'treatment').title)}`
+                      : 'Título avulso (sem plano vinculado)'}
+                  </strong>
+                </div>
+                {nested(financeDetail, 'treatment').status ? (
+                  <div className="info-item"><small>Situação do plano</small><strong>{presentationLabel(nested(financeDetail, 'treatment').status)}</strong></div>
+                ) : null}
+              </div>
+              <div className="modal-footer">
+                {nested(financeDetail, 'treatment').id ? (
+                  <button type="button" className="button" onClick={() => { setFinanceDetail(null); setTab('tratamentos'); }}>
+                    Abrir tratamento
+                  </button>
+                ) : null}
+                {!['PAID', 'CANCELLED'].includes(String(financeDetail.status)) ? (
+                  <button type="button" className="button primary" onClick={() => setFinanceEdit(true)}>Editar</button>
+                ) : null}
+              </div>
+            </div>
+          )
+        ) : null}
       </Modal>
 
       <section className="page-heading">
@@ -548,6 +646,8 @@ export function PatientChart({ patientId }: { patientId: string }) {
             <OdontogramBoard
               patientId={patientId}
               clinicId={clinicId}
+              patientName={text(patient?.fullName, '') || undefined}
+              clinicName={clinics.find((item) => item.id === clinicId)?.tradeName}
               professionals={professionals}
               conditions={odontogramConditions}
               odontograms={odontograms}
@@ -596,7 +696,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
           title="Financeiro do paciente"
           description="Cobranças vinculadas"
           sensitive
-          actions={<button className="button primary small" type="button" onClick={() => { setReceiveId(openReceivables[0] ? String(openReceivables[0].id) : ''); setReceiveAmount(openReceivables[0] ? String(openReceivables[0].outstandingAmount ?? openReceivables[0].netAmount) : ''); setActiveModal('receive'); }} disabled={!openReceivables.length}>＋ Receber</button>}
+          actions={<button className="button primary small" type="button" onClick={() => { setReceiveId(openReceivables[0] ? String(openReceivables[0].id) : ''); setReceiveAmount(openReceivables[0] ? formatMoneyInputFromValue(openReceivables[0].outstandingAmount ?? openReceivables[0].netAmount) : ''); setActiveModal('receive'); }} disabled={!openReceivables.length}>＋ Receber</button>}
         >
           <div className="summary-strip">
             <div><small>Títulos</small><strong>{receivables.length}</strong></div>
@@ -608,18 +708,26 @@ export function PatientChart({ patientId }: { patientId: string }) {
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
-                  <tr><th>Descrição</th><th>Vencimento</th><th>Valor</th><th>Saldo</th><th>Status</th></tr>
+                  <tr><th>Descrição</th><th>Origem</th><th>Vencimento</th><th>Valor</th><th>Saldo</th><th>Status</th></tr>
                 </thead>
                 <tbody>
-                  {receivables.map((item) => (
-                    <tr key={String(item.id)}>
-                      <td>{text(item.description)}</td>
-                      <td>{dateOnly(item.dueDate)}</td>
-                      <td>{currency(item.netAmount)}</td>
-                      <td>{currency(item.outstandingAmount ?? item.netAmount)}</td>
-                      <td><StatusBadge tone={statusTone(item.effectiveStatus ?? item.status)}>{presentationLabel(item.effectiveStatus ?? item.status)}</StatusBadge></td>
-                    </tr>
-                  ))}
+                  {receivables.map((item) => {
+                    const origin = nested(item, 'treatment');
+                    return (
+                      <tr
+                        key={String(item.id)}
+                        className="clickable-row"
+                        onClick={() => { setFinanceDetail(item); setFinanceEdit(false); }}
+                      >
+                        <td>{text(item.description)}</td>
+                        <td>{text(origin.title, 'Avulso')}</td>
+                        <td>{dateOnly(item.dueDate)}</td>
+                        <td>{currency(item.netAmount)}</td>
+                        <td>{currency(item.outstandingAmount ?? item.netAmount)}</td>
+                        <td><StatusBadge tone={statusTone(item.effectiveStatus ?? item.status)}>{presentationLabel(item.effectiveStatus ?? item.status)}</StatusBadge></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -707,11 +815,14 @@ function PatientAvatar({
       onUploaded(String(uploaded.id));
     } catch (cause) {
       const message = cause instanceof ApiError ? cause.message : '';
-      onError(
-        /storage|STORAGE_/i.test(message)
-          ? 'O envio de fotos ainda não está disponível nesta instalação.'
-          : (message || 'Não foi possível enviar a foto.'),
-      );
+      const status = cause instanceof ApiError ? cause.status : 0;
+      if (/storage|STORAGE_|armazenamento/i.test(message)) {
+        onError('O envio de fotos ainda não está disponível nesta instalação.');
+      } else if (/internal server error/i.test(message) || status >= 500) {
+        onError('Não foi possível enviar a foto. Verifique se o armazenamento está configurado e tente novamente.');
+      } else {
+        onError(message || 'Não foi possível enviar a foto.');
+      }
     } finally {
       setUploading(false);
     }

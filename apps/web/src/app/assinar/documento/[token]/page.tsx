@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { SignaturePad } from '@/features/anamnesis/signature-pad';
+import { PublicSigningDocument } from '@/features/documents/public-signing-document';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
 
@@ -11,6 +11,7 @@ type PublicPayload = {
   signerName?: string;
   signerRole?: string;
   expiresAt?: string;
+  consent?: { version?: string; text?: string };
   document?: {
     id?: string;
     status?: string;
@@ -18,6 +19,8 @@ type PublicPayload = {
     templateType?: string;
     clinicName?: string | null;
     patientName?: string | null;
+    renderedText?: string;
+    contentHash?: string;
   };
 };
 
@@ -34,7 +37,6 @@ export default function PublicDocumentSignPage() {
   const token = params.token;
   const [data, setData] = useState<PublicPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [signature, setSignature] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -48,18 +50,20 @@ export default function PublicDocumentSignPage() {
       .catch((err: Error) => setError(err.message));
   }, [token]);
 
-  async function sign() {
-    if (!signature) {
-      setError('Desenhe a assinatura para continuar.');
-      return;
-    }
+  async function sign(input: { dataUrl: string; consentAccepted: true }) {
     setBusy(true);
     setError(null);
     try {
       const response = await fetch(`${API_URL}/public/document-signatures/${token}/sign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ evidence: { dataUrl: signature } }),
+        body: JSON.stringify({
+          evidence: {
+            dataUrl: input.dataUrl,
+            consentAccepted: true,
+            documentHash: data?.document?.contentHash,
+          },
+        }),
       });
       if (!response.ok) throw new Error(await readError(response));
       setDone(true);
@@ -86,40 +90,25 @@ export default function PublicDocumentSignPage() {
   if (done) {
     return (
       <main className="legal-page">
-        <h1>Assinatura registrada</h1>
+        <h1>Assinatura eletrônica registrada</h1>
         <p>Obrigado. O documento foi assinado com sucesso. Você já pode fechar esta página.</p>
       </main>
     );
   }
 
-  const clinicName = data.document?.clinicName ?? 'Clínica';
-
   return (
-    <main className="legal-page public-anamnesis">
-      <p className="eyebrow">{clinicName}</p>
-      <h1>Assinar documento</h1>
-      <p>
-        {data.document?.patientName ? <>Paciente: <strong>{data.document.patientName}</strong> · </> : null}
-        {data.document?.templateName}
-        {data.document?.templateType ? ` · ${data.document.templateType}` : ''}
-        {' · '}
-        Signatário: {data.signerName}
-        {data.signerRole ? ` (${data.signerRole})` : ''}
-      </p>
-      {data.expiresAt ? (
-        <p className="muted-note">Link válido até {new Date(data.expiresAt).toLocaleString('pt-BR')}</p>
-      ) : null}
-      {error ? <p className="form-error" role="alert">{error}</p> : null}
-      <section className="panel">
-        <h2>Assinatura</h2>
-        <p className="muted-note">Desenhe abaixo para concluir a assinatura do documento pendente.</p>
-        <SignaturePad onChange={setSignature} />
-        <div className="heading-actions" style={{ marginTop: 16 }}>
-          <button type="button" className="button primary" disabled={busy || !signature} onClick={() => void sign()}>
-            {busy ? 'Registrando…' : 'Confirmar assinatura'}
-          </button>
-        </div>
-      </section>
-    </main>
+    <PublicSigningDocument
+      clinicName={data.document?.clinicName ?? 'Clínica'}
+      title={data.document?.templateName ?? 'Assinar documento'}
+      patientName={data.document?.patientName}
+      signerName={data.signerName ?? 'Signatário'}
+      signerRole={data.signerRole}
+      expiresAt={data.expiresAt}
+      renderedText={data.document?.renderedText ?? ''}
+      consentText={data.consent?.text ?? 'Declaro que revisei o conteúdo deste documento e concordo com a utilização desta assinatura eletrônica para manifestação da minha vontade.'}
+      error={error}
+      busy={busy}
+      onSign={sign}
+    />
   );
 }

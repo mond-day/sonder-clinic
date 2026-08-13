@@ -4,19 +4,20 @@ import { FormEvent, useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { Modal } from '@/components/modal';
 import type { Professional } from '@/components/selection-provider';
+import { formatMoneyInputFromValue, moneyInputToApi } from '@/lib/format';
+import { FaceSelect, MoneyField, ProcedureSearchSelect, ToothSelect } from './treatment-field-inputs';
 import { createTreatmentSchema, updateTreatmentSchema } from './treatment-schemas';
 import type { DraftItemInput, Procedure, TreatmentPlan } from './treatment-types';
 
-function blankItem(professionalId: string): DraftItemInput {
+function blankItem(): DraftItemInput {
   return {
     key: crypto.randomUUID(),
     procedureId: '',
-    professionalId,
     toothFdi: '',
     face: '',
     quantity: 1,
-    unitPrice: '0',
-    discount: '0',
+    unitPrice: '',
+    discount: '',
     plannedSessions: 1,
     urgent: false,
   };
@@ -50,7 +51,7 @@ export function TreatmentPlanEditor({
     validUntil?: string;
     items: Array<{
       procedureId: string;
-      professionalId: string;
+      professionalId?: string;
       toothFdi?: string;
       face?: string;
       quantity: number;
@@ -70,7 +71,8 @@ export function TreatmentPlanEditor({
 }) {
   const defaultProfessionalId = plan?.professionalId ?? professionals[0]?.id ?? '';
   const [formError, setFormError] = useState('');
-  const [items, setItems] = useState<DraftItemInput[]>([blankItem(defaultProfessionalId)]);
+  const [items, setItems] = useState<DraftItemInput[]>([blankItem()]);
+  const [planDiscount, setPlanDiscount] = useState(formatMoneyInputFromValue(plan?.discount ?? '0'));
 
   const procedureMap = useMemo(
     () => new Map(procedures.map((row) => [row.id, row])),
@@ -78,7 +80,8 @@ export function TreatmentPlanEditor({
   );
 
   function resetCreateItems() {
-    setItems([blankItem(defaultProfessionalId)]);
+    setItems([blankItem()]);
+    setPlanDiscount(formatMoneyInputFromValue('0'));
     setFormError('');
   }
 
@@ -91,7 +94,7 @@ export function TreatmentPlanEditor({
       const parsed = updateTreatmentSchema.safeParse({
         title: String(data.get('title') ?? '').trim(),
         notes: String(data.get('notes') ?? '').trim() || undefined,
-        discount: String(data.get('discount') ?? plan.discount),
+        discount: moneyInputToApi(planDiscount || String(plan.discount)),
         validUntil: String(data.get('validUntil') ?? '') || null,
         version: plan.version,
       });
@@ -106,17 +109,16 @@ export function TreatmentPlanEditor({
     const parsed = createTreatmentSchema.safeParse({
       title: data.get('title'),
       professionalId: data.get('professionalId'),
-      discount: String(data.get('discount') ?? '0') || '0',
+      discount: moneyInputToApi(planDiscount || '0'),
       notes: String(data.get('notes') ?? '').trim() || undefined,
       validUntil: String(data.get('validUntil') ?? '') || undefined,
       items: items.map((item) => ({
         procedureId: item.procedureId,
-        professionalId: item.professionalId,
         toothFdi: item.toothFdi.trim() || undefined,
         face: item.face.trim() || undefined,
         quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        discount: item.discount || '0',
+        unitPrice: moneyInputToApi(item.unitPrice),
+        discount: moneyInputToApi(item.discount || '0'),
         plannedSessions: item.plannedSessions,
         urgent: item.urgent,
       })),
@@ -173,10 +175,7 @@ export function TreatmentPlanEditor({
           Validade
           <input name="validUntil" type="date" defaultValue={plan?.validUntil ? String(plan.validUntil).slice(0, 10) : ''} />
         </label>
-        <label>
-          Desconto do plano
-          <input name="discount" inputMode="decimal" defaultValue={String(plan?.discount ?? '0')} />
-        </label>
+        <MoneyField name="discount" label="Desconto do plano" value={planDiscount} onChange={setPlanDiscount} />
         <label className="span-2">
           Observações
           <textarea name="notes" rows={3} defaultValue={plan?.notes ?? ''} placeholder="Objetivo clínico, restrições, sequência sugerida…" />
@@ -192,7 +191,7 @@ export function TreatmentPlanEditor({
               <button
                 type="button"
                 className="button soft small"
-                onClick={() => setItems((current) => [...current, blankItem(defaultProfessionalId)])}
+                onClick={() => setItems((current) => [...current, blankItem()])}
               >
                 <Plus size={14} /> Procedimento
               </button>
@@ -202,13 +201,12 @@ export function TreatmentPlanEditor({
                 const procedure = procedureMap.get(item.procedureId);
                 return (
                   <div className="procedure-edit" key={item.key}>
-                    <label>
-                      Procedimento
-                      <select
+                    <div className="span-2">
+                      <ProcedureSearchSelect
+                        name={`procedureId-${item.key}`}
                         value={item.procedureId}
-                        required
-                        onChange={(event) => {
-                          const nextId = event.target.value;
+                        procedures={procedures}
+                        onChange={(nextId) => {
                           const nextProcedure = procedureMap.get(nextId);
                           setItems((current) => current.map((row, rowIndex) => (
                             rowIndex === index
@@ -220,46 +218,24 @@ export function TreatmentPlanEditor({
                               : row
                           )));
                         }}
-                      >
-                        <option value="">Selecione</option>
-                        {procedures.map((procedureOption) => (
-                          <option key={procedureOption.id} value={procedureOption.id}>{procedureOption.name}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Profissional
-                      <select
-                        value={item.professionalId}
-                        onChange={(event) => setItems((current) => current.map((row, rowIndex) => (
-                          rowIndex === index ? { ...row, professionalId: event.target.value } : row
-                        )))}
-                      >
-                        {professionals.map((professional) => (
-                          <option key={professional.id} value={professional.id}>{professional.name}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Dente
-                      <input
-                        value={item.toothFdi}
-                        placeholder={procedure?.requiresTooth ? 'Obrigatório' : '—'}
-                        onChange={(event) => setItems((current) => current.map((row, rowIndex) => (
-                          rowIndex === index ? { ...row, toothFdi: event.target.value } : row
-                        )))}
                       />
-                    </label>
-                    <label>
-                      Face
-                      <input
-                        value={item.face}
-                        placeholder={procedure?.requiresFace ? 'Obrigatório' : '—'}
-                        onChange={(event) => setItems((current) => current.map((row, rowIndex) => (
-                          rowIndex === index ? { ...row, face: event.target.value } : row
-                        )))}
-                      />
-                    </label>
+                    </div>
+                    <ToothSelect
+                      name={`toothFdi-${item.key}`}
+                      value={item.toothFdi}
+                      required={Boolean(procedure?.requiresTooth)}
+                      onChange={(value) => setItems((current) => current.map((row, rowIndex) => (
+                        rowIndex === index ? { ...row, toothFdi: value } : row
+                      )))}
+                    />
+                    <FaceSelect
+                      name={`face-${item.key}`}
+                      value={item.face}
+                      required={Boolean(procedure?.requiresFace)}
+                      onChange={(value) => setItems((current) => current.map((row, rowIndex) => (
+                        rowIndex === index ? { ...row, face: value } : row
+                      )))}
+                    />
                     <label>
                       Qtd
                       <input
@@ -271,15 +247,15 @@ export function TreatmentPlanEditor({
                         )))}
                       />
                     </label>
-                    <label>
-                      Valor
-                      <input
-                        value={item.unitPrice}
-                        onChange={(event) => setItems((current) => current.map((row, rowIndex) => (
-                          rowIndex === index ? { ...row, unitPrice: event.target.value } : row
-                        )))}
-                      />
-                    </label>
+                    <MoneyField
+                      name={`unitPrice-${item.key}`}
+                      label="Valor"
+                      required
+                      value={item.unitPrice}
+                      onChange={(value) => setItems((current) => current.map((row, rowIndex) => (
+                        rowIndex === index ? { ...row, unitPrice: value } : row
+                      )))}
+                    />
                     <label>
                       Sessões
                       <input

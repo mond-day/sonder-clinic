@@ -1090,6 +1090,13 @@ export class WorkspaceService {
     });
   }
 
+  async deleteAutomationRule(organizationId: string, id: string) {
+    const existing = await prisma.automationRule.findFirst({ where: { id, organizationId } });
+    if (!existing) throw new NotFoundException('Regra de automação não encontrada.');
+    await prisma.automationRule.delete({ where: { id } });
+    return { success: true as const };
+  }
+
   private async withAssignees<T extends { assigneeId: string | null }>(items: T[]) {
     const ids = [...new Set(items.flatMap((item) => item.assigneeId ? [item.assigneeId] : []))];
     const users = await prisma.user.findMany({

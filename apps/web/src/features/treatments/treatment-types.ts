@@ -92,7 +92,7 @@ export type TreatmentPlan = {
   revisions?: Array<{ id: string; version: number; createdAt: string }>;
 };
 
-export type TreatmentDetailTab = 'procedures' | 'sessions' | 'evolutions' | 'history' | 'notes';
+export type TreatmentDetailTab = 'procedures' | 'sessions' | 'evolutions' | 'documents' | 'payment' | 'history' | 'notes';
 
 export type TreatmentFiltersState = {
   search: string;
@@ -103,7 +103,7 @@ export type TreatmentFiltersState = {
 export type DraftItemInput = {
   key: string;
   procedureId: string;
-  professionalId: string;
+  professionalId?: string;
   toothFdi: string;
   face: string;
   quantity: number;

@@ -7,6 +7,12 @@ import { startObservability } from '@sonder/observability';
 import { AppModule } from './app.module';
 import { assertProductionEnvironment, isSwaggerEnabled } from './common/production-env';
 
+if (!(BigInt.prototype as unknown as { toJSON?: () => number }).toJSON) {
+  (BigInt.prototype as unknown as { toJSON: () => number }).toJSON = function toJSON() {
+    return Number(this);
+  };
+}
+
 async function bootstrap(): Promise<void> {
   assertProductionEnvironment();
   await startObservability('sonder-api');

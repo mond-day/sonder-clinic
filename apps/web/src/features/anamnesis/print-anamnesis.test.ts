@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { buildAnamnesisPrintHtml } from './print-anamnesis';
 
 describe('buildAnamnesisPrintHtml', () => {
-  it('omite perguntas sem resposta', () => {
+  it('omite perguntas sem resposta e usa o layout clínico', () => {
     const html = buildAnamnesisPrintHtml({
       title: 'Anamnese teste',
+      templateSubtitle: 'Anamnese teste · versão 1',
       patientName: 'Maria',
+      birthDateLabel: '18/03/1994',
+      professionalName: 'Dr. Lima',
       clinicName: 'Clínica Norte',
       statusLabel: 'Assinado',
+      riskLabel: 'Risco baixo',
+      riskTone: 'green',
       schema: {
         sections: [{
           title: 'Geral',
@@ -27,7 +32,10 @@ describe('buildAnamnesisPrintHtml', () => {
     expect(html).toContain('Clínica Norte');
     expect(html).toContain('Paciente');
     expect(html).toContain('Maria');
-    expect(html).toContain('Anamnese clínica');
-    expect(html).toContain('Impresso em');
+    expect(html).toContain('Documento clínico');
+    expect(html).toContain('Anamnese');
+    expect(html).toContain('Emitido em');
+    expect(html).toContain('size:A4 portrait');
+    expect(html).not.toContain('class="row"');
   });
 });

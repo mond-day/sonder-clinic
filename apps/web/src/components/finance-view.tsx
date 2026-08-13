@@ -3,13 +3,16 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { RefreshCw, SlidersHorizontal, UserRound } from 'lucide-react';
+import { Banknote, Plus, RefreshCw, SlidersHorizontal, UserRound } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import {
   currency,
   dateOnly,
+  formatMoneyInputFromValue,
   hasPermission,
   list,
+  maskMoneyInput,
+  moneyInputToApi,
   nested,
   presentationLabel,
   statusTone,
@@ -17,10 +20,10 @@ import {
   type RecordValue,
 } from '@/lib/format';
 import { useAuth } from './auth-provider';
-import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
 import { EmptyState, MetricCard, PageHeader, Panel, StatusBadge } from './ui';
 import { Modal } from './modal';
+import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-inputs';
 
 type FinanceTab = 'overview' | 'receivable' | 'payable' | 'commissions' | 'recurring' | 'cashflow';
 
@@ -34,6 +37,15 @@ const tabs: Array<{ id: FinanceTab; label: string; available: boolean }> = [
 ];
 
 const financeTabIds = new Set<string>(tabs.map((item) => item.id));
+
+const PAYMENT_METHODS = [
+  { value: 'PIX', label: 'PIX' },
+  { value: 'CREDIT_CARD', label: 'Cartão de crédito' },
+  { value: 'DEBIT_CARD', label: 'Cartão de débito' },
+  { value: 'CASH', label: 'Dinheiro' },
+  { value: 'TRANSFER', label: 'Transferência' },
+  { value: 'OTHER', label: 'Outro' },
+] as const;
 
 export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const searchParams = useSearchParams();
@@ -67,16 +79,16 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const [recurrenceQuery, setRecurrenceQuery] = useState('');
   const [recurrenceKindFilter, setRecurrenceKindFilter] = useState('');
   const [cashflowPeriod, setCashflowPeriod] = useState<'7d' | '30d' | '90d' | 'year'>('30d');
-  const [ruleOpen, setRuleOpen] = useState(false);
-  const [ruleBusy, setRuleBusy] = useState(false);
-  const [ruleForm, setRuleForm] = useState({
-    basis: 'PRODUCTION',
-    calculationType: 'PERCENTAGE',
-    value: '30',
-    validFrom: new Date().toISOString().slice(0, 10),
-    professionalId: '',
-    priority: '0',
+  const [createReceivableOpen, setCreateReceivableOpen] = useState(false);
+  const [receiveTarget, setReceiveTarget] = useState<RecordValue | null>(null);
+  const [receivableBusy, setReceivableBusy] = useState(false);
+  const [receivableForm, setReceivableForm] = useState({
+    patientId: '',
+    description: '',
+    dueDate: new Date().toISOString().slice(0, 10),
+    paymentMethod: '',
   });
+  const [receiveForm, setReceiveForm] = useState({ amount: '', method: 'PIX' });
   const [recurrenceForm, setRecurrenceForm] = useState({
     kind: 'PAYABLE',
     description: '',
@@ -174,7 +186,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
         clinicId,
         kind: recurrenceForm.kind,
         description: recurrenceForm.description,
-        amount: recurrenceForm.amount.replace(',', '.'),
+        amount: moneyInputToApi(recurrenceForm.amount),
         frequency: recurrenceForm.frequency,
         interval: Number(recurrenceForm.interval) || 1,
         nextOccurrence: recurrenceForm.nextOccurrence,
@@ -198,41 +210,68 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
     }
   };
 
-  const createCommissionRule = async (event: FormEvent) => {
+  const createReceivable = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canConfigureCommission) return;
-    setRuleBusy(true);
+    if (!clinicId || !canFinanceCreate) return;
+    const data = new FormData(event.currentTarget);
+    const description = String(data.get('description') || '').trim();
+    const originalAmount = moneyInputToApi(data.get('originalAmount'));
+    const patientId = String(data.get('patientId') || '');
+    const dueDate = String(data.get('dueDate') || '');
+    if (!patientId || description.length < 3 || !dueDate || Number(originalAmount) <= 0) {
+      setError('Informe paciente, descrição, vencimento e um valor válido.');
+      return;
+    }
+    setReceivableBusy(true);
     setError('');
     try {
-      await api.post('/commission-rules', {
+      await api.post('/receivables', {
         clinicId,
-        basis: ruleForm.basis,
-        calculationType: ruleForm.calculationType,
-        value: ruleForm.value.replace(',', '.'),
-        validFrom: ruleForm.validFrom,
-        professionalId: ruleForm.professionalId || undefined,
-        priority: Number(ruleForm.priority) || 0,
+        patientId,
+        description,
+        originalAmount,
+        dueDate,
+        paymentMethod: String(data.get('paymentMethod') || '') || undefined,
       });
-      setRuleOpen(false);
-      setRuleForm((prev) => ({ ...prev, value: '30', professionalId: '' }));
+      setCreateReceivableOpen(false);
+      setReceivableForm({
+        patientId: '',
+        description: '',
+        dueDate: new Date().toISOString().slice(0, 10),
+        paymentMethod: '',
+      });
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Não foi possível criar a regra.');
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o título.');
     } finally {
-      setRuleBusy(false);
+      setReceivableBusy(false);
     }
   };
 
-  const deactivateRule = async (id: string) => {
-    if (!canConfigureCommission) return;
-    setRuleBusy(true);
+  const registerReceivablePayment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!receiveTarget || !canFinanceCreate) return;
+    const data = new FormData(event.currentTarget);
+    const amount = moneyInputToApi(data.get('amount'));
+    const method = String(data.get('method') || 'PIX');
+    if (Number(amount) <= 0) {
+      setError('Informe o valor recebido.');
+      return;
+    }
+    setReceivableBusy(true);
+    setError('');
     try {
-      await api.post(`/commission-rules/${id}/deactivate`, {});
+      await api.post(
+        `/receivables/${String(receiveTarget.id)}/payments`,
+        { amount, method },
+        { 'Idempotency-Key': crypto.randomUUID() },
+      );
+      setReceiveTarget(null);
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Não foi possível desativar a regra.');
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível registrar o recebimento.');
     } finally {
-      setRuleBusy(false);
+      setReceivableBusy(false);
     }
   };
 
@@ -353,7 +392,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   if (!canFinance && tab !== 'commissions') {
     return (
       <>
-        <PageHeader title="Gestão financeira" description="Acesso restrito pela permissão financial.view." />
+        <PageHeader title="Gestão financeira" description="Acesso restrito. Peça permissão para visualizar o financeiro." />
         <div className="state-message error" role="alert">Você não possui permissão para visualizar o financeiro.</div>
       </>
     );
@@ -452,35 +491,123 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   <div className="info-item"><small>Forma de Pagamento</small><strong>{paymentMethodLabel(selectedReceivable.paymentMethod)}</strong></div>
                   <div className="info-item"><small>Situação clínica</small><strong>{presentationLabel(nested(selectedReceivable, 'treatment').status)}</strong></div>
                 </div>
-                {selectedReceivable.patientId ? <div className="modal-footer"><Link className="button primary" href={`/pacientes/${String(selectedReceivable.patientId)}?tab=financeiro`}>Abrir paciente</Link></div> : null}
+                <div className="modal-footer">
+                  {canFinanceCreate && !['PAID', 'CANCELLED'].includes(String(selectedReceivable.status)) ? (
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick={() => {
+                        setReceiveTarget(selectedReceivable);
+                        setReceiveForm({
+                          amount: formatMoneyInputFromValue(selectedReceivable.outstandingAmount ?? selectedReceivable.netAmount),
+                          method: 'PIX',
+                        });
+                        setSelectedReceivable(null);
+                      }}
+                    >
+                      Registrar recebimento
+                    </button>
+                  ) : null}
+                  {selectedReceivable.patientId ? <Link className="button" href={`/pacientes/${String(selectedReceivable.patientId)}?tab=financeiro`}>Abrir paciente</Link> : null}
+                </div>
               </div>
             ) : null}
           </Modal>
-          <ModuleActions
-            module="financeiro"
-            clinicId={clinicId}
-            clinics={clinics}
-            professionals={professionals}
-            patients={patients}
-            selectedPatientId=""
-            onPatientChange={() => undefined}
-            onSaved={load}
-          />
+          <Modal
+            open={createReceivableOpen}
+            title="Nova conta a receber"
+            description="Cadastre um título vinculado ao paciente."
+            onClose={() => setCreateReceivableOpen(false)}
+            confirmOnClose
+          >
+            <form className="mutation-form" onSubmit={(event) => void createReceivable(event)}>
+              <label className="span-2">Paciente
+                <select name="patientId" required defaultValue={receivableForm.patientId}>
+                  <option value="">Selecione</option>
+                  {patients.map((item) => (
+                    <option key={String(item.id)} value={String(item.id)}>{text(item.fullName)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="span-2">Descrição<input name="description" required minLength={3} defaultValue={receivableForm.description} /></label>
+              <label>Valor<UncontrolledMoneyInput name="originalAmount" required /></label>
+              <label>Vencimento<input name="dueDate" type="date" required defaultValue={receivableForm.dueDate} /></label>
+              <label className="span-2">Forma de pagamento prevista
+                <select name="paymentMethod" defaultValue={receivableForm.paymentMethod}>
+                  <option value="">Não informado</option>
+                  {PAYMENT_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}
+                </select>
+              </label>
+              {error ? <p className="form-error span-2" role="alert">{error}</p> : null}
+              <div className="modal-footer span-2">
+                <button type="button" className="button" onClick={() => setCreateReceivableOpen(false)}>Cancelar</button>
+                <button className="button primary" disabled={receivableBusy}>{receivableBusy ? 'Salvando…' : 'Criar título'}</button>
+              </div>
+            </form>
+          </Modal>
+          <Modal
+            open={Boolean(receiveTarget)}
+            title="Registrar recebimento"
+            description={receiveTarget ? `${text(receiveTarget.description)} · saldo ${currency(receiveTarget.outstandingAmount ?? receiveTarget.netAmount)}` : undefined}
+            onClose={() => setReceiveTarget(null)}
+            confirmOnClose
+          >
+            {receiveTarget ? (
+              <form className="mutation-form" onSubmit={(event) => void registerReceivablePayment(event)} key={String(receiveTarget.id)}>
+                <div className="info-grid span-2">
+                  <div className="info-item"><small>Título</small><strong>{text(receiveTarget.description)}</strong></div>
+                  <div className="info-item"><small>Status</small><strong>{presentationLabel(receiveTarget.effectiveStatus ?? receiveTarget.status)}</strong></div>
+                  <div className="info-item"><small>Valor</small><strong>{currency(receiveTarget.netAmount)}</strong></div>
+                  <div className="info-item"><small>Saldo</small><strong>{currency(receiveTarget.outstandingAmount ?? receiveTarget.netAmount)}</strong></div>
+                </div>
+                <label>Valor recebido
+                  <UncontrolledMoneyInput
+                    name="amount"
+                    required
+                    defaultValue={formatMoneyInputFromValue(receiveTarget.outstandingAmount ?? receiveTarget.netAmount)}
+                  />
+                </label>
+                <label>Forma de pagamento
+                  <select name="method" defaultValue={receiveForm.method} required>
+                    {PAYMENT_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}
+                  </select>
+                </label>
+                {error ? <p className="form-error span-2" role="alert">{error}</p> : null}
+                <div className="modal-footer span-2">
+                  <button type="button" className="button" onClick={() => setReceiveTarget(null)}>Cancelar</button>
+                  <button className="button primary" disabled={receivableBusy}>{receivableBusy ? 'Registrando…' : 'Registrar recebimento'}</button>
+                </div>
+              </form>
+            ) : null}
+          </Modal>
           <Panel
             title="Contas a receber"
             description="Títulos em aberto, pagos e vencidos"
             actions={
-              <button
-                className="button small"
-                type="button"
-                aria-expanded={filtersOpen}
-                onClick={() => setFiltersOpen((value) => {
-                  window.localStorage.setItem('sonder.finance.filtersOpen', String(!value));
-                  return !value;
-                })}
-              >
-                <SlidersHorizontal size={14} />Filtros
-              </button>
+              <div className="heading-actions" style={{ marginLeft: 0 }}>
+                {canFinanceCreate ? (
+                  <button
+                    className="button primary small"
+                    type="button"
+                    onClick={() => { setError(''); setCreateReceivableOpen(true); }}
+                  >
+                    <Plus size={14} /> Conta a receber
+                  </button>
+                ) : null}
+                <button
+                  className="button small"
+                  type="button"
+                  aria-expanded={filtersOpen}
+                  onClick={() => {
+                    setFiltersOpen((value) => {
+                      window.localStorage.setItem('sonder.finance.filtersOpen', String(!value));
+                      return !value;
+                    });
+                  }}
+                >
+                  <SlidersHorizontal size={14} />Filtros
+                </button>
+              </div>
             }
           >
             <div className="summary-strip">
@@ -542,7 +669,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
               </div>
             ) : null}
             {loading ? <div className="state-message">Carregando…</div> : null}
-            {!loading && filteredReceivables.length === 0 ? <EmptyState title="Nenhum título" description={receivables.length ? 'Nenhum resultado para os filtros.' : 'Crie o primeiro título acima.'} /> : null}
+            {!loading && filteredReceivables.length === 0 ? <EmptyState title="Nenhum título" description={receivables.length ? 'Nenhum resultado para os filtros.' : 'Crie o primeiro título com “Conta a receber”.'} /> : null}
             {filteredReceivables.length > 0 && (
               <div className="table-wrap">
                 <table className="data-table">
@@ -565,6 +692,25 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                         <td>{currency(item.outstandingAmount ?? item.netAmount)}</td>
                         <td><StatusBadge tone={statusTone(item.effectiveStatus ?? item.status)}>{presentationLabel(item.effectiveStatus ?? item.status)}</StatusBadge></td>
                         <td className="row-actions">
+                          {canFinanceCreate && !['PAID', 'CANCELLED'].includes(String(item.status)) ? (
+                            <button
+                              type="button"
+                              className="icon-button"
+                              title="Registrar recebimento"
+                              aria-label={`Registrar recebimento de ${text(item.description)}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setError('');
+                                setReceiveTarget(item);
+                                setReceiveForm({
+                                  amount: formatMoneyInputFromValue(item.outstandingAmount ?? item.netAmount),
+                                  method: 'PIX',
+                                });
+                              }}
+                            >
+                              <Banknote size={16} />
+                            </button>
+                          ) : null}
                           {item.patientId ? (
                             <Link
                               className="icon-button"
@@ -589,52 +735,11 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
 
       {tab === 'commissions' && (
         <>
-          <Modal
-            open={ruleOpen}
-            title="Nova regra de comissão"
-            description="Regras versionadas: desative ou revise sem alterar eventos já gerados."
-            onClose={() => setRuleOpen(false)}
-            confirmOnClose
-          >
-            <form className="mutation-form compact" onSubmit={(event) => void createCommissionRule(event)}>
-              <label>Base
-                <select value={ruleForm.basis} onChange={(event) => setRuleForm((prev) => ({ ...prev, basis: event.target.value }))}>
-                  <option value="PRODUCTION">Produção</option>
-                  <option value="RECEIPT">Recebimento</option>
-                  <option value="PROCEDURE">Procedimento</option>
-                </select>
-              </label>
-              <label>Cálculo
-                <select value={ruleForm.calculationType} onChange={(event) => setRuleForm((prev) => ({ ...prev, calculationType: event.target.value }))}>
-                  <option value="PERCENTAGE">Percentual</option>
-                  <option value="FIXED">Valor fixo</option>
-                </select>
-              </label>
-              <label>Valor
-                <input required inputMode="decimal" value={ruleForm.value} onChange={(event) => setRuleForm((prev) => ({ ...prev, value: event.target.value }))} />
-              </label>
-              <label>Vigência a partir de
-                <input type="date" required value={ruleForm.validFrom} onChange={(event) => setRuleForm((prev) => ({ ...prev, validFrom: event.target.value }))} />
-              </label>
-              <label>Profissional (opcional)
-                <select value={ruleForm.professionalId} onChange={(event) => setRuleForm((prev) => ({ ...prev, professionalId: event.target.value }))}>
-                  <option value="">Todos</option>
-                  {professionals.map((item) => (
-                    <option key={item.id} value={item.id}>{item.name}</option>
-                  ))}
-                </select>
-              </label>
-              <label>Prioridade
-                <input type="number" value={ruleForm.priority} onChange={(event) => setRuleForm((prev) => ({ ...prev, priority: event.target.value }))} />
-              </label>
-              <button className="button primary" type="submit" disabled={ruleBusy}>{ruleBusy ? 'Salvando…' : 'Criar regra'}</button>
-            </form>
-          </Modal>
           <Panel
             title="Comissões e repasses"
-            description="Acompanhe regras vigentes, períodos de fechamento e valores gerados a partir dos recebimentos."
+            description="Acompanhe competências e lançamentos. As regras são parametrizadas em Configurações."
             actions={canConfigureCommission ? (
-              <button className="button primary small" type="button" onClick={() => setRuleOpen(true)}>Nova regra</button>
+              <Link className="button primary small" href="/configuracoes?section=finance">Parametrizar regras</Link>
             ) : undefined}
           >
             {!canCommission ? (
@@ -656,7 +761,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                     {canCloseCommission ? (
                       <div className="heading-actions" style={{ margin: '0 0 10px' }}>
                         <button className="button small" type="button" onClick={() => void ensureOpenPeriod()}>
-                          Garantir mês aberto
+                          Abrir o mês atual
                         </button>
                       </div>
                     ) : null}
@@ -699,9 +804,9 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                     )}
                   </Panel>
 
-                  <Panel title="Regras vigentes" description="Defina base (produção/recebimento), percentual ou valor fixo">
+                  <Panel title="Regras vigentes" description="Parametrizadas em Configurações → Financeiro e comissões">
                     {rules.length === 0 ? (
-                      <EmptyState title="Nenhuma regra" description="Cadastre regras de comissão para começar a calcular repasses." />
+                      <EmptyState title="Nenhuma regra" description="Cadastre regras em Configurações para começar a calcular repasses." />
                     ) : (
                       <div className="table-wrap">
                         <table className="data-table">
@@ -711,7 +816,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                               <th>Cálculo</th>
                               <th>Valor</th>
                               <th>Vigência</th>
-                              <th></th>
+                              <th>Status</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -724,14 +829,10 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                                   {dateOnly(item.validFrom)}
                                   {item.validTo || item.validUntil ? ` → ${dateOnly(item.validTo ?? item.validUntil)}` : ' · vigente'}
                                 </td>
-                                <td className="row-actions">
-                                  {canConfigureCommission && item.active !== false ? (
-                                    <button className="button small" type="button" disabled={ruleBusy} onClick={() => void deactivateRule(String(item.id))}>
-                                      Desativar
-                                    </button>
-                                  ) : (
-                                    <StatusBadge tone="gray">Inativa</StatusBadge>
-                                  )}
+                                <td>
+                                  <StatusBadge tone={item.active !== false ? 'green' : 'gray'}>
+                                    {item.active !== false ? 'Ativa' : 'Inativa'}
+                                  </StatusBadge>
                                 </td>
                               </tr>
                             ))}
@@ -837,7 +938,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
           </Modal>
           <Panel title="Contas a pagar" description="Títulos de saída da clínica.">
             {!canFinance ? (
-              <div className="state-message error" role="alert">Sem permissão financial.view.</div>
+              <div className="state-message error" role="alert">Sem permissão para ver o financeiro.</div>
             ) : payables.length === 0 ? (
               <EmptyState title="Nenhuma conta a pagar" description="Cadastre despesas pelo módulo financeiro quando necessário." />
             ) : (
@@ -876,13 +977,13 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
           <Modal
             open={recurrenceOpen}
             title="Nova recorrência"
-            description="Gera contas a pagar ou a receber no vencimento (worker + geração manual)."
+            description="Cria contas a pagar ou a receber automaticamente na data de vencimento, ou você pode gerar agora."
             onClose={() => setRecurrenceOpen(false)}
             size="medium"
             confirmOnClose
           >
             {!canFinanceCreate ? (
-              <div className="state-message error" role="alert">Sem permissão financial.create.</div>
+              <div className="state-message error" role="alert">Sem permissão para cadastrar títulos.</div>
             ) : (
               <form className="mutation-form compact" onSubmit={(event) => void createRecurrence(event)}>
                 <label>
@@ -908,9 +1009,10 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   Valor
                   <input
                     required
-                    inputMode="decimal"
+                    inputMode="numeric"
+                    placeholder="0,00"
                     value={recurrenceForm.amount}
-                    onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, amount: event.target.value }))}
+                    onChange={(event) => setRecurrenceForm((prev) => ({ ...prev, amount: maskMoneyInput(event.target.value) }))}
                   />
                 </label>
                 <label>
@@ -1028,7 +1130,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
               </div>
             ) : null}
             {!canFinance ? (
-              <div className="state-message error" role="alert">Sem permissão financial.view.</div>
+              <div className="state-message error" role="alert">Sem permissão para ver o financeiro.</div>
             ) : filteredRecurrences.length === 0 ? (
               <EmptyState title="Nenhuma recorrência" description={recurrences.length ? 'Nenhum resultado para os filtros.' : 'Cadastre aluguel, assinaturas ou mensalidades periódicas.'} />
             ) : (

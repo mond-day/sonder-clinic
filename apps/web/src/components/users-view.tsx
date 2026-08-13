@@ -1,15 +1,15 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { Ban, Pencil, ShieldCheck } from 'lucide-react';
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
 import { initials, list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import {
   INVITE_STATUS_LABELS,
   buildPermissionMatrix,
-  permissionLabel,
 } from '@/lib/permission-presentation';
-import { Modal } from './modal';
+import { DirtyFormModal, Modal } from './modal';
 import { EmptyState, ErrorState, MetricCard, PageHeader, Panel, Skeleton, StatusBadge } from './ui';
 
 const inviteSchema = z.object({
@@ -64,7 +64,10 @@ export function UsersView() {
   const [inviteMode, setInviteMode] = useState<'invite' | 'create'>('invite');
   const [editUser, setEditUser] = useState<RecordValue | null>(null);
   const [roleModalOpen, setRoleModalOpen] = useState(false);
+  const [roleEditorOpen, setRoleEditorOpen] = useState(false);
+  const [pendingUserAction, setPendingUserAction] = useState<RecordValue | null>(null);
   const [draftPermissions, setDraftPermissions] = useState<Set<string>>(new Set());
+  const [permissionArea, setPermissionArea] = useState('');
   const [savingRole, setSavingRole] = useState(false);
   const [smtpConfigured, setSmtpConfigured] = useState<boolean | null>(null);
   const [teamSearch, setTeamSearch] = useState('');
@@ -106,8 +109,9 @@ export function UsersView() {
   ), [role]);
 
   useEffect(() => {
+    if (roleModalOpen) return;
     setDraftPermissions(new Set(rolePermissionCodes));
-  }, [rolePermissionCodes, selectedRole]);
+  }, [rolePermissionCodes, selectedRole, roleModalOpen]);
 
   const allPermissionCodes = useMemo(
     () => permissions.map((item) => text(item.code)).filter(Boolean),
@@ -118,6 +122,13 @@ export function UsersView() {
     () => buildPermissionMatrix(allPermissionCodes),
     [allPermissionCodes],
   );
+
+  useEffect(() => {
+    if (!permissionMatrix.length) return;
+    if (!permissionMatrix.some((row) => row.area === permissionArea)) {
+      setPermissionArea(permissionMatrix[0]!.area);
+    }
+  }, [permissionMatrix, permissionArea]);
 
   const isAdminRole = String(role?.code ?? '').toUpperCase() === 'ADMIN';
 
@@ -243,20 +254,15 @@ export function UsersView() {
     }
     setBusy(true);
     try {
-      const base = roles.find((item) => String(item.id) === parsed.data.baseRoleId);
-      const baseCodes = list((base?.permissions as RecordValue[] | undefined) ?? []).map((item) => {
-        const permission = item.permission as RecordValue | undefined;
-        return text(permission?.code ?? item.code);
-      }).filter(Boolean);
       const created = await api.post<RecordValue>('/roles', {
         name: parsed.data.name,
-        permissionCodes: baseCodes,
+        permissionCodes: [...draftPermissions],
       });
       await load();
       if (created?.id) setSelectedRole(String(created.id));
       setRoleModalOpen(false);
       setTab('roles');
-      setFormMessage('Perfil criado. Ajuste as permissões se necessário.');
+      setFormMessage('Perfil criado.');
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'Não foi possível criar o perfil.');
     } finally {
@@ -271,6 +277,7 @@ export function UsersView() {
     try {
       await api.patch(`/roles/${selectedRole}`, { permissionCodes: [...draftPermissions] });
       await load();
+      setRoleEditorOpen(false);
       setFormMessage('Permissões do perfil atualizadas.');
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'Não foi possível salvar o perfil.');
@@ -280,7 +287,7 @@ export function UsersView() {
   }
 
   function togglePermission(code: string) {
-    if (isAdminRole) return;
+    if (roleEditorOpen && isAdminRole) return;
     setDraftPermissions((current) => {
       const next = new Set(current);
       if (next.has(code)) next.delete(code);
@@ -290,7 +297,7 @@ export function UsersView() {
   }
 
   function toggleAreaAccess(row: ReturnType<typeof buildPermissionMatrix>[number], enable: boolean) {
-    if (isAdminRole) return;
+    if (roleEditorOpen && isAdminRole) return;
     const codes = [
       row.view,
       row.create,
@@ -306,6 +313,90 @@ export function UsersView() {
       }
       return next;
     });
+  }
+
+  function permissionSwitch(code: string, label: string, locked: boolean, rowClassName?: string) {
+    return (
+      <label key={code} className={`switch-row${rowClassName ? ` ${rowClassName}` : ''}`} title={label}>
+        <span>{label}</span>
+        <span className="switch">
+          <input
+            type="checkbox"
+            role="switch"
+            checked={draftPermissions.has(code) || locked}
+            disabled={locked}
+            onChange={() => togglePermission(code)}
+            aria-label={label}
+          />
+          <span className="switch-track" aria-hidden />
+        </span>
+      </label>
+    );
+  }
+
+  function permissionAreaEditor(locked: boolean) {
+    const row = permissionMatrix.find((item) => item.area === permissionArea) ?? permissionMatrix[0];
+    if (!row) return <p className="muted-note">Nenhuma permissão cadastrada.</p>;
+    const areaCodes = [
+      row.view,
+      row.create,
+      row.edit,
+      row.cancel,
+      ...row.specials.map((item) => item.code),
+    ].filter(Boolean) as string[];
+    const allOn = areaCodes.length > 0 && areaCodes.every((code) => draftPermissions.has(code));
+    const actionLabels = {
+      view: 'Visualizar',
+      create: 'Criar',
+      edit: 'Editar',
+      cancel: 'Cancelar / excluir',
+    } as const;
+    return (
+      <div className="permission-area-editor">
+        <div className="permission-area-tabs" role="tablist" aria-label="Áreas de permissão">
+          {permissionMatrix.map((item) => (
+            <button
+              key={item.area}
+              type="button"
+              role="tab"
+              aria-selected={item.area === row.area}
+              onClick={() => setPermissionArea(item.area)}
+            >
+              {item.area}
+            </button>
+          ))}
+        </div>
+        <div className="permission-area-panel" role="tabpanel" aria-label={row.area}>
+          {areaCodes.length ? (
+            <label className="switch-row all-access" title={`Liberar toda a área ${row.area}`}>
+              <span>Acesso a tudo</span>
+              <span className="switch">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={allOn || locked}
+                  disabled={locked}
+                  onChange={(event) => toggleAreaAccess(row, event.target.checked)}
+                  aria-label={`Acesso a tudo em ${row.area}`}
+                />
+                <span className="switch-track" aria-hidden />
+              </span>
+            </label>
+          ) : null}
+          {(['view', 'create', 'edit', 'cancel'] as const).map((action) => {
+            const code = row[action];
+            if (!code) return null;
+            return permissionSwitch(code, actionLabels[action], locked);
+          })}
+          {row.specials.length ? (
+            <div className="permission-specials">
+              <h4>Ações especiais</h4>
+              {row.specials.map((special) => permissionSwitch(special.code, special.label, locked))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
   }
 
   if (loading) return <Skeleton rows={6} />;
@@ -357,14 +448,13 @@ export function UsersView() {
         <button type="button" role="tab" aria-selected={tab === 'invites'} className={tab === 'invites' ? 'active' : ''} onClick={() => setTab('invites')}>Convites</button>
       </div>
 
-      <Modal
+      <DirtyFormModal
         open={inviteOpen}
         title={inviteMode === 'invite' ? 'Convidar usuário' : 'Criar usuário'}
         description={inviteMode === 'invite'
           ? 'O usuário receberá um e-mail para criar a própria senha.'
           : 'Cria o usuário ativo com senha inicial.'}
         onClose={() => setInviteOpen(false)}
-        confirmOnClose
       >
         <div className="choice-pills">
           <button type="button" className={inviteMode === 'invite' ? 'active' : ''} onClick={() => setInviteMode('invite')}>Convite</button>
@@ -392,14 +482,13 @@ export function UsersView() {
             {busy ? 'Salvando…' : inviteMode === 'invite' ? 'Enviar convite' : 'Criar usuário'}
           </button>
         </form>
-      </Modal>
+      </DirtyFormModal>
 
-      <Modal
+      <DirtyFormModal
         open={Boolean(editUser)}
         title="Editar usuário"
         description={editUser ? `${text(editUser.name)} · ${text(editUser.email)}` : undefined}
         onClose={() => setEditUser(null)}
-        confirmOnClose
       >
         {editUser ? (
           <form className="mutation-form" key={String(editUser.id)} onSubmit={(event) => void submitEditUser(event)}>
@@ -434,27 +523,94 @@ export function UsersView() {
             </div>
           </form>
         ) : null}
-      </Modal>
+      </DirtyFormModal>
 
-      <Modal
+      <DirtyFormModal
         open={roleModalOpen}
         title="Novo perfil de acesso"
-        description="Crie um perfil e configure as permissões na próxima etapa."
+        description="Defina o nome, a base e as permissões antes de salvar."
         onClose={() => setRoleModalOpen(false)}
-        size="small"
-        confirmOnClose
+        size="xlarge"
+        extraDirty={draftPermissions.size > 0}
       >
         <form className="mutation-form" onSubmit={(event) => void submitCreateRole(event)}>
-          <label className="span-2">Nome do perfil<input name="name" required minLength={2} placeholder="Ex.: Coordenador clínico" /></label>
-          <label className="span-2">Basear em
-            <select name="baseRoleId" defaultValue="">
+          <label>Nome do perfil<input name="name" required minLength={2} placeholder="Ex.: Coordenador clínico" autoFocus /></label>
+          <label>Basear em
+            <select
+              name="baseRoleId"
+              defaultValue=""
+              onChange={(event) => {
+                const base = roles.find((item) => String(item.id) === event.target.value);
+                const codes = list((base?.permissions as RecordValue[] | undefined) ?? []).map((item) => {
+                  const permission = item.permission as RecordValue | undefined;
+                  return text(permission?.code ?? item.code);
+                }).filter(Boolean);
+                setDraftPermissions(new Set(codes));
+              }}
+            >
               <option value="">Começar sem permissões</option>
               {roles.map((item) => <option key={String(item.id)} value={String(item.id)}>{text(item.name)}</option>)}
             </select>
           </label>
+          <div className="span-2">{permissionAreaEditor(false)}</div>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
-          <button className="button primary" disabled={busy} type="submit">{busy ? 'Criando…' : 'Criar perfil'}</button>
+          <div className="modal-footer span-2">
+            <button type="button" className="button" onClick={() => setRoleModalOpen(false)}>Cancelar</button>
+            <button className="button primary" disabled={busy} type="submit">{busy ? 'Criando…' : 'Criar perfil'}</button>
+          </div>
         </form>
+      </DirtyFormModal>
+      <Modal
+        open={roleEditorOpen && Boolean(role)}
+        title={text(role?.name, 'Editar perfil')}
+        description={isAdminRole
+          ? 'Perfil administrador — acesso completo (não editável).'
+          : 'Ajuste as permissões e salve para aplicar a todos os usuários deste perfil.'}
+        onClose={() => setRoleEditorOpen(false)}
+        size="xlarge"
+        confirmOnClose={!isAdminRole}
+        extraDirty={matrixDirty}
+        confirmCloseMessage="Há permissões não salvas. Descartar e fechar?"
+      >
+        {role ? (
+          <>
+            {permissionAreaEditor(isAdminRole)}
+            {formError ? <p className="form-error" role="alert">{formError}</p> : null}
+            <div className="modal-footer">
+              <button type="button" className="button" onClick={() => setRoleEditorOpen(false)}>Fechar</button>
+              <button
+                type="button"
+                className="button primary"
+                disabled={!matrixDirty || savingRole || isAdminRole}
+                onClick={() => void saveRolePermissions()}
+              >
+                {savingRole ? 'Salvando…' : 'Salvar perfil'}
+              </button>
+            </div>
+          </>
+        ) : null}
+      </Modal>
+      <Modal
+        open={Boolean(pendingUserAction)}
+        title="Bloquear acesso?"
+        description={pendingUserAction ? `${text(pendingUserAction.name)} perderá o acesso ao sistema até ser desbloqueado.` : undefined}
+        size="small"
+        onClose={() => setPendingUserAction(null)}
+      >
+        <div className="modal-footer">
+          <button type="button" className="button" onClick={() => setPendingUserAction(null)}>Cancelar</button>
+          <button
+            type="button"
+            className="button danger"
+            disabled={busy}
+            onClick={() => {
+              if (pendingUserAction) void toggleUserStatus(pendingUserAction);
+              setPendingUserAction(null);
+            }}
+          >
+            Bloquear
+          </button>
+        </div>
       </Modal>
 
       {tab === 'team' ? (
@@ -516,16 +672,36 @@ export function UsersView() {
                         </StatusBadge>
                       </td>
                       <td className="row-actions">
-                        <button type="button" className="button small" onClick={() => { setFormError(''); setEditUser(user); }}>
-                          Editar
+                        <button
+                          type="button"
+                          className="icon-button"
+                          title="Editar"
+                          aria-label={`Editar ${text(user.name)}`}
+                          onClick={() => { setFormError(''); setEditUser(user); }}
+                        >
+                          <Pencil size={15} />
                         </button>
                         {user.status === 'BLOCKED' ? (
-                          <button type="button" className="button small" disabled={busy} onClick={() => void toggleUserStatus(user)}>
-                            Ativar
+                          <button
+                            type="button"
+                            className="icon-button"
+                            title="Desbloquear"
+                            aria-label={`Desbloquear ${text(user.name)}`}
+                            disabled={busy}
+                            onClick={() => void toggleUserStatus(user)}
+                          >
+                            <ShieldCheck size={15} />
                           </button>
                         ) : (
-                          <button type="button" className="button small danger" disabled={busy} onClick={() => void toggleUserStatus(user)}>
-                            Bloquear
+                          <button
+                            type="button"
+                            className="icon-button danger"
+                            title="Bloquear"
+                            aria-label={`Bloquear ${text(user.name)}`}
+                            disabled={busy}
+                            onClick={() => setPendingUserAction(user)}
+                          >
+                            <Ban size={15} />
                           </button>
                         )}
                       </td>
@@ -628,145 +804,58 @@ export function UsersView() {
       ) : null}
 
       {tab === 'roles' ? (
-        <div className="users-layout" style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 240px) minmax(0, 1fr)', gap: 14 }}>
-          <Panel
-            title="Perfis"
-            description="Selecione para editar"
-            actions={(
-              <button type="button" className="button small primary" onClick={() => { setFormError(''); setRoleModalOpen(true); }}>
-                + Novo perfil
-              </button>
-            )}
-          >
-            <div className="role-cards" style={{ gridTemplateColumns: '1fr' }}>
+        <Panel
+          title="Perfis de acesso"
+          description="Cada perfil concentra as permissões. Abra o cadastro para visualizar ou editar."
+          actions={(
+            <button
+              type="button"
+              className="button small primary"
+              onClick={() => {
+                setFormError('');
+                setDraftPermissions(new Set());
+                setRoleModalOpen(true);
+              }}
+            >
+              + Novo perfil
+            </button>
+          )}
+        >
+          {roles.length === 0 ? (
+            <EmptyState title="Nenhum perfil" description="Crie o primeiro perfil de acesso." />
+          ) : (
+            <div className="settings-list">
               {roles.map((item) => {
                 const userCount = Number((item._count as RecordValue | undefined)?.users ?? 0);
                 const permissionCount = list(item.permissions as RecordValue[] | undefined).length;
+                const admin = String(item.code ?? '').toUpperCase() === 'ADMIN';
                 return (
-                  <button
-                    key={String(item.id)}
-                    type="button"
-                    className={`role-card ${selectedRole === item.id ? 'active' : ''}`}
-                    onClick={() => setSelectedRole(String(item.id))}
-                  >
-                    <strong>{text(item.name)}</strong>
-                    <small>{userCount} usuário(s) · {permissionCount} permissão(ões)</small>
-                  </button>
+                  <div className="settings-row" key={String(item.id)}>
+                    <div>
+                      <strong>{text(item.name)}</strong>
+                      <span>{userCount} usuário(s) · {permissionCount} permissão(ões){admin ? ' · administrador' : ''}</span>
+                    </div>
+                    <div className="row-actions">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title={admin ? 'Visualizar' : 'Editar'}
+                        aria-label={`${admin ? 'Visualizar' : 'Editar'} ${text(item.name)}`}
+                        onClick={() => {
+                          setFormError('');
+                          setSelectedRole(String(item.id));
+                          setRoleEditorOpen(true);
+                        }}
+                      >
+                        <Pencil size={15} />
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
-          </Panel>
-
-          <Panel
-            title={text(role?.name) || 'Permissões deste perfil'}
-            description={isAdminRole
-              ? 'Perfil administrador — acesso completo a todas as áreas (não editável).'
-              : 'Use os interruptores por ação ou “Acesso a tudo” para liberar a área inteira.'}
-            actions={(
-              <button
-                type="button"
-                className="button primary"
-                disabled={!selectedRole || !matrixDirty || savingRole || isAdminRole}
-                onClick={() => void saveRolePermissions()}
-              >
-                {savingRole ? 'Salvando…' : 'Salvar perfil'}
-              </button>
-            )}
-          >
-            {!role ? (
-              <EmptyState title="Selecione um perfil" />
-            ) : (
-              <div className="table-wrap">
-                <table className="data-table permission-switch-table">
-                  <thead>
-                    <tr>
-                      <th>Área</th>
-                      <th>Acesso a tudo</th>
-                      <th>Visualizar</th>
-                      <th>Criar</th>
-                      <th>Editar</th>
-                      <th>Cancelar / excluir</th>
-                      <th>Ações especiais</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {permissionMatrix.map((row) => {
-                      const areaCodes = [
-                        row.view,
-                        row.create,
-                        row.edit,
-                        row.cancel,
-                        ...row.specials.map((item) => item.code),
-                      ].filter(Boolean) as string[];
-                      const allOn = areaCodes.length > 0 && areaCodes.every((code) => draftPermissions.has(code));
-                      return (
-                        <tr key={row.area}>
-                          <td><strong>{row.area}</strong></td>
-                          <td>
-                            {areaCodes.length ? (
-                              <label className="switch" title={`Liberar toda a área ${row.area}`}>
-                                <input
-                                  type="checkbox"
-                                  role="switch"
-                                  checked={allOn || isAdminRole}
-                                  disabled={isAdminRole}
-                                  onChange={(event) => toggleAreaAccess(row, event.target.checked)}
-                                  aria-label={`Acesso a tudo em ${row.area}`}
-                                />
-                                <span className="switch-track" aria-hidden />
-                              </label>
-                            ) : '—'}
-                          </td>
-                          {(['view', 'create', 'edit', 'cancel'] as const).map((action) => {
-                            const code = row[action];
-                            if (!code) return <td key={action}>—</td>;
-                            return (
-                              <td key={action}>
-                                <label className="switch" title={permissionLabel(code)}>
-                                  <input
-                                    type="checkbox"
-                                    role="switch"
-                                    checked={draftPermissions.has(code) || isAdminRole}
-                                    disabled={isAdminRole}
-                                    onChange={() => togglePermission(code)}
-                                    aria-label={permissionLabel(code)}
-                                  />
-                                  <span className="switch-track" aria-hidden />
-                                </label>
-                              </td>
-                            );
-                          })}
-                          <td>
-                            {row.specials.length ? (
-                              <div style={{ display: 'grid', gap: 8 }}>
-                                {row.specials.map((special) => (
-                                  <label key={special.code} className="switch-row" title={special.label}>
-                                    <span className="switch">
-                                      <input
-                                        type="checkbox"
-                                        role="switch"
-                                        checked={draftPermissions.has(special.code) || isAdminRole}
-                                        disabled={isAdminRole}
-                                        onChange={() => togglePermission(special.code)}
-                                        aria-label={special.label}
-                                      />
-                                      <span className="switch-track" aria-hidden />
-                                    </span>
-                                    <span>{special.label}</span>
-                                  </label>
-                                ))}
-                              </div>
-                            ) : '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Panel>
-        </div>
+          )}
+        </Panel>
       ) : null}
     </div>
   );

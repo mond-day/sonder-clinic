@@ -6,6 +6,8 @@ import { api, ApiError } from '@/lib/api';
 import { APPOINTMENT_DURATIONS } from '@/lib/duration';
 import {
   cpfDigits,
+  currency,
+  formatMoneyInputFromValue,
   formatPostalCode,
   isMinorFromBirthDate,
   maskCpfInput,
@@ -16,6 +18,7 @@ import { lookupViaCep } from '@/lib/via-cep';
 import type { Clinic, Professional } from './selection-provider';
 import { SearchableSelect } from './searchable-select';
 import { Disclosure, StatusBadge } from './ui';
+import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-inputs';
 
 type Item = Record<string, unknown>;
 type ModuleKey = 'agenda' | 'pacientes' | 'tratamentos' | 'documentos' | 'financeiro' | 'comissoes' | 'comunicacao' | 'integracoes' | 'relatorios';
@@ -185,6 +188,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [state, setState] = useState('');
   const [cepHint, setCepHint] = useState('');
   const [cepBusy, setCepBusy] = useState(false);
+  const [selectedReceivableId, setSelectedReceivableId] = useState('');
   const lockedPatientEdit = Boolean(selectedPatientId);
   const agendaPatientDefault = selectedPatientId || defaultPatientId || '';
 
@@ -279,6 +283,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
       await task();
       setMessage(success);
       form?.reset();
+      setSelectedReceivableId('');
       setResourceRevision((value) => value + 1);
       onSaved();
     } catch (cause) {
@@ -710,6 +715,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
 
   if (module === 'financeiro') {
     return <MutationPanel title="Títulos e recebimentos" description="Cadastre títulos e registre recebimentos dos pacientes." message={message} error={error}>
+      <Disclosure title="Novo título" description="Cadastrar uma conta a receber" defaultOpen={false}>
       <form className="mutation-form compact" onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
         const parsed = validate(receivableSchema, { patientId: data.get('patientId'), description: data.get('description'), originalAmount: data.get('originalAmount'), dueDate: data.get('dueDate'), paymentMethod: optional(data.get('paymentMethod')) });
@@ -717,7 +723,8 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         void run(() => api.post('/receivables', { ...parsed, clinicId }), 'Título criado.', event.currentTarget);
       }}>
         <label>Paciente<select name="patientId" required><option value="">Selecione</option>{patientOptions}</select></label>
-        <label>Descrição<input name="description" required /></label><label>Valor<input name="originalAmount" inputMode="decimal" required /></label>
+        <label>Descrição<input name="description" required /></label>
+        <label>Valor<UncontrolledMoneyInput name="originalAmount" required /></label>
         <label>Vencimento<input name="dueDate" type="date" required /></label>
         <label>Forma de Pagamento
           <select name="paymentMethod" defaultValue="">
@@ -728,21 +735,19 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         </label>
         <button className="button primary" disabled={busy}>Criar título</button>
       </form>
+      </Disclosure>
+      <Disclosure title="Registrar recebimento" description="Baixa de um título em aberto" defaultOpen={false}>
       <form className="mutation-form compact" onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
         const parsed = validate(paymentSchema, { receivableId: data.get('receivableId'), amount: data.get('amount'), method: data.get('method') });
         if (!parsed) return;
         void run(() => api.post(`/receivables/${parsed.receivableId}/payments`, { amount: parsed.amount, method: parsed.method }, { 'Idempotency-Key': crypto.randomUUID() }), 'Recebimento registrado.', event.currentTarget);
       }}>
-        <label className="span-2">Título<select name="receivableId" required onChange={(event) => {
-          const row = receivables.find((item) => String(item.id) === event.target.value);
-          const form = event.currentTarget.form;
-          const amountInput = form?.elements.namedItem('amount');
-          if (amountInput && amountInput instanceof HTMLInputElement && row) {
-            amountInput.value = String(row.outstandingAmount ?? row.netAmount ?? '');
-          }
-        }}><option value="">Selecione</option>{receivables.filter((item) => !['PAID', 'CANCELLED'].includes(String(item.status))).map((item) => <option key={String(item.id)} value={String(item.id)}>{String(item.description)} · saldo R$ {String(item.outstandingAmount ?? item.netAmount)}</option>)}</select></label>
-        <label>Valor recebido<input name="amount" inputMode="decimal" required /></label>
+        <label className="span-2">Título<select name="receivableId" required value={selectedReceivableId} onChange={(event) => setSelectedReceivableId(event.target.value)}><option value="">Selecione</option>{receivables.filter((item) => !['PAID', 'CANCELLED'].includes(String(item.status))).map((item) => <option key={String(item.id)} value={String(item.id)}>{String(item.description)} · saldo {currency(item.outstandingAmount ?? item.netAmount)}</option>)}</select></label>
+        <label>Valor recebido<UncontrolledMoneyInput key={selectedReceivableId || 'empty-amount'} name="amount" required defaultValue={(() => {
+          const row = receivables.find((item) => String(item.id) === selectedReceivableId);
+          return row ? formatMoneyInputFromValue(row.outstandingAmount ?? row.netAmount ?? '') : '';
+        })()} /></label>
         <label>Forma de Pagamento
           <select name="method" defaultValue="PIX" required>
             {PAYMENT_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}
@@ -750,6 +755,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         </label>
         <button className="button primary" disabled={busy}>Registrar recebimento</button>
       </form>
+      </Disclosure>
     </MutationPanel>;
   }
 

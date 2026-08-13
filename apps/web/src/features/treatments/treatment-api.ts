@@ -1,5 +1,6 @@
 import { api } from '@/lib/api';
 import { list } from '@/lib/format';
+import type { GeneratedDocument } from '@/features/documents/document-types';
 import type { Procedure, TreatmentPlan, TreatmentPlanEvent, TreatmentSession } from './treatment-types';
 
 export async function listTreatmentPlans(params: {
@@ -45,14 +46,27 @@ export async function approveTreatmentPlan(
   id: string,
   itemIds: string[],
   version?: number,
-  options?: { paymentMethod: string; dueDate?: string },
+  options?: { paymentMethod: string; dueDate?: string; installments?: number },
 ) {
   return api.post<TreatmentPlan>(`/treatment-plans/${id}/approve`, {
     itemIds,
     version,
     paymentMethod: options?.paymentMethod,
     dueDate: options?.dueDate,
+    installments: options?.installments,
   });
+}
+
+export async function listTreatmentDocuments(id: string) {
+  const rows = await api.get<GeneratedDocument[]>(`/treatment-plans/${id}/documents`);
+  return list(rows) as GeneratedDocument[];
+}
+
+export async function ensureTreatmentContract(
+  id: string,
+  options?: { paymentMethod?: string; installments?: number; dueDate?: string },
+) {
+  return api.post(`/treatment-plans/${id}/contract`, options ?? {});
 }
 
 export async function cancelTreatmentPlan(id: string, reason: string, version?: number) {
@@ -106,7 +120,7 @@ export async function addItemSession(itemId: string, body: Record<string, unknow
 
 export async function completeTreatmentItem(
   itemId: string,
-  input?: { notes?: string; clinicalDate?: string },
+  input?: { notes?: string; clinicalDate?: string; professionalId?: string },
 ) {
   return api.post(`/treatment-items/${itemId}/complete`, input ?? {});
 }

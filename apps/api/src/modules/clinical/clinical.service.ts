@@ -9,6 +9,16 @@ const sha256 = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const json = (value: unknown) => value as Prisma.InputJsonValue;
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+const STORAGE_UNAVAILABLE_MESSAGE =
+  'O armazenamento de arquivos não está configurado. Não é possível enviar ou abrir fotos neste momento.';
+
+function serializeMediaFile<T extends { file?: { sizeBytes?: bigint | number | null } | null }>(row: T): T {
+  if (!row.file || row.file.sizeBytes == null) return row;
+  return {
+    ...row,
+    file: { ...row.file, sizeBytes: Number(row.file.sizeBytes) },
+  };
+}
 
 const clinicalEntrySchema = z.object({
   clinicId: z.string().uuid(),
@@ -354,19 +364,34 @@ export class ClinicalService {
   async updateOdontogramCondition(
     organizationId: string,
     id: string,
-    input: { name?: string; color?: string; icon?: string | null; active?: boolean },
+    input: { code?: string; name?: string; color?: string; icon?: string | null; active?: boolean },
   ) {
     const existing = await prisma.odontogramCondition.findFirst({ where: { id, organizationId } });
     if (!existing) throw new NotFoundException('Condição não encontrada.');
-    return prisma.odontogramCondition.update({
-      where: { id },
-      data: {
-        name: input.name?.trim(),
-        color: input.color,
-        icon: input.icon === undefined ? undefined : input.icon,
-        active: input.active,
-      },
-    });
+    const code = input.code?.trim().toUpperCase();
+    if (code && code !== existing.code) {
+      const clash = await prisma.odontogramCondition.findFirst({
+        where: { organizationId, code, id: { not: id } },
+      });
+      if (clash) throw new ConflictException('Já existe uma condição com este código.');
+    }
+    try {
+      return await prisma.odontogramCondition.update({
+        where: { id },
+        data: {
+          code,
+          name: input.name?.trim(),
+          color: input.color,
+          icon: input.icon === undefined ? undefined : input.icon,
+          active: input.active,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Já existe uma condição com este código.');
+      }
+      throw error;
+    }
   }
 
   async createOdontogram(organizationId: string, patientId: string, input: {
@@ -415,7 +440,7 @@ export class ClinicalService {
 
   async listPatientMedia(organizationId: string, patientId: string, includeArchived = false) {
     await this.assertPatient(organizationId, patientId);
-    return prisma.patientMedia.findMany({
+    const rows = await prisma.patientMedia.findMany({
       where: {
         organizationId,
         patientId,
@@ -439,6 +464,7 @@ export class ClinicalService {
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
+    return rows.map((row) => serializeMediaFile(row));
   }
 
   async getPatientMedia(organizationId: string, patientId: string, mediaId: string) {
@@ -452,17 +478,14 @@ export class ClinicalService {
       },
     });
     if (!media) throw new NotFoundException('Mídia do paciente não encontrada.');
-    return media;
+    return serializeMediaFile(media);
   }
 
   async downloadPatientMedia(organizationId: string, patientId: string, mediaId: string, actorId?: string) {
     const media = await this.getPatientMedia(organizationId, patientId, mediaId);
     if (media.archivedAt) throw new ConflictException('Arquivo arquivado.');
     if (!this.storage.enabled) {
-      throw new BadRequestException(
-        this.storage.disabledReason
-          ?? 'Storage desabilitado — configure STORAGE_DRIVER=local ou MinIO/S3 com credenciais.',
-      );
+      throw new BadRequestException(STORAGE_UNAVAILABLE_MESSAGE);
     }
     if (media.file.antivirusStatus === 'INFECTED') {
       throw new ConflictException('Arquivo rejeitado pelo antivírus.');
@@ -503,7 +526,7 @@ export class ClinicalService {
       });
       if (!folder) throw new NotFoundException('Pasta não encontrada.');
     }
-    return prisma.patientMedia.update({
+    const updated = await prisma.patientMedia.update({
       where: { id: mediaId },
       data: {
         displayName: input.displayName === undefined ? undefined : input.displayName,
@@ -532,6 +555,7 @@ export class ClinicalService {
         folder: { select: { id: true, name: true } },
       },
     });
+    return serializeMediaFile(updated);
   }
 
   async archivePatientMedia(organizationId: string, patientId: string, mediaId: string, actorId?: string) {
@@ -643,14 +667,14 @@ export class ClinicalService {
       if (!folder) throw new NotFoundException('Pasta não encontrada.');
     }
     if (!this.storage.enabled) {
-      throw new BadRequestException(
-        this.storage.disabledReason
-          ?? 'Storage desabilitado — configure STORAGE_DRIVER=local ou MinIO/S3 com credenciais.',
-      );
+      throw new BadRequestException(STORAGE_UNAVAILABLE_MESSAGE);
     }
     const file = input.file;
     if (!file?.buffer?.length) throw new BadRequestException('Envie um arquivo.');
     if (file.size > MAX_MEDIA_BYTES) throw new BadRequestException('Arquivo deve ter no máximo 25 MB.');
+    if (input.type === 'PROFILE_PHOTO' && !file.mimetype.toLowerCase().startsWith('image/')) {
+      throw new BadRequestException('A foto de perfil deve ser uma imagem (JPG, PNG ou WEBP).');
+    }
     const extension = file.originalname.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '';
     const scan = await this.antivirus.scan(file.buffer);
     if (scan.infected) {
@@ -675,11 +699,15 @@ export class ClinicalService {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Falha ao gravar no storage.';
-      throw new BadRequestException(detail);
+      throw new BadRequestException(
+        /storage|ENOSPC|EACCES|EPERM|MinIO|S3|credencial|disabled/i.test(detail)
+          ? STORAGE_UNAVAILABLE_MESSAGE
+          : 'Não foi possível gravar o arquivo. Tente novamente.',
+      );
     }
 
     try {
-      return await prisma.$transaction(async (tx) => {
+      const created = await prisma.$transaction(async (tx) => {
         const fileObject = await tx.fileObject.create({
           data: {
             organizationId,
@@ -732,6 +760,7 @@ export class ClinicalService {
           },
         });
       });
+      return serializeMediaFile(created);
     } catch (error) {
       await this.storage.deleteObject(stored.objectKey).catch(() => undefined);
       throw error;

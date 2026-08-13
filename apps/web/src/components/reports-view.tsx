@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { currency, dateOnly, list, number, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { printHtmlDocument, escapePrintHtml } from '@/lib/print-document';
 import {
   isTechnicalIdKey,
   presentationFor,
@@ -13,6 +14,8 @@ import {
 } from '@/lib/report-presentation';
 import { useSelection } from './selection-provider';
 import { EmptyState, ErrorState, PageHeader, Panel, Skeleton, StatusBadge } from './ui';
+import { Modal } from './modal';
+import { SearchableSelect } from './searchable-select';
 
 type CatalogItem = {
   id: string;
@@ -24,9 +27,9 @@ type CatalogItem = {
 const PERIODS = [
   { id: 'today', label: 'Hoje' },
   { id: '7d', label: '7 dias' },
-  { id: '30d', label: '30 dias' },
+  { id: '30d', label: 'Últimos 30 dias' },
   { id: '90d', label: '90 dias' },
-  { id: 'year', label: 'Ano' },
+  { id: 'year', label: 'Este ano' },
 ] as const;
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -46,14 +49,16 @@ const STATUS_OPTIONS = [
   { value: 'PARTIALLY_PAID', label: 'Parcialmente pago' },
 ];
 
+const MAIN_FILTERS: ReportFilterKey[] = ['period', 'clinic'];
+
 function domainLabel(domain: string) {
   return DOMAIN_LABELS[domain.toLowerCase()] ?? domain;
 }
 
-function domainTone(domain: string): 'amber' | 'green' | 'blue' | 'gray' {
+function domainTone(domain: string): 'teal' | 'amber' | 'blue' | 'gray' {
   const key = domain.toLowerCase();
   if (key === 'financial') return 'amber';
-  if (key === 'clinical') return 'green';
+  if (key === 'clinical') return 'teal';
   if (key === 'management') return 'blue';
   return 'gray';
 }
@@ -122,7 +127,7 @@ function chartRows(rows: RecordValue[], labelKey: string, valueKey: string, limi
 export function ReportsView() {
   const { clinicId, clinics, professionals } = useSelection();
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
-  const [selected, setSelected] = useState<string>('production-professional');
+  const [selected, setSelected] = useState('');
   const [rows, setRows] = useState<RecordValue[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -132,9 +137,10 @@ export function ReportsView() {
   const [filterProfessionalId, setFilterProfessionalId] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPatient, setFilterPatient] = useState('');
-  const [search, setSearch] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
   const [chartHidden, setChartHidden] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [additionalOpen, setAdditionalOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
   const presentation = useMemo(() => presentationFor(selected), [selected]);
@@ -142,6 +148,8 @@ export function ReportsView() {
   const summaries = useMemo(() => computeSummaries(rows, presentation), [rows, presentation]);
   const selectedReport = catalog.find((item) => item.id === selected);
   const effectiveClinicId = filterClinicId || clinicId || '';
+  const mainFilters = presentation.filters.filter((key) => MAIN_FILTERS.includes(key));
+  const additionalFilters = presentation.filters.filter((key) => !MAIN_FILTERS.includes(key));
 
   const bounds = useCallback(() => {
     const to = new Date();
@@ -154,23 +162,21 @@ export function ReportsView() {
     return { from: from.toISOString(), to: to.toISOString() };
   }, [period]);
 
-  const catalogByDomain = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const groups = new Map<string, CatalogItem[]>();
-    for (const item of catalog) {
-      if (q && !item.name.toLowerCase().includes(q)) continue;
-      const key = item.domain || 'other';
-      const bucket = groups.get(key) ?? [];
-      bucket.push(item);
-      groups.set(key, bucket);
-    }
-    const order = ['clinical', 'financial', 'management', 'operational', 'operations', 'admin', 'other'];
-    return [...groups.entries()].sort(([a], [b]) => {
-      const ai = order.indexOf(a.toLowerCase());
-      const bi = order.indexOf(b.toLowerCase());
-      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-    });
-  }, [catalog, search]);
+  const reportOptions = useMemo(() => {
+    return [...catalog]
+      .sort((a, b) => {
+        const domainCmp = domainLabel(a.domain).localeCompare(domainLabel(b.domain), 'pt-BR');
+        if (domainCmp !== 0) return domainCmp;
+        return a.name.localeCompare(b.name, 'pt-BR');
+      })
+      .map((item) => ({
+        value: item.id,
+        label: item.name,
+        description: presentationFor(item.id).description,
+        badge: domainLabel(item.domain),
+        badgeTone: domainTone(item.domain),
+      }));
+  }, [catalog]);
 
   const filteredRows = useMemo(() => {
     let result = rows;
@@ -188,9 +194,25 @@ export function ReportsView() {
   }, [rows, filterStatus, filterPatient, filterProfessionalId]);
 
   const chartData = useMemo(() => {
-    if (!presentation.chart?.enabled || chartHidden) return [];
+    if (!presentation.chart?.enabled) return [];
     return chartRows(filteredRows, presentation.chart.labelKey, presentation.chart.valueKey);
-  }, [filteredRows, presentation.chart, chartHidden]);
+  }, [filteredRows, presentation.chart]);
+
+  const previewChips = useMemo(() => {
+    const chips: string[] = [];
+    chips.push(PERIODS.find((item) => item.id === period)?.label ?? period);
+    const clinicName = clinics.find((item) => item.id === effectiveClinicId)?.tradeName;
+    if (clinicName) chips.push(clinicName);
+    if (filterProfessionalId) {
+      const name = professionals.find((item) => item.id === filterProfessionalId)?.name;
+      if (name) chips.push(name);
+    }
+    if (filterStatus) {
+      chips.push(STATUS_OPTIONS.find((item) => item.value === filterStatus)?.label ?? filterStatus);
+    }
+    if (filterPatient.trim()) chips.push(`Paciente: ${filterPatient.trim()}`);
+    return chips;
+  }, [period, clinics, effectiveClinicId, filterProfessionalId, professionals, filterStatus, filterPatient]);
 
   useEffect(() => {
     setLoading(true);
@@ -198,7 +220,7 @@ export function ReportsView() {
       .then((data) => {
         const items = Array.isArray(data) ? data : list(data) as CatalogItem[];
         setCatalog(items);
-        setSelected((current) => (items.some((item) => item.id === current) ? current : (items[0]?.id ?? current)));
+        setSelected((current) => (items.some((item) => item.id === current) ? current : ''));
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Falha ao carregar catálogo.'))
       .finally(() => setLoading(false));
@@ -245,11 +267,49 @@ export function ReportsView() {
     }
   }, [bounds, effectiveClinicId, selected, selectedReport?.name]);
 
-  useEffect(() => {
-    if (!effectiveClinicId || !selected || loading) return;
-    const timer = window.setTimeout(() => { void run('json'); }, 350);
-    return () => window.clearTimeout(timer);
-  }, [effectiveClinicId, selected, period, loading, run]);
+  function selectReport(id: string) {
+    setSelected(id);
+    setRows([]);
+    setAdditionalOpen(false);
+    setChartHidden(false);
+    setError(null);
+  }
+
+  async function issueReport() {
+    if (!effectiveClinicId || !selected) return;
+    setPreviewOpen(true);
+    await run('json');
+  }
+
+  function printPreview() {
+    const title = selectedReport?.name ?? 'Relatório';
+    const head = columns.map((column) => `<th>${escapePrintHtml(column.label)}</th>`).join('');
+    const body = filteredRows.slice(0, 500).map((row) => (
+      `<tr>${columns.map((column) => `<td>${escapePrintHtml(formatCell(column, row[column.key]))}</td>`).join('')}</tr>`
+    )).join('');
+    const kpis = summaries.map((kpi) => `<div><span>${escapePrintHtml(kpi.label)}</span><strong>${escapePrintHtml(kpi.value)}</strong></div>`).join('');
+    printHtmlDocument(
+      `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapePrintHtml(title)}</title>
+      <style>
+        body{font-family:Manrope,Inter,sans-serif;color:#183139;padding:24px}
+        h1{font-size:20px;margin:0 0 6px}
+        p{color:#6a7d83;font-size:12px;margin:0 0 16px}
+        .kpis{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+        .kpis div{border:1px solid #dce5e6;border-radius:10px;padding:10px 12px;min-width:140px}
+        .kpis span{display:block;font-size:10px;color:#6a7d83}
+        .kpis strong{display:block;margin-top:4px;font-size:16px}
+        table{width:100%;border-collapse:collapse}
+        th,td{border-bottom:1px solid #edf2f2;padding:8px 10px;text-align:left;font-size:12px}
+        th{background:#f8faf9;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#6b8086}
+      </style></head><body>
+      <h1>${escapePrintHtml(title)}</h1>
+      <p>${escapePrintHtml(presentation.description)}</p>
+      ${kpis ? `<div class="kpis">${kpis}</div>` : ''}
+      <table><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${Math.max(columns.length, 1)}">Sem dados no período.</td></tr>`}</tbody></table>
+      </body></html>`,
+      title,
+    );
+  }
 
   function renderFilter(key: ReportFilterKey) {
     switch (key) {
@@ -309,67 +369,143 @@ export function ReportsView() {
       <PageHeader
         eyebrow="Gestão"
         title="Relatórios"
-        description="Escolha uma análise, ajuste filtros e consulte dados apresentados em linguagem de negócio."
+        description="Selecione o relatório, configure os filtros e emita a visualização final."
       />
-      {error ? <ErrorState description={error} onRetry={() => void run()} /> : null}
-      <div className="reports-layout report-shell">
-        <Panel title="Biblioteca" description="Catálogo compacto por domínio">
-          <label className="field">
-            <span className="sr-only">Buscar relatório</span>
-            <input placeholder="Buscar relatório…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </label>
-          <div className="report-catalog report-library">
-            {catalogByDomain.map(([domain, items]) => (
-              <div key={domain} className="report-domain-group">
-                <small className="report-domain-label">{domainLabel(domain)}</small>
-                {items.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`report-item ${selected === item.id ? 'active' : ''}`}
-                    onClick={() => setSelected(item.id)}
-                  >
-                    <strong>{item.name}</strong>
-                    <span>{presentationFor(item.id).description.slice(0, 90)}{presentationFor(item.id).description.length > 90 ? '…' : ''}</span>
-                  </button>
-                ))}
-              </div>
-            ))}
+      {error && !previewOpen ? <ErrorState description={error} onRetry={() => void run()} /> : null}
+      <div className="reports-main">
+        <Panel className="report-builder">
+          <div className="report-builder-head">
+            <strong>Emitir relatório</strong>
+            <p>Escolha o relatório. Os filtros serão exibidos de acordo com a seleção.</p>
           </div>
-        </Panel>
-
-        <Panel
-          title={selectedReport?.name ?? 'Análise'}
-          description={presentation.description}
-          actions={(
-            <div className="heading-actions" style={{ marginLeft: 0 }}>
-              <div className="dropdown" ref={exportRef}>
-                <button type="button" className="button soft small" disabled={running} onClick={() => setExportOpen((v) => !v)}>
-                  Exportar <ChevronDown size={14} />
-                </button>
-                {exportOpen ? (
-                  <div className="menu open" role="menu">
-                    <button type="button" role="menuitem" onClick={() => void run('xlsx')}>Excel (.xlsx)</button>
-                    <button type="button" role="menuitem" onClick={() => void run('pdf')}>PDF</button>
-                    <button type="button" role="menuitem" onClick={() => void run('csv')}>CSV</button>
+          <div className="report-builder-body">
+            <div className="report-step">
+              <div className="report-step-number" aria-hidden>1</div>
+              <div className="report-step-content">
+                <div className="report-step-title">
+                  <strong>Selecione o relatório</strong>
+                  <small>Busque pelo nome ou pela área</small>
+                </div>
+                <div className="report-selector-grid">
+                  <SearchableSelect
+                    name="reportId"
+                    label="Relatório"
+                    value={selected}
+                    onChange={selectReport}
+                    options={reportOptions}
+                    placeholder="Buscar relatório…"
+                    searchPlaceholder="Buscar relatório…"
+                    emptyMessage="Nenhum relatório encontrado."
+                  />
+                </div>
+                {selectedReport ? (
+                  <div className="report-selected">
+                    <div>
+                      <strong>{selectedReport.name}</strong>
+                      <small>{presentation.description}</small>
+                    </div>
+                    <StatusBadge tone={domainTone(selectedReport.domain)}>{domainLabel(selectedReport.domain)}</StatusBadge>
                   </div>
                 ) : null}
               </div>
-              <button type="button" className="button primary small" disabled={running} onClick={() => void run('json')}>
-                {running ? 'Atualizando…' : 'Aplicar filtros'}
+            </div>
+
+            {selectedReport ? (
+              <div className="report-step">
+                <div className="report-step-number" aria-hidden>2</div>
+                <div className="report-step-content">
+                  <div className="report-step-title">
+                    <strong>Filtros principais</strong>
+                    <small>Obrigatórios para emissão</small>
+                  </div>
+                  <div className="report-filters-main">
+                    {(mainFilters.length ? mainFilters : MAIN_FILTERS).map((key) => renderFilter(key))}
+                  </div>
+                  {additionalFilters.length ? (
+                    <>
+                      <button
+                        type="button"
+                        className={`report-additional-toggle ${additionalOpen ? 'open' : ''}`}
+                        aria-expanded={additionalOpen}
+                        onClick={() => setAdditionalOpen((value) => !value)}
+                      >
+                        <span>
+                          Filtros adicionais
+                          <small>refine o resultado se necessário</small>
+                        </span>
+                        <ChevronDown size={16} />
+                      </button>
+                      {additionalOpen ? (
+                        <div className="report-additional">
+                          <div className="report-filters-main">
+                            {additionalFilters.map((key) => renderFilter(key))}
+                          </div>
+                          <p className="helper">Os filtros adicionais mudam conforme o relatório selecionado.</p>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                  <div className="report-issue-row">
+                    <button
+                      type="button"
+                      className="button primary"
+                      disabled={running || !effectiveClinicId}
+                      onClick={() => void issueReport()}
+                    >
+                      {running && previewOpen ? 'Emitindo…' : 'Emitir relatório'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="report-placeholder">
+                <strong>Nenhum relatório selecionado</strong>
+                <p>Escolha um relatório acima para exibir os filtros correspondentes.</p>
+              </div>
+            )}
+          </div>
+        </Panel>
+      </div>
+
+      <Modal
+        open={previewOpen}
+        title={selectedReport?.name ?? 'Prévia do relatório'}
+        description={presentation.description}
+        onClose={() => {
+          setPreviewOpen(false);
+          setExportOpen(false);
+        }}
+        size="xlarge"
+        actions={
+          <div className="report-preview-actions">
+            <button type="button" className="button" disabled={running} onClick={printPreview}>Imprimir</button>
+            <button type="button" className="button" disabled={running} onClick={() => void run('pdf')}>Baixar PDF</button>
+            <button type="button" className="button" disabled={running} onClick={() => void run('xlsx')}>Baixar XLS</button>
+            <div className="dropdown" ref={exportRef}>
+              <button type="button" className="button soft" disabled={running} onClick={() => setExportOpen((v) => !v)}>
+                Mais <ChevronDown size={14} />
               </button>
-            </div>
-          )}
-        >
-          <div className="report-titlebar">
-            <div>
-              <small className="eyebrow">{domainLabel(selectedReport?.domain ?? 'clinical')}</small>
+              {exportOpen ? (
+                <div className="row-menu-popover" role="menu">
+                  <button type="button" role="menuitem" onClick={() => void run('csv')}>Baixar CSV</button>
+                </div>
+              ) : null}
             </div>
           </div>
-          <div className="report-filterbar filters">
-            {presentation.filters.map((key) => renderFilter(key))}
-          </div>
-          {summaries.length ? (
+        }
+      >
+        <div className="report-preview">
+          {selectedReport ? (
+            <div className="report-preview-meta">
+              <StatusBadge tone={domainTone(selectedReport.domain)}>{domainLabel(selectedReport.domain)}</StatusBadge>
+              {previewChips.map((chip) => (
+                <span key={chip} className="chip">{chip}</span>
+              ))}
+            </div>
+          ) : null}
+          {error ? <ErrorState description={error} onRetry={() => void run()} /> : null}
+          {running ? <div className="state-message">Carregando prévia…</div> : null}
+          {!running && summaries.length ? (
             <div className="report-kpis">
               {summaries.map((kpi) => (
                 <div key={kpi.label} className="report-kpi">
@@ -379,7 +515,7 @@ export function ReportsView() {
               ))}
             </div>
           ) : null}
-          {chartData.length ? (
+          {!running && chartData.length ? (
             <div className="chartbox">
               <div className="chart">
                 <div className="chart-head">
@@ -388,7 +524,7 @@ export function ReportsView() {
                     <p className="muted-note">Resumo visual do período selecionado</p>
                   </div>
                   <button type="button" className="button ghost small" onClick={() => setChartHidden((v) => !v)}>
-                    {chartHidden ? 'Mostrar gráfico' : 'Ocultar gráfico'}
+                    {chartHidden ? 'Mostrar' : 'Ocultar'}
                   </button>
                 </div>
                 {!chartHidden ? (
@@ -405,58 +541,57 @@ export function ReportsView() {
               </div>
             </div>
           ) : null}
-          <div className="report-table-section">
-            <div className="report-table-head">
-              <strong>Detalhamento</strong>
-              <span className="muted-note">{filteredRows.length} resultado(s)</span>
-            </div>
-            {filteredRows.length ? (
-              <div className="table-wrap report-table-wrap">
-                <table className="data-table report-table">
-                  <thead>
-                    <tr>
-                      {columns.map((column) => (
-                        <th key={column.key} className={column.align === 'right' ? 'align-right' : undefined}>
-                          {column.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredRows.slice(0, 100).map((row, index) => (
-                      <tr key={index}>
-                        {columns.map((column) => {
-                          const raw = row[column.key];
-                          const formatted = formatCell(column, raw);
-                          if (column.type === 'status') {
-                            return (
-                              <td key={column.key}>
-                                <StatusBadge tone={String(raw).includes('OVERDUE') || String(raw).includes('Vencido') ? 'red' : 'green'}>
-                                  {formatted}
-                                </StatusBadge>
-                              </td>
-                            );
-                          }
+          {!running && filteredRows.length ? (
+            <div className="table-wrap report-table-wrap">
+              <div className="report-table-head">
+                <strong>Pré-visualização do relatório</strong>
+                <span>{filteredRows.length} {filteredRows.length === 1 ? 'linha' : 'linhas'} na prévia</span>
+              </div>
+              <table className="data-table report-table">
+                <thead>
+                  <tr>
+                    {columns.map((column) => (
+                      <th key={column.key} className={column.align === 'right' ? 'align-right' : undefined}>
+                        {column.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.slice(0, 200).map((row, index) => (
+                    <tr key={index}>
+                      {columns.map((column) => {
+                        const raw = row[column.key];
+                        const formatted = formatCell(column, raw);
+                        if (column.type === 'status') {
                           return (
-                            <td key={column.key} className={column.align === 'right' ? 'align-right' : undefined}>
-                              {formatted}
+                            <td key={column.key}>
+                              <StatusBadge tone={String(raw).includes('OVERDUE') || String(raw).includes('Vencido') ? 'red' : 'green'}>
+                                {formatted}
+                              </StatusBadge>
                             </td>
                           );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <EmptyState
-                title={running ? 'Carregando…' : 'Sem dados no período'}
-                description="Ajuste os filtros ou escolha outro relatório na biblioteca."
-              />
-            )}
-          </div>
-        </Panel>
-      </div>
+                        }
+                        return (
+                          <td key={column.key} className={column.align === 'right' ? 'align-right' : undefined}>
+                            {formatted}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {!running && !filteredRows.length ? (
+            <EmptyState
+              title="Sem dados no período"
+              description="Ajuste os filtros e emita o relatório novamente."
+            />
+          ) : null}
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -136,7 +136,7 @@ export async function upsertPriceTableItem(
   const table = await prisma.priceTable.findFirst({ where: { id: priceTableId, organizationId } });
   if (!table) throw new NotFoundException('Tabela de preço não encontrada.');
   const procedure = await prisma.procedure.findFirst({
-    where: { id: input.procedureId, organizationId, active: true },
+    where: { id: input.procedureId, organizationId },
   });
   if (!procedure) throw new NotFoundException('Procedimento não encontrado.');
   return prisma.priceTableItem.upsert({

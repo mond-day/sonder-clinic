@@ -27,6 +27,7 @@ const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Rascunho',
   GENERATED: 'Gerado',
   SIGNED: 'Assinado',
+  PARTIALLY_SIGNED: 'Parcialmente assinado',
   CANCELLED: 'Cancelado',
   SUPERSEDED: 'Substituído',
 };

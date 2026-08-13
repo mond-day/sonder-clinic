@@ -14,6 +14,36 @@ export const nested = (item: RecordValue, key: string): RecordValue =>
 export const currency = (value: unknown) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value ?? 0));
 
+/** Máscara BRL progressiva para inputs (centavos conforme o usuário digita). */
+export function maskMoneyInput(value: unknown): string {
+  const digits = String(value ?? '').replace(/\D/g, '').slice(0, 12);
+  if (!digits) return '';
+  return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    .format(Number(digits) / 100);
+}
+
+/** Converte valor mascarado ou numérico da API para o texto do input. */
+export function formatMoneyInputFromValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '';
+  const raw = String(value).trim();
+  if (!raw) return '';
+  if (/^\d+([.,]\d{1,2})?$/.test(raw)) {
+    return maskMoneyInput(String(Math.round(Number(raw.replace(',', '.')) * 100)));
+  }
+  const digits = raw.replace(/\D/g, '');
+  return digits ? maskMoneyInput(digits) : '';
+}
+
+/** Valor `1234.56` para envio à API a partir do campo mascarado. */
+export function moneyInputToApi(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '0';
+  if (/^\d+([.]\d{1,2})?$/.test(raw)) return Number(raw).toFixed(2);
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return '0';
+  return (Number(digits) / 100).toFixed(2);
+}
+
 export const number = (value: unknown, options?: Intl.NumberFormatOptions) =>
   new Intl.NumberFormat('pt-BR', options).format(Number(value ?? 0));
 
@@ -266,7 +296,8 @@ const presentationLabels: Record<string, string> = {
   PARTIALLY_APPROVED: 'Parcialmente aprovado', APPROVED: 'Aprovado',
   INBOX: 'Entrada', TODAY: 'Hoje', UPCOMING: 'Próximas', DONE: 'Concluído',
   LOW: 'Baixa', NORMAL: 'Normal', HIGH: 'Alta',
-  PATIENT: 'Paciente', FINANCE: 'Financeiro', LAB: 'Laboratório', SCHEDULE: 'Agenda',
+  PATIENT: 'Paciente', GUARDIAN: 'Responsável', PROVIDER: 'Prestador',
+  FINANCE: 'Financeiro', LAB: 'Laboratório', SCHEDULE: 'Agenda',
   STOCK: 'Estoque', ADMIN: 'Administrativo', REQUESTED: 'Solicitado', IN_LAB: 'No laboratório',
   RETURNED: 'Retornado', INSTALLED: 'Instalado', CONTACTED: 'Contatado', DISMISSED: 'Dispensado',
   WHATSAPP: 'WhatsApp', PHONE: 'Telefone', EMAIL: 'E-mail', IN_PERSON: 'Presencial',
@@ -294,13 +325,38 @@ const presentationLabels: Record<string, string> = {
   DOCUMENT_ARCHIVED: 'Documento arquivado',
   REMOTE_LINK: 'Link remoto',
   DRAWN: 'Assinatura na tela',
+  ELECTRONIC_LOCAL: 'Assinatura eletrônica (presencial)',
+  ELECTRONIC_REMOTE: 'Assinatura eletrônica (link)',
+  A1: 'Certificado digital',
   MOCK_A1: 'Assinatura de teste',
+  CONTRACT: 'Contrato',
+  TREATMENT_PLAN: 'Plano de tratamento',
+  ODONTOGRAM: 'Odontograma',
+  CLINIC_INSTALLMENT: 'Parcelado na clínica',
+  CREDIT_CARD: 'Cartão de crédito',
+  DEBIT_CARD: 'Cartão de débito',
+  CASH: 'Dinheiro',
+  TRANSFER: 'Transferência',
+  PIX: 'PIX',
   IMAGING: 'Imagem',
   PHOTO: 'Fotografia',
   OTHER: 'Outro',
   OPTIONAL: 'Opcional',
   REQUIRED: 'Obrigatória',
   NOT_APPLICABLE: 'Não se aplica',
+  ATTESTATION: 'Atestado',
+  CERTIFICATE: 'Atestado',
+  PRESCRIPTION: 'Receita',
+  EXAM_REQUEST: 'Solicitação de exame',
+  DECLARATION: 'Declaração',
+  CONSENT: 'Termo de consentimento',
+  REFERRAL: 'Encaminhamento',
+  CUSTOM: 'Personalizado',
+  PROFILE_PHOTO: 'Foto de perfil',
+  CLEAN: 'Verificado',
+  INFECTED: 'Bloqueado',
+  PENDING_SCAN: 'Em verificação',
+  QUARANTINED: 'Em quarentena',
 };
 
 export const presentationLabel = (value: unknown) => {

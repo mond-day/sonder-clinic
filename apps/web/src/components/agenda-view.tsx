@@ -3,7 +3,7 @@
 import { DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Plus, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, RefreshCw, Settings2, SlidersHorizontal } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import {
   DEFAULT_BUSINESS_HOURS,
@@ -28,6 +28,19 @@ type Mode = 'day' | 'week' | 'chairs';
 type AgendaViewType = 'calendar' | 'list';
 
 const AGENDA_VIEW_KEY = 'centerClinic.agenda.view';
+const AGENDA_PREFS_KEY = 'centerClinic.agenda.prefs';
+
+type AgendaPrefs = {
+  hideCancelled: boolean;
+  dimPast: boolean;
+  showWaiting: boolean;
+};
+
+const DEFAULT_AGENDA_PREFS: AgendaPrefs = {
+  hideCancelled: true,
+  dimPast: true,
+  showWaiting: false,
+};
 
 const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
@@ -131,6 +144,27 @@ function startOfDay(reference: Date) {
   return date;
 }
 
+function isPastAppointment(startAt: unknown, today = startOfDay(new Date())) {
+  const date = new Date(String(startAt));
+  if (Number.isNaN(date.getTime())) return false;
+  return date < today;
+}
+
+function readAgendaPrefs(): AgendaPrefs {
+  try {
+    const stored = window.localStorage.getItem(AGENDA_PREFS_KEY);
+    if (!stored) return DEFAULT_AGENDA_PREFS;
+    const parsed = JSON.parse(stored) as Partial<AgendaPrefs>;
+    return {
+      hideCancelled: parsed.hideCancelled ?? DEFAULT_AGENDA_PREFS.hideCancelled,
+      dimPast: parsed.dimPast ?? DEFAULT_AGENDA_PREFS.dimPast,
+      showWaiting: parsed.showWaiting ?? DEFAULT_AGENDA_PREFS.showWaiting,
+    };
+  } catch {
+    return DEFAULT_AGENDA_PREFS;
+  }
+}
+
 /** Segunda-feira da semana de referência (semana operacional seg–sex). */
 function startOfWeek(reference: Date) {
   const date = startOfDay(reference);
@@ -187,6 +221,9 @@ export function AgendaView() {
   const [personalWarning, setPersonalWarning] = useState('');
   const [acknowledgePersonalWarning, setAcknowledgePersonalWarning] = useState(false);
   const skipNextEventClickRef = useRef(false);
+  const [prefs, setPrefs] = useState<AgendaPrefs>(DEFAULT_AGENDA_PREFS);
+  const [prefsOpen, setPrefsOpen] = useState(false);
+  const prefsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try {
@@ -195,7 +232,29 @@ export function AgendaView() {
     } catch {
       /* ignore */
     }
+    setPrefs(readAgendaPrefs());
   }, []);
+
+  useEffect(() => {
+    if (!prefsOpen) return;
+    function onDocClick(event: MouseEvent) {
+      if (!prefsRef.current?.contains(event.target as Node)) setPrefsOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [prefsOpen]);
+
+  function updatePref<K extends keyof AgendaPrefs>(key: K, value: AgendaPrefs[K]) {
+    setPrefs((current) => {
+      const next = { ...current, [key]: value };
+      try {
+        window.localStorage.setItem(AGENDA_PREFS_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
 
   function changeViewType(next: AgendaViewType) {
     setViewType(next);
@@ -291,12 +350,27 @@ export function AgendaView() {
     }
   }, [searchParams]);
 
-  const visible = useMemo(() => appointments.filter((item) => {
+  const scoped = useMemo(() => appointments.filter((item) => {
     if (professionalFilter && item.professionalId !== professionalFilter) return false;
     if (statusFilter && item.status !== statusFilter) return false;
     if (unitFilter && item.unitId !== unitFilter) return false;
     return true;
   }), [appointments, professionalFilter, statusFilter, unitFilter]);
+
+  const visible = useMemo(() => (
+    prefs.hideCancelled
+      ? scoped.filter((item) => String(item.status) !== 'CANCELLED')
+      : scoped
+  ), [scoped, prefs.hideCancelled]);
+
+  const waitingPatients = useMemo(() => (
+    appointments.filter((item) => {
+      if (String(item.status) !== 'CHECKED_IN') return false;
+      if (professionalFilter && item.professionalId !== professionalFilter) return false;
+      if (unitFilter && item.unitId !== unitFilter) return false;
+      return true;
+    }).sort((a, b) => new Date(String(a.startAt)).getTime() - new Date(String(b.startAt)).getTime())
+  ), [appointments, professionalFilter, unitFilter]);
 
   const columns = useMemo(() => {
     if (mode === 'week') {
@@ -375,9 +449,9 @@ export function AgendaView() {
     return longDate.format(reference);
   }, [mode, reference]);
 
-  const confirmed = visible.filter((item) => item.status === 'CONFIRMED').length;
-  const waiting = visible.filter((item) => item.status === 'CHECKED_IN').length;
-  const cancelled = visible.filter((item) => ['CANCELLED', 'NO_SHOW'].includes(String(item.status))).length;
+  const confirmed = scoped.filter((item) => item.status === 'CONFIRMED').length;
+  const waiting = scoped.filter((item) => item.status === 'CHECKED_IN').length;
+  const cancelled = scoped.filter((item) => ['CANCELLED', 'NO_SHOW'].includes(String(item.status))).length;
 
   function shift(direction: number) {
     setReference((current) => addDays(current, mode === 'week' ? direction * 7 : direction));
@@ -676,6 +750,92 @@ export function AgendaView() {
     }
   }
 
+  const agendaSettings = (
+    <div className="row-menu" ref={prefsRef}>
+      <button
+        className={`icon-button ${prefsOpen ? 'active' : ''}`}
+        type="button"
+        aria-label="Opções da agenda"
+        aria-expanded={prefsOpen}
+        aria-haspopup="menu"
+        title="Opções da agenda"
+        onClick={() => setPrefsOpen((value) => !value)}
+      >
+        <Settings2 size={16} />
+      </button>
+      {prefsOpen ? (
+        <div className="row-menu-popover agenda-prefs-popover" role="menu">
+          <label className="check-field compact">
+            <input
+              type="checkbox"
+              checked={prefs.hideCancelled}
+              onChange={(event) => updatePref('hideCancelled', event.target.checked)}
+            />
+            <span>
+              <strong>Ocultar consultas canceladas</strong>
+              <small>Libera o horário na grade para um novo agendamento</small>
+            </span>
+          </label>
+          <label className="check-field compact">
+            <input
+              type="checkbox"
+              checked={prefs.dimPast}
+              onChange={(event) => updatePref('dimPast', event.target.checked)}
+            />
+            <span>
+              <strong>Reduzir brilho das consultas passadas</strong>
+              <small>Atendimentos de ontem e dias anteriores ficam mais suaves</small>
+            </span>
+          </label>
+          <label className="check-field compact">
+            <input
+              type="checkbox"
+              checked={prefs.showWaiting}
+              onChange={(event) => updatePref('showWaiting', event.target.checked)}
+            />
+            <span>
+              <strong>Listar pacientes aguardando</strong>
+              <small>Pacientes com status “Na clínica”</small>
+            </span>
+          </label>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const waitingRoom = prefs.showWaiting ? (
+    <div className="waiting-room">
+      <div className="waiting-room-head">
+        <strong>Pacientes aguardando</strong>
+        <span>{waitingPatients.length}</span>
+      </div>
+      {waitingPatients.length === 0 ? (
+        <p>Nenhum paciente na clínica no momento.</p>
+      ) : (
+        <div className="waiting-room-list">
+          {waitingPatients.map((item) => {
+            const patient = nested(item, 'patient');
+            const professional = nested(item, 'professional');
+            return (
+              <button
+                key={String(item.id)}
+                type="button"
+                className="waiting-room-item"
+                onClick={() => openAppointment(item)}
+              >
+                <span>
+                  <strong>{text(patient.fullName, 'Paciente')}</strong>
+                  <small>{text(professional.name, 'Profissional')}</small>
+                </span>
+                <time>{timeOnly(item.startAt)}</time>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  ) : null;
+
   return (
     <>
       <PageHeader
@@ -947,10 +1107,13 @@ export function AgendaView() {
       </div>
       {viewType === 'calendar' ? (
       <Panel
+        className="agenda-board-panel"
         title={title}
         description={`${clinic?.tradeName ?? 'Unidade'} · ${professionalFilter ? text(professionals.find((item) => item.id === professionalFilter)?.name) : 'Todos os profissionais'}`}
+        actions={agendaSettings}
       >
         {filterBar}
+        {waitingRoom}
         {loading && <div className="state-message">Carregando agenda…</div>}
         {!loading && columns.length === 0 && (
           <div className="state-message">
@@ -1090,6 +1253,7 @@ export function AgendaView() {
                           const status = String(item.status);
                           const tone = appointmentEventTone(status);
                           const isCancelled = ['CANCELLED', 'NO_SHOW'].includes(status);
+                          const isPast = prefs.dimPast && isPastAppointment(item.startAt);
                           const statusLabel = statusLabels[status] ?? text(status);
                           const patientName = text(patient.fullName, 'Paciente');
                           const professionalName = text(professional.name, 'Profissional');
@@ -1098,7 +1262,7 @@ export function AgendaView() {
                             <button
                               key={String(item.id)}
                               type="button"
-                              className={`event ${tone} ${isCancelled ? 'cancelled' : ''} ${isCompact ? 'event-compact' : ''} ${isTiny ? 'event-tiny' : ''}`.trim()}
+                              className={`event ${tone} ${isCancelled ? 'cancelled' : ''} ${isPast ? 'past' : ''} ${isCompact ? 'event-compact' : ''} ${isTiny ? 'event-tiny' : ''}`.trim()}
                               title={label}
                               aria-label={label}
                               draggable={!isCancelled}
@@ -1176,10 +1340,13 @@ export function AgendaView() {
       </Panel>
       ) : (
       <Panel
+        className="agenda-board-panel"
         title="Lista do período"
         description={`${clinic?.tradeName ?? 'Unidade'} · ${title} · ${professionalFilter ? text(professionals.find((item) => item.id === professionalFilter)?.name) : 'Todos os profissionais'}`}
+        actions={agendaSettings}
       >
         {filterBar}
+        {waitingRoom}
         {loading && <div className="state-message">Carregando agenda…</div>}
         {!loading && visible.length === 0 && (
           <div className="state-message">Nenhum atendimento no período selecionado.</div>
@@ -1203,8 +1370,9 @@ export function AgendaView() {
                   const patient = nested(item, 'patient');
                   const professional = nested(item, 'professional');
                   const chair = nested(item, 'chair');
+                  const isPast = prefs.dimPast && isPastAppointment(item.startAt);
                   return (
-                    <tr key={String(item.id)}>
+                    <tr key={String(item.id)} className={isPast ? 'is-past' : undefined}>
                       <td>{new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(new Date(String(item.startAt)))} {timeOnly(item.startAt)}</td>
                       <td>{patient.id ? <Link className="clickable-name" href={`/pacientes/${String(patient.id)}`}>{text(patient.fullName, 'Paciente')}</Link> : <strong>{text(patient.fullName, 'Paciente')}</strong>}</td>
                       <td>{text(professional.name)}</td>

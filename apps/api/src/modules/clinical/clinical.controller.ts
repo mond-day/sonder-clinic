@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { ApiTags } from '@nestjs/swagger';
 import { IsArray, IsBoolean, IsDateString, IsHexColor, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -94,6 +95,7 @@ class OdontogramConditionDto {
 }
 
 class OdontogramConditionPatchDto {
+  @IsOptional() @IsString() @MinLength(1) code?: string;
   @IsOptional() @IsString() @MinLength(2) name?: string;
   @IsOptional() @IsHexColor() color?: string;
   @IsOptional() @IsString() icon?: string | null;
@@ -305,6 +307,7 @@ export class ClinicalController {
   @Post('patients/:id/media')
   @RequirePermissions('medical_record.create', 'document.create')
   @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
     limits: { fileSize: 25 * 1024 * 1024 },
   }))
   uploadMedia(

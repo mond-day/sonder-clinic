@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCircle2, ExternalLink, FlaskConical, Plus, RefreshC
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
 import { currency, dateOnly, list, nested, text, type RecordValue } from '@/lib/format';
+import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-inputs';
 import { useSelection } from './selection-provider';
 import { useWorkspace } from './workspace-provider';
 import { Disclosure, MetricCard, PageHeader, Panel, StatusBadge } from './ui';
@@ -220,7 +221,7 @@ export function LabView() {
               <label>Tipo/especialidade<input name="specialty" list="lab-specialties" placeholder="Prótese" /><datalist id="lab-specialties"><option value="Prótese" /><option value="Ortodontia" /><option value="Implantodontia" /></datalist></label>
               <label>Dente FDI<input name="toothFdi" maxLength={2} placeholder="16" /></label>
             </Disclosure>
-            <Disclosure title="Laboratório e prazo" description="Preferir cadastro por ID; nome livre só como fallback">
+            <Disclosure title="Laboratório e prazo" description="Prefira um laboratório cadastrado. O nome livre só vale se ainda não houver cadastro.">
               <label>Laboratório cadastrado
                 <select name="laboratoryId" defaultValue="">
                   <option value="">Selecionar…</option>
@@ -231,7 +232,7 @@ export function LabView() {
               </label>
               <label>Ou nome livre<input name="laboratoryName" list="laboratories" placeholder="Somente se não houver cadastro" /><datalist id="laboratories">{laboratories.map((lab) => <option key={String(lab.id)} value={text(lab.name)} />)}</datalist></label>
               <label>Prazo<input name="dueAt" type="date" /></label>
-              <label>Custo<input name="cost" inputMode="decimal" placeholder="480,00" /></label>
+              <label>Custo<UncontrolledMoneyInput name="cost" /></label>
               <label className="span-2">Descrição<input name="description" placeholder="Coroa cerâmica" required /></label>
             </Disclosure>
             <button className="button primary" disabled={busy}>Criar solicitação</button>

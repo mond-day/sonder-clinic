@@ -27,6 +27,7 @@ export type SignatureRules = {
   requiredRoles?: string[];
   allowDuplicateRoles?: boolean;
   minSignatures?: number;
+  serviceProviderSigner?: 'CLINIC' | 'PROFESSIONAL';
 };
 
 export const DOCUMENT_TEMPLATE_TYPES = [
@@ -36,6 +37,9 @@ export const DOCUMENT_TEMPLATE_TYPES = [
   'DECLARATION',
   'CONSENT',
   'REFERRAL',
+  'CONTRACT',
+  'TREATMENT_PLAN',
+  'ODONTOGRAM',
   'CUSTOM',
 ] as const;
 
@@ -49,6 +53,10 @@ export const DEFAULT_PATIENT_FOLDERS = [
   { name: 'Radiografias', sortOrder: 50 },
   { name: 'Fotografias', sortOrder: 60 },
   { name: 'Termos e consentimentos', sortOrder: 70 },
+  { name: 'Encaminhamentos', sortOrder: 72 },
+  { name: 'Contratos', sortOrder: 74 },
+  { name: 'Planos de tratamento', sortOrder: 76 },
+  { name: 'Odontogramas', sortOrder: 78 },
   { name: 'Outros', sortOrder: 80 },
 ] as const;
 
@@ -131,11 +139,21 @@ export function parseSignatureRules(raw: unknown): SignatureRules {
   const minSignatures = typeof obj.minSignatures === 'number' && obj.minSignatures > 0
     ? Math.floor(obj.minSignatures)
     : Math.max(1, requiredRoles.length);
+  const provider = obj.serviceProviderSigner === 'PROFESSIONAL' ? 'PROFESSIONAL' : obj.serviceProviderSigner === 'CLINIC' ? 'CLINIC' : undefined;
   return {
     requiredRoles: requiredRoles.length ? requiredRoles : ['PROFESSIONAL'],
     allowDuplicateRoles: obj.allowDuplicateRoles === true,
     minSignatures,
+    serviceProviderSigner: provider,
   };
+}
+
+function roleSatisfies(required: string, actual: string): boolean {
+  if (required === actual) return true;
+  if (required === 'PATIENT' && actual === 'GUARDIAN') return true;
+  if (required === 'GUARDIAN' && actual === 'PATIENT') return true;
+  if (required === 'PROVIDER' && (actual === 'CLINIC' || actual === 'PROFESSIONAL')) return true;
+  return false;
 }
 
 export function nextDocumentStatusAfterSign(input: {
@@ -147,12 +165,12 @@ export function nextDocumentStatusAfterSign(input: {
   if (input.currentStatus === 'SIGNED' || input.currentStatus === 'CANCELLED') {
     throw new Error('Documento imutável após assinatura completa ou cancelamento.');
   }
-  if (!input.rules.allowDuplicateRoles && input.signatures.some((s) => s.role === input.newRole)) {
-    throw new Error(`Papel ${input.newRole} já assinou este documento.`);
-  }
+    if (!input.rules.allowDuplicateRoles && input.signatures.some((s) => roleSatisfies(input.newRole, s.role) || roleSatisfies(s.role, input.newRole))) {
+      throw new Error(`Papel ${input.newRole} já assinou este documento.`);
+    }
   const after = [...input.signatures, { role: input.newRole }];
   const required = input.rules.requiredRoles ?? ['PROFESSIONAL'];
-  const missing = required.filter((role) => !after.some((s) => s.role === role));
+  const missing = required.filter((role) => !after.some((s) => roleSatisfies(role, s.role)));
   const min = input.rules.minSignatures ?? required.length;
   if (missing.length === 0 && after.length >= min) return 'SIGNED';
   return 'PARTIALLY_SIGNED';
@@ -207,6 +225,12 @@ export function validateTemplateVariables(
       || key.startsWith('paciente')
       || key.startsWith('profissional')
       || key.startsWith('clinica')
+      || key.startsWith('clinic.')
+      || key.startsWith('patient.')
+      || key.startsWith('professional.')
+      || key.startsWith('guardian.')
+      || key.startsWith('treatment.')
+      || key.startsWith('payment.')
       || key === 'data'
     ) {
       continue;
@@ -226,7 +250,14 @@ const KNOWN_IDENTITY_VARS = new Set([
   'paciente', 'profissional', 'clinica', 'data', 'identity.patientName', 'identity.clinicName',
 ]);
 
-const PLACEHOLDER_RE = /\{\{\s*([a-zA-Z0-9_.?]+)\s*\}\}/g;
+const SERVER_FILLED_PREFIXES = [
+  'clinic.', 'patient.', 'professional.', 'guardian.', 'treatment.', 'payment.', 'identity.',
+];
+const ITEM_VARS = new Set([
+  'procedureName', 'toothFdi', 'face', 'quantity', 'plannedSessions', 'unitPrice', 'discount', 'total',
+]);
+
+const PLACEHOLDER_RE = /\{\{\s*([#/]?[a-zA-Z0-9_.?]+)\s*\}\}/g;
 
 export function extractTemplatePlaceholders(structuredContent: unknown): string[] {
   if (!structuredContent || typeof structuredContent !== 'object' || Array.isArray(structuredContent)) {
@@ -237,7 +268,9 @@ export function extractTemplatePlaceholders(structuredContent: unknown): string[
   const found = new Set<string>();
   for (const text of texts) {
     for (const match of text.matchAll(PLACEHOLDER_RE)) {
-      if (match[1]) found.add(match[1]);
+      const token = match[1];
+      if (!token || token.startsWith('#') || token.startsWith('/')) continue;
+      found.add(token);
     }
   }
   return [...found];
@@ -256,7 +289,7 @@ export function validateDocumentTemplateStructure(template: {
   if (name.length < 2) errors.push('Nome do modelo é obrigatório.');
 
   const type = String(template.type ?? '').trim();
-  const allowedTypes = new Set([...DOCUMENT_TEMPLATE_TYPES, 'CERTIFICATE', 'ATTESTATION']);
+  const allowedTypes = new Set([...DOCUMENT_TEMPLATE_TYPES, 'CERTIFICATE', 'ATTESTATION', 'RECEITUARIO']);
   if (!type || !allowedTypes.has(type)) {
     errors.push(`Tipo de modelo inválido: ${type || '(vazio)'}.`);
   }
@@ -281,7 +314,9 @@ export function validateDocumentTemplateStructure(template: {
     const bare = placeholder.replace(/\?$/, '');
     const permitted = allowed.some((item) => item.replace(/\?$/, '') === bare)
       || KNOWN_IDENTITY_VARS.has(placeholder)
-      || KNOWN_IDENTITY_VARS.has(bare);
+      || KNOWN_IDENTITY_VARS.has(bare)
+      || ITEM_VARS.has(bare)
+      || SERVER_FILLED_PREFIXES.some((prefix) => bare.startsWith(prefix));
     if (!permitted) {
       errors.push(`Variável desconhecida no conteúdo: {{${placeholder}}}.`);
     }
@@ -299,6 +334,19 @@ export function validateDocumentTemplateStructure(template: {
       const minSignatures = (rules as SignatureRules).minSignatures;
       if (minSignatures != null && (!Number.isInteger(minSignatures) || minSignatures < 1)) {
         errors.push('signatureRules.minSignatures deve ser inteiro >= 1.');
+      }
+      const provider = (rules as SignatureRules).serviceProviderSigner;
+      if (provider != null && provider !== 'CLINIC' && provider !== 'PROFESSIONAL') {
+        errors.push('signatureRules.serviceProviderSigner deve ser CLINIC ou PROFESSIONAL.');
+      }
+      if (type === 'CONTRACT') {
+        const roles = Array.isArray(requiredRoles) ? requiredRoles : [];
+        if (!roles.includes('PATIENT') && !roles.includes('GUARDIAN')) {
+          errors.push('Contrato exige assinatura do paciente ou responsável.');
+        }
+        if (!roles.includes('CLINIC') && !roles.includes('PROFESSIONAL') && !roles.includes('PROVIDER')) {
+          errors.push('Contrato exige assinatura da clínica ou do profissional prestador.');
+        }
       }
     }
   }
@@ -368,6 +416,7 @@ export function defaultFolderNameForTemplateType(type: string): string {
     case 'RECEITUARIO':
       return 'Receitas';
     case 'ATTESTATION':
+    case 'CERTIFICATE':
     case 'ATESTADO':
       return 'Atestados';
     case 'EXAM_REQUEST':
@@ -378,6 +427,12 @@ export function defaultFolderNameForTemplateType(type: string): string {
     case 'REFERRAL':
     case 'ENCAMINHAMENTO':
       return 'Encaminhamentos';
+    case 'CONTRACT':
+      return 'Contratos';
+    case 'TREATMENT_PLAN':
+      return 'Planos de tratamento';
+    case 'ODONTOGRAM':
+      return 'Odontogramas';
     default:
       return 'Documentos clínicos';
   }

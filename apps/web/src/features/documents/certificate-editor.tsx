@@ -35,7 +35,7 @@ export function CertificateEditor({
 }) {
   const attestationTemplates = useMemo(
     () => templates.filter((row) => (!row.status || row.status === 'PUBLISHED')
-      && String(row.type).toUpperCase() === 'ATTESTATION'),
+      && ['ATTESTATION', 'CERTIFICATE', 'ATESTADO'].includes(String(row.type).toUpperCase())),
     [templates],
   );
   const fallbackTemplates = useMemo(

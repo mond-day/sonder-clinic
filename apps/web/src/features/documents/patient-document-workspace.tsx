@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@/lib/api';
-import { hasPermission, maskCpf } from '@/lib/format';
+import { hasPermission, maskCpf, presentationLabel, text } from '@/lib/format';
 import { publicAppUrl } from '@/lib/public-url';
 import { useAuth } from '@/components/auth-provider';
 import type { Professional } from '@/components/selection-provider';
@@ -36,6 +36,7 @@ import type {
   PrescriptionProtocol,
   SelectedLibraryRef,
 } from './document-types';
+import { canonicalFolderName, isProfilePhoto } from './document-folder-match';
 
 const FILE_KIND_FILTERS: Array<{ id: FileKindFilter; label: string }> = [
   { id: 'all', label: 'Todos' },
@@ -55,6 +56,20 @@ function matchesFileKind(item: LibraryItem, kind: FileKindFilter): boolean {
   if (kind === 'videos') return /VIDEO|MP4|MOV/.test(type);
   return !/PHOTO|IMAGE|IMG|JPG|JPEG|PNG|WEBP|RADIO|RX|XRAY|PANORAM|PERIAP|TOMO|PDF|VIDEO|MP4|MOV/.test(type);
 }
+
+const GENERATED_FOLDER_NAMES = new Set([
+  'Documentos clínicos',
+  'Receitas',
+  'Atestados',
+  'Exames',
+  'Termos e consentimentos',
+  'Encaminhamentos',
+  'Contratos',
+  'Planos de tratamento',
+  'Odontogramas',
+]);
+
+const UPLOAD_FOLDER_NAMES = new Set(['Radiografias', 'Fotografias', 'Outros']);
 
 export function PatientDocumentWorkspace({
   clinicId,
@@ -108,7 +123,7 @@ export function PatientDocumentWorkspace({
   const [actionError, setActionError] = useState('');
   const [modal, setModal] = useState<DocumentModal>(null);
   const [shareLink, setShareLink] = useState('');
-  const [mobileShowPreview, setMobileShowPreview] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [promptForm, setPromptForm] = useState<null | {
     title: string;
@@ -220,15 +235,29 @@ export function PatientDocumentWorkspace({
   const filteredItems = useMemo(() => {
     const term = filters.search.trim().toLowerCase();
     return items.filter((item) => {
+      if (isProfilePhoto(item)) return false;
       if (homeTab === 'documents' && item.source === 'upload') return false;
       if (homeTab === 'files' && item.source !== 'upload') return false;
       if (homeTab === 'files' && !matchesFileKind(item, fileKind)) return false;
-      if (filters.folderId !== 'all' && item.folderId !== filters.folderId) return false;
       if (!term) return true;
       const haystack = [item.name, item.type, item.folderName ?? '', item.validationCode ?? ''].join(' ').toLowerCase();
       return haystack.includes(term);
     });
-  }, [fileKind, filters.folderId, filters.search, homeTab, items]);
+  }, [fileKind, filters.search, homeTab, items]);
+
+  const visibleFolders = useMemo(() => folders.filter((folder) => {
+    const matched = filteredItems.some((item) => {
+      const canonical = canonicalFolderName(item);
+      if (canonical) return canonical === folder.name;
+      return item.folderId === folder.id;
+    });
+    if (homeTab === 'documents') {
+      if (UPLOAD_FOLDER_NAMES.has(folder.name) && !matched) return false;
+      return GENERATED_FOLDER_NAMES.has(folder.name) || matched;
+    }
+    if (GENERATED_FOLDER_NAMES.has(folder.name) && !matched) return false;
+    return UPLOAD_FOLDER_NAMES.has(folder.name) || matched;
+  }), [filteredItems, folders, homeTab]);
 
   const selectedMeta = filteredItems.find(
     (item) => item.id === selected?.id && item.source === selected.source,
@@ -283,7 +312,7 @@ export function PatientDocumentWorkspace({
   function switchHomeTab(tab: DocumentsHomeTab) {
     setHomeTab(tab);
     setSelected(null);
-    setMobileShowPreview(false);
+    setPreviewOpen(false);
     setFilters((current) => ({
       ...current,
       search: '',
@@ -296,7 +325,7 @@ export function PatientDocumentWorkspace({
   if (!canView) {
     return (
       <Panel title="Documentos" description="Acesso restrito">
-        <EmptyState title="Sem permissão" description="É necessário document.view para visualizar a biblioteca." />
+        <EmptyState title="Sem permissão" description="É necessário permissão para visualizar documentos." />
       </Panel>
     );
   }
@@ -343,8 +372,8 @@ export function PatientDocumentWorkspace({
           <strong>{homeTab === 'documents' ? 'Documentos emitidos' : 'Arquivos do paciente'}</strong>
           <p className="muted-note">
             {homeTab === 'documents'
-              ? 'Receitas, atestados, exames, termos e documentos personalizados.'
-              : 'Fotos, radiografias, PDFs e vídeos — preview em primeiro plano.'}
+              ? 'Receitas, atestados, exames, termos, contratos e documentos emitidos pelo sistema.'
+              : 'Fotos, radiografias, PDFs e vídeos enviados — preview em primeiro plano.'}
           </p>
         </div>
         {homeTab === 'documents' ? (
@@ -368,11 +397,11 @@ export function PatientDocumentWorkspace({
         )}
       </div>
 
-      <div className={`documents-layout ${homeTab === 'files' ? 'files-priority' : ''} ${mobileShowPreview ? 'show-preview' : ''}`}>
+      <div className="documents-layout documents-library-wide">
         <Panel
           className="documents-library-panel"
           title={homeTab === 'documents' ? 'Biblioteca de documentos' : 'Biblioteca de arquivos'}
-          description={homeTab === 'documents' ? 'Emitidos e assinados.' : 'Uploads e pastas.'}
+          description={homeTab === 'documents' ? 'Somente documentos gerados pelo sistema. Clique para abrir a prévia.' : 'Somente arquivos enviados. Clique para abrir a prévia.'}
         >
           <div className="document-filters">
             <input
@@ -397,34 +426,43 @@ export function PatientDocumentWorkspace({
                 ))}
               </div>
             ) : null}
-            <label className="check-field compact">
-              <input
-                type="checkbox"
-                checked={filters.includeArchived}
-                onChange={(event) => setFilters((current) => ({ ...current, includeArchived: event.target.checked }))}
-              />
+            <label className="switch-row">
+              <span className="switch">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={filters.includeArchived}
+                  onChange={(event) => setFilters((current) => ({ ...current, includeArchived: event.target.checked }))}
+                  aria-label="Incluir arquivados"
+                />
+                <span className="switch-track" aria-hidden />
+              </span>
               Incluir arquivados
             </label>
           </div>
           <DocumentLibrary
-            folders={folders}
+            folders={visibleFolders}
             items={filteredItems}
             selected={selected}
             folderId={filters.folderId}
-            canManageFolders={canManageFolders}
+            canManageFolders={canManageFolders && homeTab === 'files'}
             onCreateFolder={() => void createFolder()}
             onSelectFolder={(folderId) => setFilters((current) => ({ ...current, folderId }))}
             onSelectItem={(item) => {
               setSelected({ id: item.id, source: item.source });
-              setMobileShowPreview(true);
+              setPreviewOpen(true);
             }}
           />
         </Panel>
+      </div>
 
-        <Panel className="documents-preview-panel">
-          <button type="button" className="text-button mobile-back" onClick={() => setMobileShowPreview(false)}>
-            ← Voltar à biblioteca
-          </button>
+      <Modal
+        open={previewOpen && Boolean(selected)}
+        title={selectedMeta ? text(selectedMeta.name) : 'Prévia'}
+        description={selectedMeta ? `${presentationLabel(selectedMeta.status)} · ${selectedMeta.folderName ?? 'Biblioteca'}` : undefined}
+        onClose={() => setPreviewOpen(false)}
+        size="xlarge"
+      >
           <DocumentPreview
             selectedMeta={selectedMeta}
             document={document}
@@ -459,7 +497,7 @@ export function PatientDocumentWorkspace({
                   clinicId,
                   evidence: { source: 'documents-workspace' },
                 });
-                setMessage(method === 'A1' ? 'Assinatura A1 registrada.' : 'Assinatura registrada.');
+                setMessage(method === 'A1' ? 'Assinatura com certificado digital registrada.' : 'Assinatura eletrônica registrada.');
               });
             }}
             onShare={() => {
@@ -512,6 +550,7 @@ export function PatientDocumentWorkspace({
                       await documentApi.cancelPrescription(selectedMeta.id, 'Arquivado pela biblioteca');
                     }
                     setSelected(null);
+                    setPreviewOpen(false);
                     setMessage('Item arquivado/cancelado.');
                   });
                 },
@@ -539,8 +578,7 @@ export function PatientDocumentWorkspace({
               });
             }}
           />
-        </Panel>
-      </div>
+      </Modal>
 
       <NewDocumentPicker
         open={modal === 'picker'}
@@ -570,7 +608,7 @@ export function PatientDocumentWorkspace({
               clinicalContent: input.clinicalContent,
             });
             setHomeTab('documents');
-            setMobileShowPreview(true);
+            setPreviewOpen(true);
             setMessage('Documento gerado como rascunho congelado.');
             setModal(null);
             return created;
@@ -594,7 +632,7 @@ export function PatientDocumentWorkspace({
               ...input,
             });
             setHomeTab('documents');
-            setMobileShowPreview(true);
+            setPreviewOpen(true);
             setMessage('Prescrição gerada e pronta para assinatura.');
             setModal(null);
             return created;
@@ -629,7 +667,7 @@ export function PatientDocumentWorkspace({
               clinicalContent: input.clinicalContent,
             });
             setHomeTab('documents');
-            setMobileShowPreview(true);
+            setPreviewOpen(true);
             setMessage('Atestado gerado e pronto para assinatura.');
             setModal(null);
             return created;
@@ -656,7 +694,7 @@ export function PatientDocumentWorkspace({
               clinicalContent: input.clinicalContent,
             });
             setHomeTab('documents');
-            setMobileShowPreview(true);
+            setPreviewOpen(true);
             setMessage('Solicitação de exame gerada.');
             setModal(null);
             return created;
@@ -685,7 +723,7 @@ export function PatientDocumentWorkspace({
               clinicalContent: input.clinicalContent,
             });
             setHomeTab('documents');
-            setMobileShowPreview(true);
+            setPreviewOpen(true);
             setMessage('Termo gerado como rascunho congelado.');
             setModal(null);
             return created;
@@ -712,7 +750,7 @@ export function PatientDocumentWorkspace({
               clinicalContent: input.clinicalContent,
             });
             setHomeTab('documents');
-            setMobileShowPreview(true);
+            setPreviewOpen(true);
             setMessage('Encaminhamento gerado como rascunho congelado.');
             setModal(null);
             return created;
@@ -741,7 +779,7 @@ export function PatientDocumentWorkspace({
               lastId = uploaded.id;
             }
             setHomeTab('files');
-            setMobileShowPreview(true);
+            setPreviewOpen(true);
             setMessage(input.files.length > 1 ? 'Arquivos enviados.' : 'Arquivo enviado.');
             setModal(null);
             return lastId;

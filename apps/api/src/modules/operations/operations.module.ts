@@ -5,10 +5,11 @@ import { AuthModule } from '../auth/auth.module';
 import { SettingsModule } from '../settings/settings.module';
 import { OperationsController, PublicDocumentsController, PublicDocumentSignaturesController } from './operations.controller';
 import { OperationsService } from './operations.service';
+import { TreatmentContractService } from '../documents/treatment-contract.service';
 
 @Module({
   imports: [AuthModule, SettingsModule],
   controllers: [OperationsController, PublicDocumentsController, PublicDocumentSignaturesController],
-  providers: [OperationsService, AuthGuard, PermissionsGuard],
+  providers: [OperationsService, TreatmentContractService, AuthGuard, PermissionsGuard],
 })
 export class OperationsModule {}

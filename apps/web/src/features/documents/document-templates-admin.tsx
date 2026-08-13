@@ -7,15 +7,18 @@ import { EmptyState, Panel, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
 import * as documentApi from './document-api';
 
-const TEMPLATE_TYPES = [
-  'CERTIFICATE',
-  'PRESCRIPTION',
-  'EXAM_REQUEST',
-  'DECLARATION',
-  'CONSENT',
-  'REFERRAL',
-  'CUSTOM',
-] as const;
+const TEMPLATE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'ATTESTATION', label: 'Atestado' },
+  { value: 'PRESCRIPTION', label: 'Receita' },
+  { value: 'EXAM_REQUEST', label: 'Solicitação de exame' },
+  { value: 'DECLARATION', label: 'Declaração' },
+  { value: 'CONSENT', label: 'Termo de consentimento' },
+  { value: 'REFERRAL', label: 'Encaminhamento' },
+  { value: 'CONTRACT', label: 'Contrato' },
+  { value: 'TREATMENT_PLAN', label: 'Plano de tratamento' },
+  { value: 'ODONTOGRAM', label: 'Odontograma' },
+  { value: 'CUSTOM', label: 'Personalizado' },
+];
 
 const VARIABLES = [
   'patientName',
@@ -24,6 +27,15 @@ const VARIABLES = [
   'professionalCro',
   'clinicName',
   'date',
+  'clinic.tradeName',
+  'clinic.legalName',
+  'clinic.taxId',
+  'patient.fullName',
+  'patient.cpf',
+  'treatment.title',
+  'treatment.total',
+  'payment.clause',
+  'payment.summary',
 ] as const;
 
 type StructuredContent = {
@@ -136,14 +148,18 @@ export function DocumentTemplatesAdminPanel() {
     setBusy(true);
     setFormError('');
     try {
+      const type = String(data.get('type') || 'CUSTOM');
       await api.post('/document-templates', {
         name: String(data.get('name') || '').trim(),
-        type: String(data.get('type') || 'CUSTOM'),
+        type,
         structuredContent: {
           ...emptyContent(),
           body: String(data.get('body') || '').trim(),
         },
         allowedVariables: [...VARIABLES],
+        signatureRules: type === 'CONTRACT'
+          ? { requiredRoles: ['PATIENT', 'CLINIC'], minSignatures: 2, serviceProviderSigner: 'CLINIC' }
+          : { requiredRoles: ['PROFESSIONAL'], minSignatures: 1 },
       });
       setCreateOpen(false);
       load();
@@ -164,6 +180,9 @@ export function DocumentTemplatesAdminPanel() {
         type,
         structuredContent: content,
         allowedVariables: [...VARIABLES],
+        signatureRules: type === 'CONTRACT'
+          ? { requiredRoles: ['PATIENT', 'CLINIC'], minSignatures: 2, serviceProviderSigner: 'CLINIC' }
+          : editor.signatureRules ?? { requiredRoles: ['PROFESSIONAL'], minSignatures: 1 },
       });
       load();
       setValidation('Rascunho salvo.');
@@ -286,8 +305,8 @@ export function DocumentTemplatesAdminPanel() {
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label className="span-2">Tipo
             <select name="type" defaultValue="CUSTOM">
-              {TEMPLATE_TYPES.map((item) => (
-                <option key={item} value={item}>{item}</option>
+              {TEMPLATE_TYPE_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
               ))}
             </select>
           </label>
@@ -318,7 +337,10 @@ export function DocumentTemplatesAdminPanel() {
                 </label>
                 <label className="span-2">Tipo
                   <select value={type} disabled={String(editor.status) !== 'DRAFT'} onChange={(e) => setType(e.target.value)}>
-                    {TEMPLATE_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
+                    {TEMPLATE_TYPE_OPTIONS.map((item) => (
+                      <option key={item.value} value={item.value}>{item.label}</option>
+                    ))}
+                    {type === 'CERTIFICATE' ? <option value="CERTIFICATE">Atestado</option> : null}
                   </select>
                 </label>
                 {(['title', 'header', 'body', 'footer', 'signature'] as const).map((field) => (

@@ -1,7 +1,9 @@
 'use client';
 
+import { Ban } from 'lucide-react';
 import { currency, presentationLabel, statusTone, text } from '@/lib/format';
 import { EmptyState, StatusBadge } from '@/components/ui';
+import { toothDisplayLabel } from '@/features/odontogram/odontogram-anatomy';
 import type { TreatmentItem, TreatmentPlan } from './treatment-types';
 
 export function TreatmentItemTable({
@@ -78,7 +80,7 @@ export function TreatmentItemTable({
                   <strong>{text(item.procedure?.name, 'Procedimento')}</strong>
                   {item.urgent ? <small>Urgente</small> : null}
                 </td>
-                <td>{text(item.toothFdi, '—')}{item.face ? ` / ${item.face}` : ''}</td>
+                <td>{toothDisplayLabel(item.toothFdi)}{item.face ? ` / ${item.face}` : ''}</td>
                 <td>{professionalName(item.professionalId)}</td>
                 <td>{item.quantity}</td>
                 <td>{sessionsDone}/{item.plannedSessions}</td>
@@ -99,7 +101,15 @@ export function TreatmentItemTable({
                       <button type="button" className="button small" onClick={() => onComplete(item)}>Concluir</button>
                     ) : null}
                     {canUpdate && !readonly && String(item.status) !== 'CANCELLED' && String(item.status) !== 'COMPLETED' ? (
-                      <button type="button" className="button danger small" onClick={() => onCancel(item)}>Cancelar</button>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title="Cancelar procedimento"
+                        aria-label={`Cancelar ${text(item.procedure?.name, 'procedimento')}`}
+                        onClick={() => onCancel(item)}
+                      >
+                        <Ban size={14} />
+                      </button>
                     ) : null}
                   </div>
                 </td>

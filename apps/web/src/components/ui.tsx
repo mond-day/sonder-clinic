@@ -7,7 +7,7 @@ export function StatusBadge({
   tone = 'gray',
 }: {
   children: React.ReactNode;
-  tone?: 'green' | 'amber' | 'red' | 'blue' | 'gray' | 'purple';
+  tone?: 'green' | 'amber' | 'red' | 'blue' | 'gray' | 'purple' | 'teal';
 }) {
   return <span className={`status-badge ${tone}`}>{children}</span>;
 }

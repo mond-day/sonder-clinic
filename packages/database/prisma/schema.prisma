@@ -1411,8 +1411,13 @@ model GeneratedDocument {
   generatedById   String?                    @db.Uuid
   frozenContent   Json
   fileId          String?                    @db.Uuid
+  signedFileId    String?                    @db.Uuid
   contentHash     String
   validationCode  String                     @unique
+  validationSecretHash String?
+  sourceType      String?
+  sourceId        String?
+  sourceVersion   Int?
   status          DocumentStatus             @default(GENERATED)
   generatedAt     DateTime                   @default(now())
   cancelledAt     DateTime?
@@ -1429,6 +1434,8 @@ model GeneratedDocument {
   @@index([organizationId, patientId, generatedAt])
   @@index([organizationId, patientId, folderId])
   @@index([organizationId, status, generatedAt])
+  @@index([organizationId, treatmentId])
+  @@index([organizationId, sourceType, sourceId])
 }
 
 model DocumentSignature {
