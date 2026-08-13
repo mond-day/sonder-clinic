@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
 const focusableSelector = [
@@ -14,6 +14,9 @@ const focusableSelector = [
 
 let modalStack: symbol[] = [];
 
+/** Mensagem padrão ao fechar modal de formulário editável (Esc / X / backdrop). */
+export const CONFIRM_CLOSE_DEFAULT = 'Há alterações não salvas. Descartar e fechar?';
+
 export function Modal({
   open,
   title,
@@ -21,6 +24,8 @@ export function Modal({
   children,
   onClose,
   closeOnBackdrop = true,
+  confirmOnClose = false,
+  confirmCloseMessage,
   size = 'medium',
 }: {
   open: boolean;
@@ -29,6 +34,13 @@ export function Modal({
   children: React.ReactNode;
   onClose(): void;
   closeOnBackdrop?: boolean;
+  /**
+   * Se true, Esc / backdrop / botão fechar pedem confirmação in-app.
+   * Use em modais de criar/editar formulário. Diálogos somente leitura e confirms aninhados devem ficar false.
+   */
+  confirmOnClose?: boolean;
+  /** Mensagem customizada; se omitida com confirmOnClose, usa CONFIRM_CLOSE_DEFAULT. */
+  confirmCloseMessage?: string;
   size?: 'small' | 'medium' | 'large' | 'xlarge';
 }) {
   const titleId = useId();
@@ -36,6 +48,28 @@ export function Modal({
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const stackIdRef = useRef(Symbol('modal'));
+  const onCloseRef = useRef(onClose);
+  const resolveConfirmMessage = () =>
+    confirmCloseMessage ?? (confirmOnClose ? CONFIRM_CLOSE_DEFAULT : undefined);
+  const confirmCloseMessageRef = useRef(resolveConfirmMessage());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  onCloseRef.current = onClose;
+  confirmCloseMessageRef.current = resolveConfirmMessage();
+
+  function requestClose() {
+    if (confirmCloseMessageRef.current) {
+      setConfirmOpen(true);
+      return;
+    }
+    onCloseRef.current();
+  }
+
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+
+  useEffect(() => {
+    if (!open) setConfirmOpen(false);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -62,8 +96,9 @@ export function Modal({
     function handleKeyDown(event: KeyboardEvent) {
       if (!isTopModal()) return;
       if (event.key === 'Escape') {
+        if (event.defaultPrevented) return;
         event.preventDefault();
-        onClose();
+        requestCloseRef.current();
         return;
       }
       if (event.key !== 'Tab' || !dialog) return;
@@ -92,38 +127,65 @@ export function Modal({
       document.body.style.overflow = modalStack.length ? 'hidden' : previousOverflow;
       previousFocusRef.current?.focus();
     };
-  }, [onClose, open]);
+  }, [open]);
 
   if (!open) return null;
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => {
-        if (closeOnBackdrop && event.target === event.currentTarget && modalStack[modalStack.length - 1] === stackIdRef.current) {
-          onClose();
-        }
-      }}
-    >
+    <>
       <div
-        ref={dialogRef}
-        className={`modal-dialog ${size}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
-        tabIndex={-1}
+        className="modal-backdrop"
+        onMouseDown={(event) => {
+          if (closeOnBackdrop && event.target === event.currentTarget && modalStack[modalStack.length - 1] === stackIdRef.current) {
+            requestClose();
+          }
+        }}
       >
-        <header className="modal-head">
-          <div>
-            <h2 id={titleId}>{title}</h2>
-            {description ? <p id={descriptionId}>{description}</p> : null}
-          </div>
-          <button className="close-btn" type="button" onClick={onClose} aria-label="Fechar modal">
-            <X size={17} />
-          </button>
-        </header>
-        <div className="modal-body">{children}</div>
+        <div
+          ref={dialogRef}
+          className={`modal-dialog ${size}`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={description ? descriptionId : undefined}
+          tabIndex={-1}
+        >
+          <header className="modal-head">
+            <div>
+              <h2 id={titleId}>{title}</h2>
+              {description ? <p id={descriptionId}>{description}</p> : null}
+            </div>
+            <button className="close-btn" type="button" onClick={requestClose} aria-label="Fechar modal">
+              <X size={17} />
+            </button>
+          </header>
+          <div className="modal-body">{children}</div>
+        </div>
       </div>
-    </div>
+      <Modal
+        open={confirmOpen}
+        title="Descartar alterações?"
+        description={confirmCloseMessageRef.current ?? CONFIRM_CLOSE_DEFAULT}
+        size="small"
+        onClose={() => setConfirmOpen(false)}
+        closeOnBackdrop
+      >
+        <div className="heading-actions" style={{ marginLeft: 0, justifyContent: 'flex-end' }}>
+          <button type="button" className="button" onClick={() => setConfirmOpen(false)}>
+            Voltar
+          </button>
+          <button
+            type="button"
+            className="button danger"
+            autoFocus
+            onClick={() => {
+              setConfirmOpen(false);
+              onCloseRef.current();
+            }}
+          >
+            Descartar
+          </button>
+        </div>
+      </Modal>
+    </>
   );
 }

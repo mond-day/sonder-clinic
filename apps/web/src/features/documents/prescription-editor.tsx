@@ -193,10 +193,11 @@ export function PrescriptionEditor({
     <Modal
       open={open}
       title="Nova prescrição"
-      description="Composição progressiva — adicione itens sob demanda."
+      description="Adicione medicamentos, exames e orientações à prescrição."
       onClose={onClose}
       size="large"
       closeOnBackdrop={false}
+      confirmOnClose
     >
       <form className="mutation-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>
@@ -236,7 +237,7 @@ export function PrescriptionEditor({
         <div className="span-2 prescription-items-head">
           <div>
             <strong>Itens da prescrição</strong>
-            <p>Nenhum formulário de item aparece até você adicionar.</p>
+            <p>Adicione medicamentos, exames ou orientações à prescrição.</p>
           </div>
           <button
             type="button"

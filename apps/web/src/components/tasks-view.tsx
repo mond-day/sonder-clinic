@@ -249,6 +249,7 @@ export function TasksView() {
             : 'Preencha os campos e salve sem perder o contexto do quadro.'
         }
         closeOnBackdrop={false}
+        confirmOnClose={!selectedTask || editingTask}
         onClose={() => {
           setFormOpen(false);
           setSelectedTask(null);

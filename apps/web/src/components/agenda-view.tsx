@@ -1,12 +1,22 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Plus, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import {
+  DEFAULT_BUSINESS_HOURS,
+  getBusinessHoursGridBounds,
+  hourFromHm,
+  isBusinessWeekday,
+  isWithinBusinessHourRange,
+  normalizeBusinessHours,
+  ruleForWeekday,
+  type BusinessHours,
+} from '@/lib/business-hours';
 import { APPOINTMENT_DURATIONS, nearestDurationMinutes } from '@/lib/duration';
-import { appointmentEventTone, list, nested, statusTone, text, timeOnly, type RecordValue } from '@/lib/format';
+import { appointmentEventTone, list, nested, statusTone, text, timeOnly, toDatetimeLocalValue, type RecordValue } from '@/lib/format';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
 import { MetricCard, PageHeader, Panel, StatusBadge } from './ui';
@@ -20,6 +30,80 @@ type AgendaViewType = 'calendar' | 'list';
 const AGENDA_VIEW_KEY = 'centerClinic.agenda.view';
 
 const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+/** Altura de cada hora na grade (deve bater com `--slot-height` no CSS). */
+const SLOT_HEIGHT_PX = 62;
+const SNAP_MINUTES = 15;
+
+type TimedLayout = {
+  item: RecordValue;
+  top: number;
+  height: number;
+  lane: number;
+  laneCount: number;
+};
+
+/** Posiciona eventos na escala contínua da coluna (top/altura) e em faixas laterais se houver sobreposição. */
+function layoutColumnEvents(items: RecordValue[], gridStartHour: number, hourCount: number): TimedLayout[] {
+  const gridStartMin = gridStartHour * 60;
+  const gridEndMin = gridStartMin + hourCount * 60;
+
+  const timed = items.map((item) => {
+    const start = new Date(String(item.startAt));
+    const end = new Date(String(item.endAt));
+    const startMin = start.getHours() * 60 + start.getMinutes();
+    const rawEndMin = sameDay(start, end)
+      ? end.getHours() * 60 + end.getMinutes()
+      : gridEndMin;
+    const endMin = Math.max(startMin + SNAP_MINUTES, rawEndMin);
+    const clampedStart = Math.min(Math.max(startMin, gridStartMin), gridEndMin);
+    const clampedEnd = Math.min(Math.max(endMin, clampedStart + SNAP_MINUTES), gridEndMin);
+    return {
+      item,
+      startMs: start.getTime(),
+      endMs: end.getTime(),
+      startMin: clampedStart,
+      endMin: clampedEnd,
+      top: ((clampedStart - gridStartMin) / 60) * SLOT_HEIGHT_PX,
+      height: Math.max(((clampedEnd - clampedStart) / 60) * SLOT_HEIGHT_PX, 24),
+    };
+  }).sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin || a.startMs - b.startMs);
+
+  const laneEnds: number[] = [];
+  const withLane = timed.map((entry) => {
+    let lane = laneEnds.findIndex((end) => end <= entry.startMin);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(entry.endMin);
+    } else {
+      laneEnds[lane] = entry.endMin;
+    }
+    return { ...entry, lane };
+  });
+
+  return withLane.map((entry) => {
+    const overlapping = withLane.filter(
+      (other) => other.startMin < entry.endMin && other.endMin > entry.startMin,
+    );
+    const laneCount = Math.max(1, ...overlapping.map((other) => other.lane + 1));
+    return {
+      item: entry.item,
+      top: entry.top,
+      height: entry.height,
+      lane: entry.lane,
+      laneCount,
+    };
+  });
+}
+
+function snapMinutesFromY(clientY: number, columnTop: number, gridStartHour: number, hourCount: number) {
+  const y = Math.max(0, Math.min(clientY - columnTop, hourCount * SLOT_HEIGHT_PX - 1));
+  const total = gridStartHour * 60 + (y / SLOT_HEIGHT_PX) * 60;
+  const snapped = Math.round(total / SNAP_MINUTES) * SNAP_MINUTES;
+  const max = (gridStartHour + hourCount) * 60 - SNAP_MINUTES;
+  const clamped = Math.min(Math.max(snapped, gridStartHour * 60), max);
+  return { hour: Math.floor(clamped / 60), minutes: clamped % 60 };
+}
 
 const statusLabels: Record<string, string> = {
   SCHEDULED: 'Agendado',
@@ -94,6 +178,15 @@ export function AgendaView() {
   const [professionalFilter, setProfessionalFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [unitFilter, setUnitFilter] = useState('');
+  const [editUnitId, setEditUnitId] = useState('');
+  const [editChairId, setEditChairId] = useState('');
+  const [businessHours, setBusinessHours] = useState<BusinessHours>(DEFAULT_BUSINESS_HOURS);
+  const [showPersonalCalendar, setShowPersonalCalendar] = useState(false);
+  const [personalCalendarAvailable, setPersonalCalendarAvailable] = useState(false);
+  const [personalEvents, setPersonalEvents] = useState<RecordValue[]>([]);
+  const [personalWarning, setPersonalWarning] = useState('');
+  const [acknowledgePersonalWarning, setAcknowledgePersonalWarning] = useState(false);
+  const skipNextEventClickRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -148,6 +241,51 @@ export function AgendaView() {
   useEffect(load, [load]);
 
   useEffect(() => {
+    if (!clinicId) return;
+    api.get<BusinessHours>(`/settings/business-hours?clinicId=${clinicId}`)
+      .then((hours) => setBusinessHours(normalizeBusinessHours(hours)))
+      .catch(() => setBusinessHours(DEFAULT_BUSINESS_HOURS));
+  }, [clinicId]);
+
+  useEffect(() => {
+    if (!clinicId) {
+      setPersonalCalendarAvailable(false);
+      setShowPersonalCalendar(false);
+      setPersonalEvents([]);
+      return;
+    }
+    api.get<{ available?: boolean }>(`/appointments/personal-calendar/status?clinicId=${clinicId}`)
+      .then((status) => {
+        setPersonalCalendarAvailable(Boolean(status.available));
+        if (!status.available) {
+          setShowPersonalCalendar(false);
+          setPersonalEvents([]);
+        }
+      })
+      .catch(() => {
+        setPersonalCalendarAvailable(false);
+        setShowPersonalCalendar(false);
+        setPersonalEvents([]);
+      });
+  }, [clinicId]);
+
+  useEffect(() => {
+    if (!clinicId || !showPersonalCalendar || !personalCalendarAvailable) {
+      setPersonalEvents([]);
+      return;
+    }
+    const query = new URLSearchParams({
+      clinicId,
+      from: range.from.toISOString(),
+      to: range.to.toISOString(),
+    });
+    if (professionalFilter) query.set('professionalId', professionalFilter);
+    api.get<{ events?: RecordValue[] }>(`/appointments/personal-calendar?${query}`)
+      .then((result) => setPersonalEvents(list(result.events)))
+      .catch(() => setPersonalEvents([]));
+  }, [clinicId, showPersonalCalendar, personalCalendarAvailable, range.from, range.to, professionalFilter]);
+
+  useEffect(() => {
     if (searchParams.get('new') === '1' || searchParams.get('patientId')) {
       setFormOpen(true);
     }
@@ -170,20 +308,23 @@ export function AgendaView() {
           label: weekdayNames[date.getDay()],
           detail: dayMonth.format(date),
           active: sameDay(date, new Date()),
+          date,
           match: (item: RecordValue) => sameDay(new Date(String(item.startAt)), date),
         };
       });
     }
     if (mode === 'chairs') {
-      const chairs = units
+      const chairColumns = units
         .filter((unit) => !unitFilter || unit.id === unitFilter)
-        .flatMap((unit) => unit.chairs.map((chair) => ({ ...chair, unitName: unit.name })));
-      if (!chairs.length) return [];
-      return chairs.map((chair) => ({
+        .flatMap((unit) => unit.chairs.map((chair) => ({ ...chair, unitId: unit.id, unitName: unit.name })));
+      if (!chairColumns.length) return [];
+      return chairColumns.map((chair) => ({
         key: chair.id,
         label: chair.name,
         detail: chair.unitName,
         active: false,
+        chairId: chair.id,
+        unitId: chair.unitId,
         match: (item: RecordValue) => item.chairId === chair.id,
       }));
     }
@@ -194,16 +335,36 @@ export function AgendaView() {
       label: professional.name,
       detail: professional.croNumber ? `CRO ${professional.croNumber}` : 'Profissional',
       active: false,
+      professionalId: professional.id,
+      date: startOfDay(reference),
       match: (item: RecordValue) => item.professionalId === professional.id,
     }));
   }, [mode, reference, units, unitFilter, professionals, professionalFilter]);
 
   const hours = useMemo(() => {
-    const used = visible.map((item) => new Date(String(item.startAt)).getHours());
-    const min = Math.min(8, ...(used.length ? used : [8]));
-    const max = Math.max(18, ...(used.length ? used : [18]));
-    return Array.from({ length: max - min + 1 }, (_, index) => min + index);
-  }, [visible]);
+    const { startHour, endHour } = getBusinessHoursGridBounds(businessHours);
+    // Inclui a hora de fechamento na grade (padrão histórico 08–18).
+    const configuredMax = Math.max(startHour, endHour);
+    const usedHours: number[] = [];
+    const timedItems = showPersonalCalendar ? [...visible, ...personalEvents] : visible;
+    for (const item of timedItems) {
+      const start = new Date(String(item.startAt));
+      const end = new Date(String(item.endAt));
+      usedHours.push(start.getHours());
+      // Garante que o fim do atendimento ainda caiba visualmente na grade.
+      const endHourUsed = end.getMinutes() > 0 || end.getSeconds() > 0
+        ? end.getHours()
+        : Math.max(start.getHours(), end.getHours() - 1);
+      if (sameDay(start, end)) usedHours.push(endHourUsed);
+    }
+    const min = Math.min(startHour, ...(usedHours.length ? usedHours : [startHour]));
+    const max = Math.max(configuredMax, ...(usedHours.length ? usedHours : [configuredMax]));
+    return Array.from({ length: Math.max(1, max - min + 1) }, (_, index) => min + index);
+  }, [visible, personalEvents, showPersonalCalendar, businessHours]);
+
+  const { startHour: businessStartHour, endHour: businessEndHour } = getBusinessHoursGridBounds(businessHours);
+  const gridStartHour = hours[0] ?? businessStartHour;
+  const hourCount = hours.length;
 
   const title = useMemo(() => {
     if (mode === 'week') {
@@ -222,8 +383,153 @@ export function AgendaView() {
     setReference((current) => addDays(current, mode === 'week' ? direction * 7 : direction));
   }
 
-  const chairs = useMemo(() => units.flatMap((unit) => unit.chairs), [units]);
+  const chairs = useMemo(
+    () => units.flatMap((unit) => unit.chairs.map((chair) => ({ ...chair, unitId: unit.id }))),
+    [units],
+  );
   const hideUnitChair = units.length <= 1 && chairs.length <= 1;
+  const editChairOptions = useMemo(
+    () => chairs
+      .filter((chair) => chair.unitId === editUnitId && chair.isSchedulingEnabled !== false)
+      .map((item) => ({ value: item.id, label: item.name })),
+    [chairs, editUnitId],
+  );
+
+  function appointmentClinicId(item: RecordValue) {
+    return String(item.clinicId || clinicId);
+  }
+
+  type ConflictCheckResult = {
+    conflict?: boolean;
+    warnings?: Array<{ type?: string; message?: string }>;
+  };
+
+  async function checkAppointmentSlot(payload: Record<string, unknown>, options?: {
+    excludeAppointmentId?: string;
+    allowPersonalWarning?: boolean;
+  }): Promise<{ blocked: boolean; personalMessage?: string }> {
+    const check = await api.post<ConflictCheckResult>('/appointments/check-conflicts', {
+      ...payload,
+      ...(options?.excludeAppointmentId ? { excludeAppointmentId: options.excludeAppointmentId } : {}),
+    }).catch(() => ({ conflict: false, warnings: [] as Array<{ type?: string; message?: string }> }));
+
+    if (check.conflict) {
+      return { blocked: true };
+    }
+    const personal = (check.warnings ?? []).find((item) => item.type === 'personal_calendar');
+    if (personal && !options?.allowPersonalWarning) {
+      return {
+        blocked: false,
+        personalMessage: personal.message || 'Há um evento pessoal do Google neste horário. Você pode continuar mesmo assim.',
+      };
+    }
+    return { blocked: false };
+  }
+
+  function openAppointment(item: RecordValue) {
+    setSelectedAppointment(item);
+    setEditingAppointment(false);
+    setFormError('');
+    setPersonalWarning('');
+    setAcknowledgePersonalWarning(false);
+    setEditUnitId(String(item.unitId ?? ''));
+    setEditChairId(text(item.chairId, ''));
+  }
+
+  async function persistAppointment(item: RecordValue, patch: {
+    startAt: string;
+    endAt: string;
+    unitId?: string;
+    professionalId?: string;
+    chairId?: string | null;
+    status?: string;
+    notes?: string;
+    tagIds?: string[];
+    reminderEnabled?: boolean;
+    reminderLeadMinutes?: number | number[];
+  }) {
+    const reminders = list(item.reminders);
+    const reminderLeads = reminders
+      .map((entry) => Number(entry.leadMinutes))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    await api.put(`/appointments/${String(item.id)}`, {
+      clinicId: appointmentClinicId(item),
+      unitId: patch.unitId ?? String(item.unitId),
+      patientId: String(item.patientId),
+      professionalId: patch.professionalId ?? String(item.professionalId),
+      chairId: patch.chairId === null
+        ? undefined
+        : (patch.chairId ?? (String(item.chairId ?? '') || undefined)),
+      startAt: patch.startAt,
+      endAt: patch.endAt,
+      status: patch.status ?? String(item.status),
+      notes: Object.prototype.hasOwnProperty.call(patch, 'notes')
+        ? (patch.notes || undefined)
+        : (text(item.notes, '') || undefined),
+      tagIds: patch.tagIds ?? list(item.tags)
+        .map((entry) => String(nested(entry, 'tag').id || entry.tagId || ''))
+        .filter(Boolean),
+      reminderEnabled: patch.reminderEnabled ?? reminders.length > 0,
+      reminderLeadMinutes: patch.reminderLeadMinutes ?? (reminderLeads.length ? reminderLeads : 1440),
+    });
+  }
+
+  async function dropAppointment(
+    item: RecordValue,
+    column: { date?: Date; professionalId?: string; chairId?: string; unitId?: string },
+    hour: number,
+    minutes = 0,
+  ) {
+    if (['CANCELLED', 'NO_SHOW'].includes(String(item.status))) return;
+    const previousStart = new Date(String(item.startAt));
+    const durationMs = new Date(String(item.endAt)).getTime() - previousStart.getTime();
+    const nextStart = new Date(previousStart);
+    const day = column.date ?? startOfDay(previousStart);
+    nextStart.setFullYear(day.getFullYear(), day.getMonth(), day.getDate());
+    nextStart.setHours(hour, minutes, 0, 0);
+    const nextEnd = new Date(nextStart.getTime() + Math.max(durationMs, 15 * 60_000));
+    const sameSlot = nextStart.getTime() === previousStart.getTime()
+      && (!column.professionalId || column.professionalId === item.professionalId)
+      && (!column.chairId || column.chairId === item.chairId);
+    if (sameSlot) return;
+    setError('');
+    setPersonalWarning('');
+    try {
+      const payload = {
+        clinicId: appointmentClinicId(item),
+        unitId: column.unitId ?? String(item.unitId),
+        patientId: String(item.patientId),
+        professionalId: column.professionalId ?? String(item.professionalId),
+        chairId: column.chairId ?? (String(item.chairId ?? '') || undefined),
+        startAt: nextStart.toISOString(),
+        endAt: nextEnd.toISOString(),
+      };
+      const check = await checkAppointmentSlot(payload, {
+        excludeAppointmentId: String(item.id),
+        allowPersonalWarning: false,
+      });
+      if (check.blocked) {
+        setError('O horário selecionado está em conflito com outro agendamento.');
+        return;
+      }
+      if (check.personalMessage) {
+        const confirmed = window.confirm(
+          `${check.personalMessage}\n\nDeseja remarcar mesmo assim?`,
+        );
+        if (!confirmed) return;
+      }
+      await persistAppointment(item, {
+        startAt: nextStart.toISOString(),
+        endAt: nextEnd.toISOString(),
+        professionalId: column.professionalId,
+        chairId: column.chairId,
+        unitId: column.unitId,
+      });
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível remarcar por arraste.');
+    }
+  }
 
   const filterBar = filtersOpen ? (
     <div className="filters">
@@ -258,10 +564,25 @@ export function AgendaView() {
           <option key={value} value={value}>{label}</option>
         ))}
       </select>
+      {personalCalendarAvailable ? (
+        <label className="check-field compact filter-toggle" title="Exibe eventos pessoais do Google Agenda conectado">
+          <input
+            type="checkbox"
+            checked={showPersonalCalendar}
+            onChange={(event) => setShowPersonalCalendar(event.target.checked)}
+          />
+          Eventos do Google
+        </label>
+      ) : null}
       <button
         className="button"
         type="button"
-        onClick={() => { setProfessionalFilter(''); setStatusFilter(''); setUnitFilter(''); }}
+        onClick={() => {
+          setProfessionalFilter('');
+          setStatusFilter('');
+          setUnitFilter('');
+          setShowPersonalCalendar(false);
+        }}
       >Limpar filtros</button>
     </div>
   ) : null;
@@ -271,26 +592,10 @@ export function AgendaView() {
     setStatusSaving(true);
     setFormError('');
     try {
-      const reminders = list(selectedAppointment.reminders);
-      const reminderLeads = reminders
-        .map((item) => Number(item.leadMinutes))
-        .filter((value) => Number.isFinite(value) && value > 0);
-      await api.put(`/appointments/${String(selectedAppointment.id)}`, {
-        clinicId,
-        unitId: String(selectedAppointment.unitId),
-        patientId: String(selectedAppointment.patientId),
-        professionalId: String(selectedAppointment.professionalId),
-        chairId: String(selectedAppointment.chairId ?? '') || undefined,
+      await persistAppointment(selectedAppointment, {
         startAt: String(selectedAppointment.startAt),
         endAt: String(selectedAppointment.endAt),
         status,
-        notes: text(selectedAppointment.notes, '') || undefined,
-        tagIds: list(selectedAppointment.tags)
-          .map((item) => String(nested(item, 'tag').id || item.tagId || ''))
-          .filter(Boolean),
-        reminderEnabled: reminders.length > 0,
-        // Espelha o form de save: nunca enviar []. Sem leads → 1440.
-        reminderLeadMinutes: reminderLeads.length ? reminderLeads : 1440,
       });
       setSelectedAppointment({ ...selectedAppointment, status });
       load();
@@ -305,7 +610,11 @@ export function AgendaView() {
     event.preventDefault();
     if (!selectedAppointment) return;
     if (!editingAppointment) {
+      setEditUnitId(String(selectedAppointment.unitId ?? ''));
+      setEditChairId(text(selectedAppointment.chairId, ''));
       setEditingAppointment(true);
+      setPersonalWarning('');
+      setAcknowledgePersonalWarning(false);
       return;
     }
     const data = new FormData(event.currentTarget);
@@ -313,25 +622,52 @@ export function AgendaView() {
     const duration = Number(data.get('duration'));
     const endAt = new Date(new Date(startAt).getTime() + duration * 60_000).toISOString();
     const reminderLeads = data.getAll('reminderLeadMinutes').map(Number).filter((value) => Number.isFinite(value) && value > 0);
+    const unitId = String(data.get('unitId') || editUnitId || selectedAppointment.unitId);
+    const chairId = String(data.get('chairId') ?? editChairId ?? '') || undefined;
+    const professionalId = String(data.get('professionalId'));
     setSaving(true);
     setFormError('');
     try {
-      await api.put(`/appointments/${String(selectedAppointment.id)}`, {
-        clinicId,
-        unitId: String(data.get('unitId') || selectedAppointment.unitId),
+      const payload = {
+        clinicId: appointmentClinicId(selectedAppointment),
+        unitId,
         patientId: String(selectedAppointment.patientId),
-        professionalId: String(data.get('professionalId')),
-        chairId: String(data.get('chairId') ?? '') || undefined,
+        professionalId,
+        chairId,
+        startAt,
+        endAt,
+      };
+      const check = await checkAppointmentSlot(payload, {
+        excludeAppointmentId: String(selectedAppointment.id),
+        allowPersonalWarning: acknowledgePersonalWarning,
+      });
+      if (check.blocked) {
+        setPersonalWarning('');
+        setAcknowledgePersonalWarning(false);
+        setFormError('O horário selecionado está em conflito com outro agendamento.');
+        return;
+      }
+      if (check.personalMessage) {
+        setPersonalWarning(check.personalMessage);
+        setAcknowledgePersonalWarning(true);
+        return;
+      }
+      await persistAppointment(selectedAppointment, {
+        unitId,
+        professionalId,
+        chairId: chairId ?? null,
         startAt,
         endAt,
         status: String(data.get('status')),
         notes: String(data.get('notes') ?? '').trim() || undefined,
-        tagIds: data.getAll('tagIds').map(String),
+        tagIds: data.getAll('tagIds').map(String).filter(Boolean),
         reminderEnabled: data.get('reminderEnabled') === 'on',
         reminderLeadMinutes: reminderLeads.length ? reminderLeads : 1440,
       });
       setSelectedAppointment(null);
       setEditingAppointment(false);
+      setPersonalWarning('');
+      setAcknowledgePersonalWarning(false);
       load();
     } catch (cause) {
       setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível atualizar o agendamento.');
@@ -387,7 +723,7 @@ export function AgendaView() {
           tone={cancelled ? 'red' : 'green'}
         />
       </section>
-      <Modal open={formOpen} title="Novo agendamento" description="Crie a consulta sem sair da agenda." onClose={() => setFormOpen(false)} size="large">
+      <Modal open={formOpen} title="Novo agendamento" description="Crie a consulta sem sair da agenda." onClose={() => setFormOpen(false)} confirmOnClose size="large">
         <ModuleActions
           module="agenda"
           clinicId={clinicId}
@@ -403,7 +739,14 @@ export function AgendaView() {
         open={Boolean(selectedAppointment)}
         title="Detalhes do agendamento"
         description={editingAppointment ? 'Edite horário, profissional, etiquetas e lembretes.' : 'Visualização do agendamento. Status pode ser alterado a qualquer momento.'}
-        onClose={() => { setSelectedAppointment(null); setFormError(''); setEditingAppointment(false); }}
+        onClose={() => {
+          setSelectedAppointment(null);
+          setFormError('');
+          setEditingAppointment(false);
+          setPersonalWarning('');
+          setAcknowledgePersonalWarning(false);
+        }}
+        confirmCloseMessage={editingAppointment ? 'Há edição em andamento. Descartar e fechar?' : undefined}
         size="large"
       >
         {selectedAppointment ? (
@@ -436,7 +779,7 @@ export function AgendaView() {
 
             {editingAppointment ? (
               <>
-                <label>Início<input name="startAt" type="datetime-local" required defaultValue={new Date(String(selectedAppointment.startAt)).toISOString().slice(0, 16)} /></label>
+                <label>Início<input name="startAt" type="datetime-local" required defaultValue={toDatetimeLocalValue(selectedAppointment.startAt)} /></label>
                 <label>Duração (min)
                   <select
                     name="duration"
@@ -450,11 +793,29 @@ export function AgendaView() {
                     ))}
                   </select>
                 </label>
-                <SearchableSelect name="professionalId" label="Profissional" defaultValue={String(selectedAppointment.professionalId)} options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
+                <SearchableSelect name="professionalId" label="Profissional" required defaultValue={String(selectedAppointment.professionalId)} options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
                 {!hideUnitChair ? (
                   <>
-                    <SearchableSelect name="unitId" label="Unidade" defaultValue={String(selectedAppointment.unitId)} options={units.map((item) => ({ value: item.id, label: item.name }))} />
-                    <SearchableSelect name="chairId" label="Cadeira" defaultValue={text(selectedAppointment.chairId, '')} placeholder="Sem cadeira" options={chairs.map((item) => ({ value: item.id, label: item.name }))} />
+                    <SearchableSelect
+                      name="unitId"
+                      label="Unidade"
+                      required
+                      value={editUnitId}
+                      onChange={(next) => {
+                        setEditUnitId(next);
+                        const chairStillValid = chairs.some((chair) => chair.id === editChairId && chair.unitId === next);
+                        if (!chairStillValid) setEditChairId('');
+                      }}
+                      options={units.map((item) => ({ value: item.id, label: item.name }))}
+                    />
+                    <SearchableSelect
+                      name="chairId"
+                      label="Cadeira"
+                      value={editChairId}
+                      onChange={setEditChairId}
+                      placeholder="Sem cadeira"
+                      options={editChairOptions}
+                    />
                   </>
                 ) : (
                   <>
@@ -483,7 +844,7 @@ export function AgendaView() {
                   placeholder="Selecionar antecedências"
                 />
                 {list(selectedAppointment.reminders).some((item) => item.status === 'DISABLED') ? (
-                  <p className="form-error span-2">Evolution não configurado: lembrete salvo, mas não ativo.</p>
+                  <p className="form-error span-2">WhatsApp ainda não está configurado: o lembrete foi salvo, mas não será enviado até a integração estar ativa.</p>
                 ) : null}
               </>
             ) : (
@@ -513,12 +874,29 @@ export function AgendaView() {
 
             <div className="modal-footer span-2">
               {editingAppointment ? (
-                <button type="button" className="button soft" onClick={() => setEditingAppointment(false)}>Cancelar edição</button>
+                <button
+                  type="button"
+                  className="button soft"
+                  onClick={() => {
+                    setEditingAppointment(false);
+                    setPersonalWarning('');
+                    setAcknowledgePersonalWarning(false);
+                  }}
+                >Cancelar edição</button>
               ) : null}
               <button className="button primary" disabled={saving}>
-                {editingAppointment ? (saving ? 'Salvando…' : 'Salvar alterações') : 'Editar agendamento'}
+                {editingAppointment
+                  ? (saving ? 'Salvando…' : (acknowledgePersonalWarning ? 'Salvar mesmo assim' : 'Salvar alterações'))
+                  : 'Editar agendamento'}
               </button>
             </div>
+            {personalWarning ? (
+              <div className="secure-notice form-warning span-2" role="status">
+                <strong>Aviso da agenda pessoal</strong>
+                <span>{personalWarning}</span>
+                <span>Clique novamente em “Salvar mesmo assim” para confirmar.</span>
+              </div>
+            ) : null}
             {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
           </form>
         ) : null}
@@ -585,52 +963,199 @@ export function AgendaView() {
           <div className="week-scroll">
             <div
               className="week-board"
-              style={{ ['--week-columns' as string]: String(columns.length) }}
+              style={{
+                ['--week-columns' as string]: String(columns.length),
+                ['--slot-height' as string]: `${SLOT_HEIGHT_PX}px`,
+                ['--hour-count' as string]: String(hourCount),
+              }}
             >
-              <div className="week-head" />
-              {columns.map((column) => (
-                <div key={column.key} className={`week-head ${column.active ? 'active' : ''}`}>
-                  {column.label}
-                  <small>{column.detail}</small>
+              <div className="week-heads">
+                <div className="week-head" />
+                {columns.map((column) => (
+                  <div key={column.key} className={`week-head ${column.active ? 'active' : ''}`}>
+                    {column.label}
+                    <small>{column.detail}</small>
+                  </div>
+                ))}
+              </div>
+              <div className="week-timeline">
+                <div className="hour-rail" aria-hidden="true">
+                  {hours.map((hour) => (
+                    <div key={hour} className="hour">{String(hour).padStart(2, '0')}:00</div>
+                  ))}
                 </div>
-              ))}
-              {hours.map((hour) => (
-                <div key={hour} style={{ display: 'contents' }}>
-                  <div className="hour">{String(hour).padStart(2, '0')}:00</div>
-                  {columns.map((column) => {
-                    const slot = visible.filter((item) => {
-                      const start = new Date(String(item.startAt));
-                      return start.getHours() === hour && column.match(item);
-                    });
-                    return (
-                      <div key={column.key} className={`day-slot ${column.active ? 'active' : ''}`}>
-                        {slot.map((item) => {
+                {columns.map((column, columnIndex) => {
+                  const columnDate = 'date' in column && column.date instanceof Date
+                    ? column.date
+                    : startOfDay(reference);
+                  const dayRule = ruleForWeekday(businessHours, columnDate.getDay());
+                  const outsideDay = !isBusinessWeekday(businessHours, columnDate);
+                  const dayStartHour = dayRule
+                    ? hourFromHm(dayRule.start, businessStartHour)
+                    : businessStartHour;
+                  const dayEndHour = dayRule
+                    ? hourFromHm(dayRule.end, businessEndHour)
+                    : businessEndHour;
+                  const columnItems = visible.filter((item) => column.match(item));
+                  const columnPersonal = showPersonalCalendar
+                    ? personalEvents.filter((event) => {
+                        const eventDay = new Date(String(event.startAt));
+                        if (!sameDay(eventDay, columnDate)) return false;
+                        // Em vistas com várias colunas no mesmo dia, evita duplicar o mesmo evento.
+                        if (mode !== 'week' && columnIndex > 0) return false;
+                        return true;
+                      })
+                    : [];
+                  const layouts = layoutColumnEvents(
+                    [...columnItems, ...columnPersonal],
+                    gridStartHour,
+                    hourCount,
+                  );
+
+                  const onColumnDragOver = (event: DragEvent<HTMLDivElement>) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'move';
+                  };
+
+                  const onColumnDrop = (event: DragEvent<HTMLDivElement>) => {
+                    event.preventDefault();
+                    const appointmentId = event.dataTransfer.getData('text/plain');
+                    const item = visible.find((entry) => String(entry.id) === appointmentId);
+                    if (!item) return;
+                    skipNextEventClickRef.current = true;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const { hour, minutes } = snapMinutesFromY(
+                      event.clientY,
+                      rect.top,
+                      gridStartHour,
+                      hourCount,
+                    );
+                    void dropAppointment(item, column, hour, minutes);
+                  };
+
+                  return (
+                    <div
+                      key={column.key}
+                      className={`day-column ${column.active ? 'active' : ''} ${outsideDay ? 'outside-hours' : ''}`.trim()}
+                      onDragOver={onColumnDragOver}
+                      onDrop={onColumnDrop}
+                    >
+                      <div className="day-slots">
+                        {hours.map((hour) => {
+                          const outsideHour = outsideDay
+                            || !isWithinBusinessHourRange(hour, dayStartHour, dayEndHour);
+                          return (
+                            <div
+                              key={hour}
+                              className={`day-slot ${outsideHour ? 'outside-hours' : ''}`.trim()}
+                            />
+                          );
+                        })}
+                      </div>
+                      <div className="day-events">
+                        {layouts.map(({ item, top, height, lane, laneCount }) => {
+                          const isPersonal = item.source === 'google_personal';
+                          const widthPct = 100 / laneCount;
+                          const leftPct = lane * widthPct;
+                          const isCompact = height < 40;
+                          const isTiny = height < 28;
+                          const style = {
+                            top,
+                            height,
+                            left: `calc(${leftPct}% + 2px)`,
+                            width: `calc(${widthPct}% - 4px)`,
+                            ['--event-h' as string]: `${height}px`,
+                          };
+
+                          if (isPersonal) {
+                            const summary = text(item.summary, 'Evento pessoal');
+                            const label = `${timeOnly(item.startAt)} · Pessoal · ${summary}`;
+                            return (
+                              <div
+                                key={`personal-${String(item.id)}`}
+                                className={`event personal ${isCompact ? 'event-compact' : ''} ${isTiny ? 'event-tiny' : ''}`.trim()}
+                                title={label}
+                                aria-label={label}
+                                style={style}
+                              >
+                                <small>{isCompact ? `${timeOnly(item.startAt)} · Pessoal` : `${timeOnly(item.startAt)} · Google`}</small>
+                                <strong className={isCompact ? 'event-secondary' : undefined}>{summary}</strong>
+                                <span className="event-extra">Agenda pessoal</span>
+                              </div>
+                            );
+                          }
+
                           const patient = nested(item, 'patient');
                           const professional = nested(item, 'professional');
                           const status = String(item.status);
                           const tone = appointmentEventTone(status);
                           const isCancelled = ['CANCELLED', 'NO_SHOW'].includes(status);
                           const statusLabel = statusLabels[status] ?? text(status);
-                          const label = `${timeOnly(item.startAt)} ${text(patient.fullName, 'Paciente')} · ${text(professional.name)} · ${statusLabel}`;
+                          const patientName = text(patient.fullName, 'Paciente');
+                          const professionalName = text(professional.name, 'Profissional');
+                          const label = `${timeOnly(item.startAt)} ${patientName} · ${professionalName} · ${statusLabel}`;
                           return (
                             <button
                               key={String(item.id)}
                               type="button"
-                              className={`event ${tone} ${isCancelled ? 'cancelled' : ''}`.trim()}
+                              className={`event ${tone} ${isCancelled ? 'cancelled' : ''} ${isCompact ? 'event-compact' : ''} ${isTiny ? 'event-tiny' : ''}`.trim()}
                               title={label}
                               aria-label={label}
-                              onClick={() => { setSelectedAppointment(item); setEditingAppointment(false); setFormError(''); }}
+                              draggable={!isCancelled}
+                              style={style}
+                              onDragStart={(event) => {
+                                event.dataTransfer.setData('text/plain', String(item.id));
+                                event.dataTransfer.effectAllowed = 'move';
+                              }}
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = 'move';
+                              }}
+                              onDrop={(event) => {
+                                // Repassa ao handler da coluna (Y → horário).
+                                event.preventDefault();
+                                event.stopPropagation();
+                                const columnEl = event.currentTarget.closest('.day-column');
+                                if (!(columnEl instanceof HTMLElement)) return;
+                                const appointmentId = event.dataTransfer.getData('text/plain');
+                                const dropped = visible.find((entry) => String(entry.id) === appointmentId);
+                                if (!dropped) return;
+                                skipNextEventClickRef.current = true;
+                                const rect = columnEl.getBoundingClientRect();
+                                const { hour, minutes } = snapMinutesFromY(
+                                  event.clientY,
+                                  rect.top,
+                                  gridStartHour,
+                                  hourCount,
+                                );
+                                void dropAppointment(dropped, column, hour, minutes);
+                              }}
+                              onDragEnd={() => {
+                                window.setTimeout(() => { skipNextEventClickRef.current = false; }, 0);
+                              }}
+                              onClick={() => {
+                                if (skipNextEventClickRef.current) {
+                                  skipNextEventClickRef.current = false;
+                                  return;
+                                }
+                                openAppointment(item);
+                              }}
                             >
-                              <small>{timeOnly(item.startAt)} · {statusLabel}</small>
-                              <strong>{text(patient.fullName, 'Paciente')}</strong>
+                              <small>
+                                {isCompact
+                                  ? `${timeOnly(item.startAt)} · ${patientName}`
+                                  : `${timeOnly(item.startAt)} · ${statusLabel}`}
+                              </small>
+                              <strong className={isCompact ? 'event-secondary' : undefined}>{patientName}</strong>
+                              <span className="event-extra">{isCompact ? `${statusLabel} · ${professionalName}` : professionalName}</span>
                             </button>
                           );
                         })}
                       </div>
-                    );
-                  })}
-                </div>
-              ))}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
@@ -641,6 +1166,12 @@ export function AgendaView() {
               {statusLabels[status]}
             </span>
           ))}
+          {showPersonalCalendar ? (
+            <span>
+              <i className="legend-swatch personal" />
+              Agenda pessoal (Google)
+            </span>
+          ) : null}
         </div>
       </Panel>
       ) : (
@@ -689,7 +1220,7 @@ export function AgendaView() {
                           <button
                             className="button small"
                             type="button"
-                            onClick={() => { setSelectedAppointment(item); setEditingAppointment(false); setFormError(''); }}
+                            onClick={() => openAppointment(item)}
                           >Detalhes</button>
                         ) : null}
                       </td>

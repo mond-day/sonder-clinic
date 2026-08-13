@@ -6,8 +6,7 @@ import {
   CalendarDays,
   ChartNoAxesCombined,
   CheckSquare,
-  ChevronLeft,
-  ChevronRight,
+  ChevronUp,
   CircleDollarSign,
   FlaskConical,
   LayoutDashboard,
@@ -23,7 +22,7 @@ import {
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import { initials, list, text, type RecordValue } from '@/lib/format';
+import { initials, list, formatPhone, text, type RecordValue } from '@/lib/format';
 import { useAuth } from './auth-provider';
 import { NotificationsDrawer } from './notifications-drawer';
 import { useSelection } from './selection-provider';
@@ -86,12 +85,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<RecordValue[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const searchWrapRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
 
   const badgeCounts = useMemo<Record<NavBadge, number>>(() => ({
     returns: returnSummary ? returnSummary.overdue + returnSummary.today : 0,
@@ -104,6 +105,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toggleCollapsed = useCallback(() => {
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 860px)').matches) {
+      return;
+    }
     setCollapsed((current) => {
       const next = !current;
       window.localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0');
@@ -122,7 +126,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         searchRef.current?.focus();
         setSearchOpen(true);
       }
-      if (event.key === 'Escape') setSearchOpen(false);
+      if (event.key === 'Escape') {
+        setSearchOpen(false);
+        setProfileOpen(false);
+      }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -136,6 +143,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [searchOpen]);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [profileOpen]);
 
   useEffect(() => {
     if (!clinicId || query.trim().length < 2) {
@@ -220,23 +236,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="app-sidebar">
         <div className="sidebar-top">
           <div className="brand">
-            <span className="brand-mark">S</span>
+            <button
+              type="button"
+              className="brand-mark"
+              onClick={toggleCollapsed}
+              aria-expanded={!collapsed}
+              aria-controls="app-sidebar"
+              aria-label={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
+              title={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
+            >
+              S
+            </button>
             <div className="brand-text">
               <strong>Sonder Clinic</strong>
-              <small>Workspace clínico</small>
+              <small>Gestão odontológica</small>
             </div>
           </div>
-          <button
-            className="sidebar-toggle"
-            type="button"
-            onClick={toggleCollapsed}
-            aria-expanded={!collapsed}
-            aria-controls="app-sidebar"
-            aria-label={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
-            title={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
-          >
-            {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-          </button>
         </div>
         <div className="clinic-switch">
           <small>Unidade ativa</small>
@@ -288,15 +303,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <button type="button" onClick={() => setAlertsOpen(true)}>Abrir central de alertas</button>
           </div>
         )}
-        <div className="profile">
-          <span className="avatar">{userInitials}</span>
-          <div className="profile-text">
-            <strong>{user.name}</strong>
-            <small>{user.permissions.includes('organization.manage') ? 'Administrador' : 'Usuário'}</small>
-          </div>
-          <button className="row-menu" aria-label="Sair" title="Sair" onClick={() => void logout()}>
-            <LogOut size={16} />
+        <div className={`profile ${profileOpen ? 'open' : ''}`} ref={profileRef}>
+          <button
+            type="button"
+            className="profile-trigger"
+            aria-haspopup="menu"
+            aria-expanded={profileOpen}
+            aria-label="Menu do usuário"
+            onClick={() => setProfileOpen((current) => !current)}
+          >
+            <span className="avatar">{userInitials}</span>
+            <div className="profile-text">
+              <strong>{user.name}</strong>
+              <small>{user.permissions.includes('organization.manage') ? 'Administrador' : 'Usuário'}</small>
+            </div>
+            <ChevronUp size={14} className={`profile-chevron ${profileOpen ? 'open' : ''}`} aria-hidden />
           </button>
+          {profileOpen ? (
+            <div className="profile-menu" role="menu">
+              <div className="profile-menu-identity">
+                <strong>{user.name}</strong>
+                <small>{user.email || (user.permissions.includes('organization.manage') ? 'Administrador' : 'Usuário')}</small>
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                className="profile-menu-item"
+                onClick={() => {
+                  setProfileOpen(false);
+                  void logout();
+                }}
+              >
+                <LogOut size={15} />
+                Sair
+              </button>
+            </div>
+          ) : null}
         </div>
       </aside>
 
@@ -352,7 +394,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     <span className="avatar">{initials(item.fullName)}</span>
                     <div>
                       <strong>{text(item.fullName)}</strong>
-                      <span>{text(item.primaryPhone)}</span>
+                      <span>
+                        {String(item._kind) === 'patient'
+                          ? formatPhone(item.primaryPhone)
+                          : text(item.primaryPhone)}
+                      </span>
                     </div>
                   </button>
                 ))}

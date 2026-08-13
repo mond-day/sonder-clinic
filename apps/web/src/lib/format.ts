@@ -32,6 +32,31 @@ export const timeOnly = (value: unknown) =>
     ? new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(String(value)))
     : '—';
 
+/** Valor local para `<input type="datetime-local">` (evita deslocar horário via toISOString/UTC). */
+export function toDatetimeLocalValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '';
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** Valor local para `<input type="date">`. */
+export function toDateInputValue(value: unknown = new Date()) {
+  if (value === null || value === undefined || value === '') return '';
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** Converte `YYYY-MM-DD` para ISO ao meio-dia local, evitando virar o dia anterior em UTC. */
+export function dateInputToIso(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return undefined;
+  return `${trimmed}T12:00:00`;
+}
+
 export function initials(name: unknown) {
   return text(name, '?')
     .split(' ')
@@ -42,10 +67,90 @@ export function initials(name: unknown) {
     .toUpperCase();
 }
 
+/** CPF completo: xxx.xxx.xxx-xx */
+export function formatCpf(cpf: unknown) {
+  const digits = String(cpf ?? '').replace(/\D/g, '');
+  if (!digits) return '—';
+  if (digits.length !== 11) return digits;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+}
+
+/** Máscara progressiva de CPF para inputs (`xxx.xxx.xxx-xx`). */
+export function maskCpfInput(value: unknown) {
+  const digits = String(value ?? '').replace(/\D/g, '').slice(0, 11);
+  if (!digits) return '';
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+}
+
+/** Dígitos de CPF para envio à API. */
+export function cpfDigits(value: unknown) {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+/** Menor de 18 anos a partir de `YYYY-MM-DD` (ou ISO). */
+export function isMinorFromBirthDate(birthDate: unknown, today = new Date()) {
+  if (!birthDate) return false;
+  const raw = String(birthDate).slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!match) return false;
+  const birth = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (Number.isNaN(birth.getTime())) return false;
+  const eighteenth = new Date(birth.getFullYear() + 18, birth.getMonth(), birth.getDate());
+  const day = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return day < eighteenth;
+}
+
+/** CPF parcialmente oculto: •••.xxx.***-** */
 export function maskCpf(cpf: unknown) {
   const digits = String(cpf ?? '').replace(/\D/g, '');
   if (digits.length !== 11) return digits ? '•••.***.***-••' : '—';
   return `•••.${digits.slice(3, 6)}.***-**`;
+}
+
+/**
+ * Telefone para exibição:
+ * - (xx) xxxx-xxxx
+ * - (xx) xxxxx-xxxx
+ * - +xx (xx) xxxxx-xxxx quando houver DDI
+ */
+export function formatPhone(phone: unknown) {
+  const raw = String(phone ?? '').trim();
+  if (!raw) return '—';
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return '—';
+
+  let country = '';
+  let national = digits;
+
+  if (raw.startsWith('+') || digits.length > 11) {
+    if (digits.startsWith('55') && digits.length >= 12) {
+      country = '+55';
+      national = digits.slice(2);
+    } else {
+      const nationalLen = digits.length >= 13 ? 11 : 10;
+      const countryDigits = digits.slice(0, Math.max(0, digits.length - nationalLen));
+      if (countryDigits) {
+        country = `+${countryDigits}`;
+        national = digits.slice(countryDigits.length);
+      }
+    }
+  }
+
+  let local = national;
+  if (national.length === 11) {
+    local = `(${national.slice(0, 2)}) ${national.slice(2, 7)}-${national.slice(7)}`;
+  } else if (national.length === 10) {
+    local = `(${national.slice(0, 2)}) ${national.slice(2, 6)}-${national.slice(6)}`;
+  } else if (national.length >= 8) {
+    return country ? `${country} ${national}` : national;
+  } else {
+    return raw;
+  }
+
+  return country ? `${country} ${local}` : local;
 }
 
 export function ageLabel(birthDate: unknown) {
@@ -57,6 +162,54 @@ export function ageLabel(birthDate: unknown) {
   const month = now.getMonth() - birth.getMonth();
   if (month < 0 || (month === 0 && now.getDate() < birth.getDate())) age -= 1;
   return `${age} anos`;
+}
+
+/** Dias até o próximo aniversário (0 = hoje). */
+export function daysUntilBirthday(birthDate: unknown): number | null {
+  if (!birthDate) return null;
+  const raw = String(birthDate).slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  const birth = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(String(birthDate));
+  if (Number.isNaN(birth.getTime())) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let next = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
+  if (next < today) next = new Date(today.getFullYear() + 1, birth.getMonth(), birth.getDate());
+  return Math.round((next.getTime() - today.getTime()) / 86_400_000);
+}
+
+/** Máscara progressiva de telefone BR para inputs (mantém só dígitos úteis). */
+export function maskPhoneInput(value: unknown) {
+  const digits = String(value ?? '').replace(/\D/g, '').slice(0, 13);
+  if (!digits) return '';
+  let country = '';
+  let national = digits;
+  if (digits.startsWith('55') && digits.length > 11) {
+    country = '+55 ';
+    national = digits.slice(2, 13);
+  } else {
+    national = digits.slice(0, 11);
+  }
+  if (national.length <= 2) return `${country}(${national}`;
+  if (national.length <= 6) return `${country}(${national.slice(0, 2)}) ${national.slice(2)}`;
+  if (national.length <= 10) {
+    return `${country}(${national.slice(0, 2)}) ${national.slice(2, 6)}-${national.slice(6)}`;
+  }
+  return `${country}(${national.slice(0, 2)}) ${national.slice(2, 7)}-${national.slice(7)}`;
+}
+
+/** Dígitos de telefone para envio à API. */
+export function phoneDigits(value: unknown) {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+/** Máscara de CEP `00000-000`. */
+export function formatPostalCode(value: unknown) {
+  const digits = String(value ?? '').replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 5) return digits;
+  return `${digits.slice(0, 5)}-${digits.slice(5)}`;
 }
 
 export function hasPermission(permissions: string[] | undefined, ...required: string[]) {

@@ -7,6 +7,7 @@ import { Eye, MoreHorizontal, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import {
   dateOnly,
+  formatPhone,
   initials,
   list,
   text,
@@ -195,7 +196,7 @@ export function PatientsBrowser() {
     <>
       <PageHeader
         title="Pacientes"
-        description="Pesquise primeiro. O prontuário abre em uma tela exclusiva, sem expor outros pacientes."
+        description="Encontre pacientes e acesse rapidamente seus dados e prontuário."
         actions={
           <>
             <button className="button secondary" type="button" onClick={load} disabled={loading}>
@@ -215,9 +216,10 @@ export function PatientsBrowser() {
       <Modal
         open={formOpen}
         title={modalTitle}
-        description={editingPatientId ? 'Atualize o cadastro sem sair da lista.' : 'Cadastre o paciente com validação antes do envio.'}
+        description={editingPatientId ? 'Revise e atualize os dados do paciente.' : 'Preencha os dados para cadastrar o paciente.'}
         onClose={closePatientModal}
         size="large"
+        confirmOnClose
       >
         <ModuleActions
           module="pacientes"
@@ -232,7 +234,7 @@ export function PatientsBrowser() {
       </Modal>
       <Panel
         title="Pesquisa de pacientes"
-        description={`${visible.length} ${visible.length === 1 ? 'paciente' : 'pacientes'} · dados combinados de agenda, tratamentos, retornos e financeiro`}
+        description={`${visible.length} ${visible.length === 1 ? 'paciente encontrado' : 'pacientes encontrados'}`}
       >
         <div className="filters">
           <input
@@ -288,7 +290,7 @@ export function PatientsBrowser() {
                           </div>
                         </div>
                       </td>
-                      <td>{text(patient.primaryPhone)}</td>
+                      <td>{formatPhone(patient.primaryPhone)}</td>
                       <td>{row.lastVisit ? dateOnly(row.lastVisit) : 'Primeiro contato'}</td>
                       <td>{row.treatment}</td>
                       <td>{nextActionLabel(row.nextAppointment, row.pendingReturn)}</td>

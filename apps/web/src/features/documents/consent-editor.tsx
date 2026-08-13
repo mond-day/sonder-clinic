@@ -121,9 +121,10 @@ export function ConsentEditor({
     <Modal
       open={open}
       title="Termo / consentimento"
-      description="Editor dedicado — conteúdo clínico congelado com identidade no servidor."
+      description="Editor dedicado — o conteúdo fica registrado com a identidade do paciente e do profissional."
       onClose={onClose}
       size="large"
+      confirmOnClose
     >
       <form className="mutation-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>

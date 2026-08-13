@@ -39,6 +39,12 @@ export const sessionSchema = z.object({
   executionNotes: z.string().trim().min(2, 'Descreva a sessão.'),
   complications: z.string().trim().optional(),
   allowExtraSession: z.boolean().optional(),
+  completedAt: z.string().optional(),
+});
+
+export const completeItemSchema = z.object({
+  clinicalDate: z.string().min(10, 'Informe a data da conclusão.'),
+  notes: z.string().trim().optional(),
 });
 
 export const cancelReasonSchema = z.object({

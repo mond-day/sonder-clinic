@@ -6,6 +6,7 @@ import {
   Building2,
   CircleDollarSign,
   ClipboardList,
+  Clock3,
   Eye,
   FileText,
   FlaskConical,
@@ -14,6 +15,7 @@ import {
   Palette,
   Pencil,
   Pill,
+  Plus,
   Plug,
   Power,
   RefreshCcw,
@@ -21,9 +23,19 @@ import {
   ShieldCheck,
   Stethoscope,
   Tag,
+  Trash2,
   KeyRound,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import {
+  DEFAULT_BUSINESS_HOURS,
+  WEEKDAY_OPTIONS,
+  createEmptyBusinessHoursRule,
+  formatWeekdaysLabel,
+  normalizeBusinessHours,
+  validateBusinessHoursDraft,
+  type BusinessHours,
+} from '@/lib/business-hours';
 import { formatDnSummary } from '@/lib/dn-parse';
 import { currency, dateOnly, initials, list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { AnamnesisTemplateEditor } from '@/features/anamnesis/template-editor';
@@ -53,6 +65,7 @@ type SectionKey =
   | 'medications'
   | 'exams'
   | 'units'
+  | 'businessHours'
   | 'duplicates'
   | 'procedures'
   | 'returns'
@@ -64,7 +77,7 @@ type SectionKey =
   | 'certificate'
   | 'legal';
 
-type ConfigModal = 'branding' | 'integration' | 'tags' | 'certificate' | 'procedure' | 'unit' | 'chair' | 'automation' | null;
+type ConfigModal = 'branding' | 'businessHours' | 'integration' | 'tags' | 'certificate' | 'procedure' | 'unit' | 'chair' | 'automation' | null;
 
 const sections: Array<{
   key: SectionKey;
@@ -73,17 +86,18 @@ const sections: Array<{
   icon: typeof Building2;
 }> = [
   { key: 'overview', label: 'Visão geral', description: 'Todas as áreas de configuração da clínica.', icon: ShieldCheck },
-  { key: 'anamnesis', label: 'Modelos de anamnese', description: 'Crie, revise, publique e versione formulários clínicos.', icon: ClipboardList },
+  { key: 'anamnesis', label: 'Modelos de anamnese', description: 'Gerencie os modelos de anamnese utilizados nos atendimentos.', icon: ClipboardList },
   { key: 'medications', label: 'Medicamentos e protocolos', description: 'Catálogo para agilizar prescrições com revisão clínica.', icon: Pill },
   { key: 'exams', label: 'Tipos de exame', description: 'Catálogo editável usado nas solicitações.', icon: FlaskConical },
   { key: 'units', label: 'Unidades e cadeiras', description: 'Estrutura física, cadeiras e profissionais ativos.', icon: Building2 },
-  { key: 'duplicates', label: 'Pacientes duplicados', description: 'Saneamento cadastral assistido com preview de merge.', icon: ClipboardList },
+  { key: 'businessHours', label: 'Horário comercial', description: 'Dias e horas de atendimento usados na grade da agenda.', icon: Clock3 },
+  { key: 'duplicates', label: 'Pacientes duplicados', description: 'Revise e una cadastros duplicados com segurança.', icon: ClipboardList },
   { key: 'procedures', label: 'Procedimentos', description: 'Catálogo clínico que alimenta agenda e planos.', icon: Stethoscope },
   { key: 'returns', label: 'Retornos automáticos', description: 'Fila de contato e regras de retorno pós-atendimento.', icon: RefreshCcw },
   { key: 'finance', label: 'Financeiro e comissões', description: 'Contas, categorias, taxas e regras de repasse.', icon: CircleDollarSign },
   { key: 'communication', label: 'Comunicação', description: 'Entregas, confirmações e lembretes enviados.', icon: MessageSquare },
   { key: 'integrations', label: 'Integrações', description: 'Provedores externos, status e sincronização.', icon: Plug },
-  { key: 'branding', label: 'Identidade visual', description: 'Nome, cores e logotipo do tenant.', icon: Palette },
+  { key: 'branding', label: 'Identidade visual', description: 'Nome, cores e logotipo da clínica.', icon: Palette },
   { key: 'tags', label: 'Etiquetas', description: 'Cores e nomes para organizar agendamentos.', icon: Tag },
   { key: 'certificate', label: 'Certificado digital', description: 'Status seguro para receitas e atestados.', icon: KeyRound },
   { key: 'legal', label: 'Documentos legais', description: 'Privacidade, uso e consentimento LGPD.', icon: FileText },
@@ -111,6 +125,8 @@ export function SettingsView() {
   const [deliveries, setDeliveries] = useState<RecordValue[]>([]);
   const [integrations, setIntegrations] = useState<RecordValue[]>([]);
   const [branding, setBranding] = useState<RecordValue | null>(null);
+  const [businessHours, setBusinessHours] = useState<BusinessHours>(DEFAULT_BUSINESS_HOURS);
+  const [businessHoursDraft, setBusinessHoursDraft] = useState<BusinessHours>(DEFAULT_BUSINESS_HOURS);
   const [legal, setLegal] = useState<RecordValue[]>([]);
   const [agendaTags, setAgendaTags] = useState<RecordValue[]>([]);
   const [certificate, setCertificate] = useState<RecordValue | null>(null);
@@ -146,17 +162,21 @@ export function SettingsView() {
         .get<{ configured?: RecordValue[]; bootstrap?: RecordValue[] }>('/integrations')
         .catch(() => ({}) as { configured?: RecordValue[]; bootstrap?: RecordValue[] }),
       api.get<RecordValue>(`/settings/branding?clinicId=${clinicId}`).catch(() => null),
+      api.get<BusinessHours>(`/settings/business-hours?clinicId=${clinicId}`).catch(() => DEFAULT_BUSINESS_HOURS),
       api.get<RecordValue[]>(`/settings/legal?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
       api.get<RecordValue[]>(`/settings/agenda-tags?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
       api.get<RecordValue>(`/settings/certificate?clinicId=${clinicId}`).catch(() => null),
       api.get<RecordValue[]>(`/automation-rules?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
     ])
-      .then(([nextProcedures, nextRules, nextDeliveries, nextIntegrations, nextBranding, nextLegal, nextTags, nextCertificate, nextAutomation]) => {
+      .then(([nextProcedures, nextRules, nextDeliveries, nextIntegrations, nextBranding, nextBusinessHours, nextLegal, nextTags, nextCertificate, nextAutomation]) => {
         setProcedures(list(nextProcedures));
         setRules(list(nextRules));
         setDeliveries(list(nextDeliveries));
         setIntegrations([...list(nextIntegrations.configured), ...list(nextIntegrations.bootstrap)]);
         setBranding(nextBranding);
+        const hours = normalizeBusinessHours(nextBusinessHours);
+        setBusinessHours(hours);
+        setBusinessHoursDraft(hours);
         setLegal(list(nextLegal));
         setAgendaTags(list(nextTags));
         setCertificate(nextCertificate);
@@ -235,6 +255,77 @@ export function SettingsView() {
       setFormBusy(false);
     }
   };
+
+  const submitBusinessHours = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!clinicId) return;
+    const validationError = validateBusinessHoursDraft(businessHoursDraft);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
+    setFormBusy(true);
+    setFormError('');
+    try {
+      const result = await api.put<{ businessHours: BusinessHours }>('/settings/business-hours', {
+        clinicId,
+        rules: businessHoursDraft.rules,
+        timezone: businessHoursDraft.timezone,
+      });
+      const hours = normalizeBusinessHours(result.businessHours ?? businessHoursDraft);
+      setBusinessHours(hours);
+      setBusinessHoursDraft(hours);
+      closeConfigModal();
+    } catch (cause) {
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar o horário comercial.');
+    } finally {
+      setFormBusy(false);
+    }
+  };
+
+  function openBusinessHoursModal() {
+    setBusinessHoursDraft(normalizeBusinessHours(businessHours));
+    setFormError('');
+    setConfigModal('businessHours');
+  }
+
+  function updateBusinessHoursRule(
+    index: number,
+    patch: Partial<{ start: string; end: string; weekdays: number[] }>,
+  ) {
+    setBusinessHoursDraft((current) => ({
+      ...current,
+      rules: current.rules.map((rule, ruleIndex) => (ruleIndex === index ? { ...rule, ...patch } : rule)),
+    }));
+  }
+
+  function toggleBusinessWeekday(ruleIndex: number, day: number) {
+    setBusinessHoursDraft((current) => {
+      const rules = current.rules.map((rule, index) => {
+        if (index !== ruleIndex) return rule;
+        const has = rule.weekdays.includes(day);
+        const weekdays = has
+          ? rule.weekdays.filter((item) => item !== day)
+          : [...rule.weekdays, day].sort((a, b) => a - b);
+        return { ...rule, weekdays };
+      });
+      return { ...current, rules };
+    });
+  }
+
+  function addBusinessHoursRule() {
+    setBusinessHoursDraft((current) => ({
+      ...current,
+      rules: [...current.rules, createEmptyBusinessHoursRule()],
+    }));
+  }
+
+  function removeBusinessHoursRule(index: number) {
+    setBusinessHoursDraft((current) => {
+      if (current.rules.length <= 1) return current;
+      return { ...current, rules: current.rules.filter((_, ruleIndex) => ruleIndex !== index) };
+    });
+  }
 
   const toggleAutomation = async (rule: RecordValue) => {
     try {
@@ -434,10 +525,99 @@ export function SettingsView() {
         }
       />
       {error && <div className="secure-notice form-error" role="alert">{error}</div>}
-      <Modal open={configModal === 'branding'} title="Identidade visual" description="Alterações auditadas e aplicadas à clínica. O logotipo é enviado por este formulário." onClose={closeConfigModal}>
+      <Modal open={configModal === 'branding'} title="Identidade visual" description="Alterações auditadas e aplicadas à clínica. O logotipo é enviado por este formulário." onClose={closeConfigModal} confirmOnClose>
         <ModuleActions module="integracoes" configurationKind="branding" clinicId={clinicId} clinics={clinics} professionals={professionals} patients={[]} selectedPatientId="" onPatientChange={() => undefined} onSaved={() => { load(); closeConfigModal(); }} />
       </Modal>
-      <Modal open={configModal === 'integration'} title="Configurar integração" description="Cada provedor tem campos próprios. Credenciais ficam criptografadas e mascaradas na leitura." onClose={closeConfigModal}>
+      <Modal
+        open={configModal === 'businessHours'}
+        title="Horário comercial"
+        description="Várias faixas por dia da semana. Agendamentos fora do horário continuam permitidos."
+        onClose={closeConfigModal}
+        size="large"
+        confirmOnClose
+      >
+        <form className="mutation-form business-hours-form" onSubmit={submitBusinessHours}>
+          <div className="span-2 business-hours-rules">
+            {businessHoursDraft.rules.map((rule, index) => {
+              const takenElsewhere = new Set(
+                businessHoursDraft.rules
+                  .flatMap((item, ruleIndex) => (ruleIndex === index ? [] : item.weekdays)),
+              );
+              return (
+                <div key={index} className="business-hours-rule">
+                  <div className="business-hours-rule-head">
+                    <strong>Regra {index + 1}</strong>
+                    {businessHoursDraft.rules.length > 1 ? (
+                      <button
+                        className="button small"
+                        type="button"
+                        onClick={() => removeBusinessHoursRule(index)}
+                        aria-label={`Remover regra ${index + 1}`}
+                      >
+                        <Trash2 size={14} /> Remover
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="business-hours-rule-fields">
+                    <label>
+                      Início
+                      <input
+                        type="time"
+                        required
+                        value={rule.start}
+                        onChange={(event) => updateBusinessHoursRule(index, { start: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Fim
+                      <input
+                        type="time"
+                        required
+                        value={rule.end}
+                        onChange={(event) => updateBusinessHoursRule(index, { end: event.target.value })}
+                      />
+                    </label>
+                  </div>
+                  <small style={{ display: 'block', marginBottom: 8, color: 'var(--muted)' }}>Dias de atendimento</small>
+                  <div className="weekday-toggle-row" role="group" aria-label={`Dias da regra ${index + 1}`}>
+                    {WEEKDAY_OPTIONS.map((day) => {
+                      const active = rule.weekdays.includes(day.value);
+                      const disabled = !active && takenElsewhere.has(day.value);
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          className={`weekday-toggle ${active ? 'active' : ''} ${disabled ? 'disabled' : ''}`.trim()}
+                          aria-pressed={active}
+                          aria-disabled={disabled}
+                          disabled={disabled}
+                          title={disabled ? 'Dia já usado em outra regra' : undefined}
+                          onClick={() => toggleBusinessWeekday(index, day.value)}
+                        >
+                          {day.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            {businessHoursDraft.rules.length < 7 ? (
+              <button className="button secondary" type="button" onClick={addBusinessHoursRule}>
+                <Plus size={15} /> Adicionar regra
+              </button>
+            ) : null}
+          </div>
+          {formError ? <div className="secure-notice form-error span-2" role="alert">{formError}</div> : null}
+          <div className="modal-footer span-2">
+            <button className="button" type="button" onClick={closeConfigModal} disabled={formBusy}>Cancelar</button>
+            <button className="button primary" type="submit" disabled={formBusy}>
+              {formBusy ? 'Salvando…' : 'Salvar horário'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+      <Modal open={configModal === 'integration'} title="Configurar integração" description="Cada provedor tem campos próprios. As credenciais ficam protegidas e não são exibidas depois de salvas." onClose={closeConfigModal} confirmOnClose>
         <ModuleActions
           key={integrationProviderPrefill ?? 'new'}
           module="integracoes"
@@ -458,7 +638,7 @@ export function SettingsView() {
             <div className="info-item"><small>Provedor</small><strong>{text(viewingIntegration.provider)}</strong></div>
             <div className="info-item"><small>Status</small><strong>{presentationLabel(viewingIntegration.status)}</strong></div>
             <div className="info-item"><small>Escopo</small><strong>{text(viewingIntegration.scopeType ?? viewingIntegration.source, '—')}</strong></div>
-            <div className="info-item"><small>Modo</small><strong>{text(viewingIntegration.mode, 'persistido')}</strong></div>
+            <div className="info-item"><small>Modo</small><strong>{text(viewingIntegration.mode, 'salvo')}</strong></div>
             <div className="info-item"><small>Credenciais</small><strong>{viewingIntegration.credentials && typeof viewingIntegration.credentials === 'object' && (viewingIntegration.credentials as RecordValue).configured ? 'Configuradas' : 'Não configuradas'}</strong></div>
             <div className="info-item"><small>Última sincronização</small><strong>{viewingIntegration.lastSyncAt ? dateOnly(viewingIntegration.lastSyncAt) : '—'}</strong></div>
             {viewingIntegration.configuration && typeof viewingIntegration.configuration === 'object' ? (
@@ -472,14 +652,14 @@ export function SettingsView() {
           </div>
         ) : null}
       </Modal>
-      <Modal open={configModal === 'tags'} title="Nova etiqueta da agenda" description="A categoria clínica permanece separada das etiquetas operacionais." onClose={closeConfigModal} size="small">
+      <Modal open={configModal === 'tags'} title="Nova etiqueta da agenda" description="A categoria clínica permanece separada das etiquetas operacionais." onClose={closeConfigModal} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={createTag}>
           <label>Nome<input name="name" minLength={2} maxLength={40} required autoFocus /></label>
           <label>Cor<input name="color" type="color" defaultValue="#159a96" required /></label>
           <button className="button primary">Criar etiqueta</button>
         </form>
       </Modal>
-      <Modal open={configModal === 'procedure'} title="Novo procedimento" description="Cadastro no catálogo clínico da organização." onClose={closeConfigModal}>
+      <Modal open={configModal === 'procedure'} title="Novo procedimento" description="Cadastro no catálogo clínico da organização." onClose={closeConfigModal} confirmOnClose>
         <form className="mutation-form" onSubmit={createProcedure}>
           <label>Código interno<input name="internalCode" minLength={1} required autoFocus /></label>
           <label>Código TUSS<input name="tussCode" placeholder="Opcional" /></label>
@@ -490,14 +670,14 @@ export function SettingsView() {
           <button className="button primary">Criar procedimento</button>
         </form>
       </Modal>
-      <Modal open={configModal === 'unit'} title="Nova unidade" description="Unidade física vinculada à clínica ativa." onClose={closeConfigModal} size="small">
+      <Modal open={configModal === 'unit'} title="Nova unidade" description="Unidade física vinculada à clínica ativa." onClose={closeConfigModal} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={submitUnit}>
           <label className="span-2">Nome<input value={unitName} onChange={(e) => setUnitName(e.target.value)} minLength={2} required autoFocus /></label>
           {formError ? <p className="state-message error" role="alert">{formError}</p> : null}
           <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : 'Criar unidade'}</button>
         </form>
       </Modal>
-      <Modal open={configModal === 'chair'} title="Nova cadeira" description="Cadeira/consultório vinculada à unidade escolhida." onClose={closeConfigModal} size="small">
+      <Modal open={configModal === 'chair'} title="Nova cadeira" description="Cadeira/consultório vinculada à unidade escolhida." onClose={closeConfigModal} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={submitChair}>
           <label className="span-2">Unidade
             <select value={chairUnitId} onChange={(e) => setChairUnitId(e.target.value)} required>
@@ -512,7 +692,7 @@ export function SettingsView() {
           <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : 'Criar cadeira'}</button>
         </form>
       </Modal>
-      <Modal open={configModal === 'automation'} title="Regra de retorno automático" description="Dispara quando a consulta é marcada como concluída. Respeita o horário permitido da clínica." onClose={closeConfigModal}>
+      <Modal open={configModal === 'automation'} title="Regra de retorno automático" description="Dispara quando a consulta é marcada como concluída. Respeita o horário permitido da clínica." onClose={closeConfigModal} confirmOnClose>
         <form className="mutation-form" onSubmit={submitAutomation}>
           <label className="span-2">Nome da regra<input value={automationName} onChange={(e) => setAutomationName(e.target.value)} minLength={3} required autoFocus /></label>
           <label className="span-2">Motivo do retorno<input value={automationReason} onChange={(e) => setAutomationReason(e.target.value)} minLength={3} required /></label>
@@ -536,6 +716,7 @@ export function SettingsView() {
         description="O arquivo e a senha nunca são expostos ou disponibilizados para download."
         onClose={closeConfigModal}
         size="small"
+        confirmOnClose
       >
         {!certificateEditing ? (
           <>
@@ -568,7 +749,7 @@ export function SettingsView() {
         ) : (
           <>
             <form className="mutation-form" onSubmit={uploadCertificate}>
-              <label className="span-2">Arquivo PKCS#12<input name="file" type="file" accept=".pfx,.p12,application/x-pkcs12" required /></label>
+              <label className="span-2">Arquivo do certificado (.pfx / .p12)<input name="file" type="file" accept=".pfx,.p12,application/x-pkcs12" required /></label>
               <label className="span-2">Senha do certificado<input name="password" type="password" autoComplete="new-password" required /></label>
               <button className="button primary">Validar e armazenar</button>
             </form>
@@ -701,6 +882,44 @@ export function SettingsView() {
                   </div>
                   <Link className="button small" href="/usuarios">Abrir usuários</Link>
                 </div>
+              </div>
+            </Panel>
+          )}
+
+          {section === 'businessHours' && (
+            <Panel
+              title={activeLabel}
+              description="Regras por dia usadas na grade da agenda. Não bloqueia agendamentos fora do horário."
+            >
+              {loading && <div className="state-message">Carregando horário…</div>}
+              {!loading && (
+                <>
+                  <div className="settings-list">
+                    {businessHours.rules.map((rule, index) => (
+                      <div key={`${rule.start}-${rule.end}-${rule.weekdays.join('-')}-${index}`} className="settings-row">
+                        <div>
+                          <strong>{rule.start} – {rule.end}</strong>
+                          <span>{formatWeekdaysLabel(rule.weekdays)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="info-grid" style={{ marginTop: 8 }}>
+                    <div className="info-item"><small>Fuso</small><strong>{businessHours.timezone ?? 'America/Cuiaba'}</strong></div>
+                    <div className="info-item">
+                      <small>Origem</small>
+                      <strong>{businessHours.source === 'tenant' ? 'Configurado na clínica' : 'Padrão do sistema'}</strong>
+                    </div>
+                  </div>
+                </>
+              )}
+              <p className="muted-note" style={{ padding: '0 14px' }}>
+                A agenda amplia a grade automaticamente se houver compromissos fora destas faixas.
+              </p>
+              <div className="modal-footer">
+                <button className="button primary" type="button" onClick={openBusinessHoursModal}>
+                  Editar horário comercial
+                </button>
               </div>
             </Panel>
           )}
@@ -1008,7 +1227,7 @@ export function SettingsView() {
                                 })();
                                 return (
                                   <div className="muted-note" style={{ display: 'grid', gap: 4 }}>
-                                    <span>Provedor: GOOGLE_CALENDAR</span>
+                                    <span>Provedor: Google Agenda</span>
                                     <span>Calendário: {calendarId}</span>
                                     <span>Atualizações automáticas: {expLabel}</span>
                                     {lastError ? <span>Última falha: {lastError}</span> : null}
@@ -1112,7 +1331,7 @@ export function SettingsView() {
           )}
 
           {section === 'branding' && (
-            <Panel title={activeLabel} description="Identidade aplicada ao tenant. Upload de logotipo e cores pelo modal de edição.">
+            <Panel title={activeLabel} description="Personalize o nome, o logotipo e as cores da clínica.">
               {loading && <div className="state-message">Carregando identidade…</div>}
               {branding && (
                 <div className="info-grid">
@@ -1132,7 +1351,7 @@ export function SettingsView() {
                     </strong>
                   </div>
                   <div className="info-item"><small>Domínio</small><strong>{text(branding.domain)}</strong></div>
-                  <div className="info-item"><small>Origem</small><strong>{branding.source === 'tenant' ? 'Configurado na clínica' : 'Variáveis de ambiente'}</strong></div>
+                  <div className="info-item"><small>Origem</small><strong>{branding.source === 'tenant' ? 'Configurado na clínica' : 'Padrão do sistema'}</strong></div>
                   <div className="info-item">
                     <small>Logotipo</small>
                     {branding.logoUrl ? (
@@ -1146,7 +1365,7 @@ export function SettingsView() {
                 </div>
               )}
               <p className="muted-note" style={{ padding: '0 14px' }}>
-                Para alterar nome, cores ou enviar o logotipo, use o modal de edição.
+                Use o botão abaixo para alterar nome, cores ou logotipo.
               </p>
               <div className="modal-footer"><button className="button primary" type="button" onClick={() => setConfigModal('branding')}>Editar identidade visual</button></div>
             </Panel>
@@ -1183,12 +1402,12 @@ export function SettingsView() {
           )}
 
           {section === 'certificate' && (
-            <Panel title={activeLabel} description="Status mascarado, sem download público do arquivo PKCS#12.">
+            <Panel title={activeLabel} description="O certificado fica protegido e não pode ser baixado depois de salvo.">
               <div className="settings-list">
                 <div className="settings-row">
                   <div>
                     <strong>{certificate?.configured ? 'Certificado configurado' : 'Certificado não configurado'}</strong>
-                    <span>Armazenamento: {text(certificate?.storage, 'secret/path privado')}</span>
+                    <span>Armazenamento: {text(certificate?.storage, 'local seguro')}</span>
                   </div>
                   <StatusBadge tone={certificate?.configured ? 'green' : 'amber'}>
                     {certificate?.configured ? 'Ativo' : 'Configurar'}
@@ -1235,7 +1454,7 @@ export function SettingsView() {
                 <ShieldCheck size={18} />
                 <div>
                   <strong>Segredos protegidos</strong>
-                  <span>Credenciais são criptografadas, mascaradas na leitura e toda alteração é auditada.</span>
+                  <span>Credenciais ficam protegidas após o envio e toda alteração é registrada no histórico de auditoria.</span>
                 </div>
               </div>
             </>

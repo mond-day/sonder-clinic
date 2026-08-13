@@ -477,6 +477,7 @@ export function AnamnesisTemplateEditor() {
         description="Cria um rascunho editável com seções e perguntas iniciais."
         onClose={() => setCreateOpen(false)}
         size="small"
+        confirmOnClose
       >
         <form className="mutation-form" onSubmit={createTemplate}>
           <label>Nome<input name="name" minLength={2} required placeholder="Modelo personalizado" autoFocus /></label>
@@ -635,6 +636,7 @@ export function AnamnesisTemplateEditor() {
         description={draft ? `${presentationLabel(draft.status)} · v${draft.version}` : undefined}
         onClose={() => { setDraft(null); setSelectedId(null); setPreviewMode(false); }}
         size="xlarge"
+        confirmOnClose
       >
           <div className="anamnesis-workspace editor-mode">
             {!draft ? (

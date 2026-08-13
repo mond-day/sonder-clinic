@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import { IsArray, IsDateString, IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { SchedulingService } from './scheduling.service';
@@ -23,6 +23,11 @@ class CreateAppointmentDto {
   @IsOptional() reminderLeadMinutes?: number | number[];
 }
 
+class CheckConflictsDto extends CreateAppointmentDto {
+  /** Ao editar/remarcar, ignore o próprio agendamento no conflito duro. */
+  @IsOptional() @IsUUID() excludeAppointmentId?: string;
+}
+
 @ApiTags('appointments')
 @Controller('appointments')
 @UseGuards(AuthGuard, PermissionsGuard)
@@ -38,6 +43,39 @@ export class SchedulingController {
     @Query('clinicId') clinicId?: string,
   ) {
     return this.scheduling.list(request.auth.organizationId, from, to, clinicId);
+  }
+
+  @Get('personal-calendar/status')
+  @RequirePermissions('appointment.view')
+  personalCalendarStatus(
+    @Req() request: AuthenticatedRequest,
+    @Query('clinicId') clinicId: string,
+  ) {
+    return this.scheduling.personalCalendarStatus(request.auth.organizationId, clinicId);
+  }
+
+  @Get('personal-calendar')
+  @RequirePermissions('appointment.view')
+  personalCalendar(
+    @Req() request: AuthenticatedRequest,
+    @Query('clinicId') clinicId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('professionalId') professionalId?: string,
+  ) {
+    return this.scheduling.listPersonalCalendar(
+      request.auth.organizationId,
+      clinicId,
+      from,
+      to,
+      professionalId,
+    );
+  }
+
+  @Post('check-conflicts')
+  @RequirePermissions('appointment.view')
+  check(@Req() request: AuthenticatedRequest, @Body() input: CheckConflictsDto) {
+    return this.scheduling.checkConflict(request.auth.organizationId, input);
   }
 
   @Post()
@@ -56,11 +94,5 @@ export class SchedulingController {
   @RequirePermissions('appointment.cancel')
   cancel(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.scheduling.cancel(request.auth.organizationId, id);
-  }
-
-  @Post('check-conflicts')
-  @RequirePermissions('appointment.view')
-  check(@Req() request: AuthenticatedRequest, @Body() input: CreateAppointmentDto) {
-    return this.scheduling.checkConflict(request.auth.organizationId, input);
   }
 }

@@ -104,8 +104,16 @@ export async function addItemSession(itemId: string, body: Record<string, unknow
   });
 }
 
-export async function completeTreatmentItem(itemId: string, notes?: string) {
-  return api.post(`/treatment-items/${itemId}/complete`, { notes });
+export async function completeTreatmentItem(
+  itemId: string,
+  input?: { notes?: string; clinicalDate?: string },
+) {
+  return api.post(`/treatment-items/${itemId}/complete`, input ?? {});
+}
+
+export async function listPlanEvolutions(patientId: string, clinicId: string, treatmentId: string) {
+  const rows = await api.get(`/patients/${patientId}/clinical-entries?clinicId=${clinicId}&treatmentId=${treatmentId}`);
+  return list(rows);
 }
 
 export async function createClinicalEvolution(patientId: string, body: Record<string, unknown>) {

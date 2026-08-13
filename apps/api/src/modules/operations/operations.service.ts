@@ -1068,7 +1068,7 @@ export class OperationsService {
   async addSession(organizationId: string, actorId: string | undefined, itemId: string, input: {
     professionalId: string; appointmentId?: string; executionNotes: string; materials?: unknown[];
     complications?: string; patientSignatureHash?: string; professionalSignatureHash?: string;
-    idempotencyKey?: string; allowExtraSession?: boolean;
+    idempotencyKey?: string; allowExtraSession?: boolean; completedAt?: string;
   }) {
     const item = await prisma.treatmentItem.findFirst({
       where: { id: itemId, plan: { organizationId } },
@@ -1108,6 +1108,7 @@ export class OperationsService {
           patientSignatureHash: input.patientSignatureHash,
           professionalSignatureHash: input.professionalSignatureHash,
           idempotencyKey: input.idempotencyKey,
+          ...(input.completedAt ? { completedAt: new Date(input.completedAt) } : {}),
         },
       });
       const validSessions = await tx.treatmentSession.findMany({
@@ -1155,6 +1156,7 @@ export class OperationsService {
         treatmentSessionId: session.id,
         appointmentId: input.appointmentId,
         toothFdi: item.toothFdi ?? undefined,
+        clinicalDate: session.completedAt,
         renderedText: [
           `Sessão ${validSessions.length}/${planned}: ${item.procedure.name}.`,
           item.toothFdi ? `Dente FDI ${item.toothFdi}.` : null,
@@ -1172,6 +1174,8 @@ export class OperationsService {
           sessionId: session.id,
           sessionCount: validSessions.length,
           planned,
+          procedureName: item.procedure.name,
+          toothFdi: item.toothFdi,
         },
       });
       return session;
@@ -1242,12 +1246,23 @@ export class OperationsService {
     });
   }
 
-  async completeTreatmentItem(organizationId: string, actorId: string | undefined, itemId: string, notes?: string) {
+  async completeTreatmentItem(
+    organizationId: string,
+    actorId: string | undefined,
+    itemId: string,
+    input: { notes?: string; clinicalDate?: string } | string | undefined = {},
+  ) {
+    const options = typeof input === 'string' ? { notes: input } : (input ?? {});
+    const clinicalDate = options.clinicalDate ? new Date(options.clinicalDate) : new Date();
+    if (Number.isNaN(clinicalDate.getTime())) {
+      throw new BadRequestException('Data clínica inválida.');
+    }
     const item = await prisma.treatmentItem.findFirst({
       where: { id: itemId, plan: { organizationId } },
       include: {
         procedure: { select: { name: true } },
         plan: { select: { id: true, clinicId: true, patientId: true, title: true, status: true, archivedAt: true } },
+        sessions: { select: { id: true, correctionOfId: true } },
       },
     });
     if (!item) throw new NotFoundException('Item de tratamento não encontrado.');
@@ -1256,7 +1271,21 @@ export class OperationsService {
     if (!['APPROVED', 'IN_PROGRESS'].includes(item.status)) {
       throw new ConflictException('Somente itens aprovados ou em andamento podem ser concluídos.');
     }
+    const notes = options.notes?.trim();
     return prisma.$transaction(async (tx) => {
+      const validSessionCount = item.sessions.filter((session) => !session.correctionOfId).length;
+      let sessionId: string | undefined;
+      if (validSessionCount === 0) {
+        const session = await tx.treatmentSession.create({
+          data: {
+            treatmentItemId: itemId,
+            professionalId: item.professionalId,
+            executionNotes: notes || `Procedimento concluído: ${item.procedure.name}.`,
+            completedAt: clinicalDate,
+          },
+        });
+        sessionId = session.id;
+      }
       const updatedItem = await tx.treatmentItem.update({
         where: { id: itemId },
         data: { status: 'COMPLETED' },
@@ -1279,10 +1308,13 @@ export class OperationsService {
         professionalId: item.professionalId,
         treatmentId: item.plan.id,
         treatmentItemId: item.id,
+        treatmentSessionId: sessionId,
+        toothFdi: item.toothFdi ?? undefined,
+        clinicalDate,
         renderedText: [
-          `Procedimento concluído explicitamente: ${item.procedure.name}.`,
+          `Procedimento concluído: ${item.procedure.name}.`,
           item.toothFdi ? `Dente FDI ${item.toothFdi}.` : null,
-          notes?.trim() || null,
+          notes || null,
           `Plano: ${item.plan.title}.`,
         ].filter(Boolean).join(' '),
       });
@@ -1290,7 +1322,13 @@ export class OperationsService {
         treatmentPlanId: item.plan.id,
         type: 'ITEM_COMPLETED',
         actorId,
-        payload: { itemId, explicit: true },
+        payload: {
+          itemId,
+          explicit: true,
+          procedureName: item.procedure.name,
+          toothFdi: item.toothFdi,
+          clinicalDate: clinicalDate.toISOString(),
+        },
       });
       return updatedItem;
     });
@@ -1309,6 +1347,7 @@ export class OperationsService {
       appointmentId?: string;
       toothFdi?: string;
       renderedText: string;
+      clinicalDate?: Date;
     },
   ) {
     if (input.treatmentSessionId) {
@@ -1346,7 +1385,7 @@ export class OperationsService {
           treatmentSessionId: input.treatmentSessionId ?? null,
           appointmentId: input.appointmentId ?? null,
         }),
-        clinicalDate: new Date(),
+        clinicalDate: input.clinicalDate ?? new Date(),
         status: 'SIGNED',
         signedAt: new Date(),
         contentHash: hash({ text: input.renderedText, at: new Date().toISOString(), sessionId: input.treatmentSessionId }),

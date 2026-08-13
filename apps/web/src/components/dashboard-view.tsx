@@ -123,7 +123,7 @@ export function DashboardView() {
           </Panel>
         </div>
         <aside className="side-stack">
-          <Panel title="Pendências operacionais" description="Ações com dados reais da API">
+          <Panel title="Pendências operacionais" description="Atalhos para o que precisa de atenção hoje">
             <Link className="attention-item" href="/pacientes">
               <span className="attention-icon info"><AlertTriangle size={17} /></span>
               <div>
@@ -146,7 +146,7 @@ export function DashboardView() {
               <span className="attention-icon danger"><AlertTriangle size={17} /></span>
               <div>
                 <strong>Central de retornos</strong>
-                <small>Aguardando contrato de API</small>
+                <small>Acompanhar retornos pendentes</small>
               </div>
               <ArrowRight size={16} />
             </Link>

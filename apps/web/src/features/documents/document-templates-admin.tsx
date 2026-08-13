@@ -281,7 +281,7 @@ export function DocumentTemplatesAdminPanel() {
         </div>
       )}
 
-      <Modal open={createOpen} title="Novo modelo (rascunho)" description="Corpo inicial; refine no editor estruturado." onClose={() => setCreateOpen(false)}>
+      <Modal open={createOpen} title="Novo modelo (rascunho)" description="Corpo inicial; refine no editor estruturado." onClose={() => setCreateOpen(false)} confirmOnClose>
         <form className="mutation-form" onSubmit={createTemplate}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label className="span-2">Tipo
@@ -303,6 +303,7 @@ export function DocumentTemplatesAdminPanel() {
         title={editor ? `${text(editor.name)} · v${text(editor.version)}` : 'Editor'}
         description={String(editor?.status) === 'DRAFT' ? 'Editar rascunho' : 'Publicado — somente leitura. Use Nova versão para alterar.'}
         onClose={() => setEditor(null)}
+        confirmOnClose={String(editor?.status) === 'DRAFT'}
       >
         {editor ? (
           <div className="document-template-editor">

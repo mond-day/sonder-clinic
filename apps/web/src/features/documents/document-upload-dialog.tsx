@@ -83,9 +83,10 @@ export function DocumentUploadDialog({
     <Modal
       open={open}
       title="Enviar arquivos para o prontuário"
-      description="Uploads individuais com pasta, tipo e verificação antivírus no servidor."
+      description="Envie arquivos com pasta, tipo e verificação automática de segurança."
       onClose={onClose}
       size="large"
+      confirmOnClose
     >
       <form className="mutation-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>

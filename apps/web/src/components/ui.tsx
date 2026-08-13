@@ -144,19 +144,16 @@ export function Skeleton({ rows = 3 }: { rows?: number }) {
 export function UnavailableFeature({
   title,
   description,
-  contractHint,
 }: {
-  title: string;
-  description: string;
-  contractHint: string;
+  title?: string;
+  description?: string;
+  contractHint?: string;
 }) {
   return (
-    <Panel title={title} description="Recurso previsto no workspace clínico">
+    <Panel title={title ?? 'Recurso ainda não disponível'} description="Esta funcionalidade ainda não está disponível nesta versão.">
       <div className="empty-state">
-        <h3>Aguardando contrato de API</h3>
-        <p>{description}</p>
-        <p className="contract-hint">{contractHint}</p>
-        <p className="muted-note">Detalhes em docs/api/pending-workspace-contracts.md</p>
+        <h3>Indisponível</h3>
+        <p>{description ?? 'Esta área ainda não está disponível nesta versão.'}</p>
       </div>
     </Panel>
   );
@@ -167,14 +164,27 @@ export function Disclosure({
   description,
   children,
   defaultOpen = true,
+  open: openProp,
+  onOpenChange,
 }: {
   title: string;
   description?: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : uncontrolledOpen;
   const contentId = useId();
+
+  function toggle() {
+    const next = !open;
+    if (!controlled) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  }
+
   return (
     <section className="disclosure">
       <button
@@ -182,7 +192,7 @@ export function Disclosure({
         className="disclosure-trigger"
         aria-expanded={open}
         aria-controls={contentId}
-        onClick={() => setOpen((current) => !current)}
+        onClick={toggle}
       >
         <span><strong>{title}</strong>{description ? <small>{description}</small> : null}</span>
         <span aria-hidden>{open ? '−' : '+'}</span>

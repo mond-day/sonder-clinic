@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAnamnesisAnswer } from './format-answer';
+import { formatAnamnesisAnswer, isEmptyAnamnesisAnswer } from './format-answer';
 
 describe('formatAnamnesisAnswer', () => {
   const question = {
@@ -28,5 +28,16 @@ describe('formatAnamnesisAnswer', () => {
       { ...question, type: 'YES_NO_DETAILS' },
       { value: 'yes', details: 'Losartana 50 mg' },
     )).toBe('Sim\nLosartana 50 mg');
+  });
+});
+
+describe('isEmptyAnamnesisAnswer', () => {
+  it('detecta vazios', () => {
+    expect(isEmptyAnamnesisAnswer(null)).toBe(true);
+    expect(isEmptyAnamnesisAnswer('')).toBe(true);
+    expect(isEmptyAnamnesisAnswer([])).toBe(true);
+    expect(isEmptyAnamnesisAnswer({ value: '' })).toBe(true);
+    expect(isEmptyAnamnesisAnswer('yes')).toBe(false);
+    expect(isEmptyAnamnesisAnswer(0)).toBe(false);
   });
 });

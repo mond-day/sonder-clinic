@@ -146,9 +146,10 @@ export function CertificateEditor({
     <Modal
       open={open}
       title="Emitir atestado ou comprovante"
-      description="CID só é incluído com autorização expressa e persistida do paciente."
+      description="CID só é incluído com autorização expressa do paciente."
       onClose={onClose}
       size="medium"
+      confirmOnClose
     >
       <form className="mutation-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>

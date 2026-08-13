@@ -212,7 +212,7 @@ export function LabView() {
           iconTone="green"
         />
       </section>
-      <Modal open={formOpen} title="Nova solicitação laboratorial" description="Registre o trabalho, laboratório e prazo sem sair do quadro." onClose={() => setFormOpen(false)}>
+      <Modal open={formOpen} title="Nova solicitação laboratorial" description="Registre o trabalho, laboratório e prazo sem sair do quadro." onClose={() => setFormOpen(false)} confirmOnClose>
           <form className="mutation-form" onSubmit={create}>
             <Disclosure title="Informações principais" description="Paciente, responsável e tipo de trabalho">
               <SearchableSelect name="patientId" label="Paciente" required options={patients.map((item) => ({ value: String(item.id), label: text(item.fullName) }))} />
@@ -239,7 +239,7 @@ export function LabView() {
           {formMessage && <p className="form-success" role="status">{formMessage}</p>}
           {formError && <p className="form-error" role="alert">{formError}</p>}
       </Modal>
-      <Modal open={Boolean(selectedCase)} title={text(selectedCase?.code, 'Detalhes do caso')} description="Acompanhe o caso e atualize sua etapa." onClose={() => setSelectedCase(null)}>
+      <Modal open={Boolean(selectedCase)} title={text(selectedCase?.code, 'Detalhes do caso')} description="Acompanhe o caso e atualize sua etapa." onClose={() => setSelectedCase(null)} confirmOnClose>
         {selectedCase ? (
           <div>
             <div className="info-grid">

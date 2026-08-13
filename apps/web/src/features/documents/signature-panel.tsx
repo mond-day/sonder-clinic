@@ -63,6 +63,7 @@ export function SignaturePanel({
       description="Crie um link seguro para o paciente, responsável ou profissional assinar este documento."
       onClose={onClose}
       size="medium"
+      confirmOnClose
     >
       <form className="mutation-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>

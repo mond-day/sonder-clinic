@@ -54,7 +54,7 @@ type GenericModuleKey = Exclude<
 type ViewData = { columns: string[]; rows: string[][]; metrics: Array<[string, string, string]> };
 
 const metadata: Record<ModuleKey, { name: string; description: string }> = {
-  agenda: { name: 'Agenda', description: 'Consultas por profissional e cadeira, com conflitos validados no servidor.' },
+  agenda: { name: 'Agenda', description: 'Consultas por profissional e cadeira, com verificação automática de conflitos.' },
   pacientes: { name: 'Pacientes', description: 'Cadastros, alertas clínicos e vínculos com responsáveis.' },
   tratamentos: { name: 'Tratamentos e prontuário', description: 'Planos, evoluções clínicas e odontogramas do paciente selecionado.' },
   documentos: { name: 'Documentos', description: 'Modelos, documentos gerados e assinaturas imutáveis.' },
@@ -243,7 +243,7 @@ function GenericModuleView({ moduleKey: key }: { moduleKey: GenericModuleKey }) 
           <Link className="button small primary" href={`/pacientes/${selectedPatientId}`}>Abrir prontuário</Link>
         </div>
       )}
-      <Panel title="Dados operacionais" description="Fonte: API autenticada da organização atual." actions={<ArrowRight size={15} />}>
+      <Panel title="Dados operacionais" description="Dados atualizados da clínica em uso." actions={<ArrowRight size={15} />}>
         {loading && <div className="state-message">Carregando dados…</div>}
         {error && <div className="state-message error" role="alert">{error}<button className="text-button" type="button" onClick={load}>Tentar novamente</button></div>}
         {empty && <EmptyState title="Nenhum registro encontrado." />}

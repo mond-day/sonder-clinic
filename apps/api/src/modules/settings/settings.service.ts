@@ -16,6 +16,40 @@ const brandingSchema = z.object({
 });
 const MAX_BRANDING_BYTES = 2 * 1024 * 1024;
 const ALLOWED_BRANDING_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon']);
+const hmSchema = z.string().regex(/^\d{1,2}:\d{2}$/, 'Use o formato HH:mm');
+const businessHoursRuleSchema = z.object({
+  start: hmSchema,
+  end: hmSchema,
+  weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+}).superRefine((value, ctx) => {
+  const [sh, sm] = value.start.split(':').map(Number);
+  const [eh, em] = value.end.split(':').map(Number);
+  const startMin = (sh ?? 0) * 60 + (sm ?? 0);
+  const endMin = (eh ?? 0) * 60 + (em ?? 0);
+  if (endMin <= startMin) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'O fim deve ser depois do início.', path: ['end'] });
+  }
+});
+const businessHoursSchema = z.object({
+  rules: z.array(businessHoursRuleSchema).min(1).max(7),
+  timezone: z.string().trim().min(3).max(64).optional(),
+}).superRefine((value, ctx) => {
+  const seen = new Map<number, number>();
+  value.rules.forEach((rule, ruleIndex) => {
+    for (const day of rule.weekdays) {
+      const previous = seen.get(day);
+      if (previous !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `O dia ${day} aparece em mais de uma regra.`,
+          path: ['rules', ruleIndex, 'weekdays'],
+        });
+      } else {
+        seen.set(day, ruleIndex);
+      }
+    }
+  });
+});
 
 const legalSchema = z.object({
   type: z.enum(['PRIVACY', 'TERMS', 'CONSENT']),
@@ -57,6 +91,77 @@ export type BrandingSettings = {
   logoUrl?: string;
   faviconUrl?: string;
 };
+
+export type BusinessHoursRule = {
+  start: string;
+  end: string;
+  weekdays: number[];
+};
+
+export type BusinessHoursSettings = {
+  rules: BusinessHoursRule[];
+  timezone?: string;
+};
+
+type StoredBusinessHours = Partial<BusinessHoursSettings> & {
+  start?: string;
+  end?: string;
+  weekdays?: number[];
+};
+
+const DEFAULT_BUSINESS_HOURS: BusinessHoursSettings = {
+  rules: [{ start: '08:00', end: '18:00', weekdays: [1, 2, 3, 4, 5] }],
+  timezone: 'America/Cuiaba',
+};
+
+function sanitizeWeekdays(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.filter((n): n is number => typeof n === 'number' && n >= 0 && n <= 6))].sort((a, b) => a - b);
+}
+
+function sanitizeBusinessHoursRule(raw: Partial<BusinessHoursRule> | null | undefined): BusinessHoursRule | null {
+  const start = typeof raw?.start === 'string' && raw.start.trim() ? raw.start.trim() : '';
+  const end = typeof raw?.end === 'string' && raw.end.trim() ? raw.end.trim() : '';
+  const weekdays = sanitizeWeekdays(raw?.weekdays);
+  if (!start || !end || !weekdays.length) return null;
+  return { start, end, weekdays };
+}
+
+/** Aceita formato novo (`rules`) ou legado (`start`/`end`/`weekdays`). */
+function normalizeStoredBusinessHours(stored: StoredBusinessHours | null | undefined): BusinessHoursSettings {
+  if (Array.isArray(stored?.rules) && stored.rules.length) {
+    const rules = stored.rules
+      .map((rule) => sanitizeBusinessHoursRule(rule))
+      .filter((rule): rule is BusinessHoursRule => Boolean(rule));
+    if (rules.length) {
+      return {
+        rules,
+        timezone: typeof stored.timezone === 'string' && stored.timezone.trim()
+          ? stored.timezone.trim()
+          : DEFAULT_BUSINESS_HOURS.timezone,
+      };
+    }
+  }
+
+  const legacy = sanitizeBusinessHoursRule({
+    start: stored?.start,
+    end: stored?.end,
+    weekdays: stored?.weekdays,
+  });
+  if (legacy) {
+    return {
+      rules: [legacy],
+      timezone: typeof stored?.timezone === 'string' && stored.timezone.trim()
+        ? stored.timezone.trim()
+        : DEFAULT_BUSINESS_HOURS.timezone,
+    };
+  }
+
+  return {
+    rules: DEFAULT_BUSINESS_HOURS.rules.map((rule) => ({ ...rule, weekdays: [...rule.weekdays] })),
+    timezone: DEFAULT_BUSINESS_HOURS.timezone,
+  };
+}
 
 export type LegalDocument = {
   type: 'PRIVACY' | 'TERMS' | 'CONSENT';
@@ -147,6 +252,55 @@ export class SettingsService {
         },
       });
       return { clinicId: updated.id, branding };
+    });
+  }
+
+  async getBusinessHours(organizationId: string, clinicId?: string) {
+    const clinic = await prisma.clinic.findFirst({ where: { organizationId, status: 'ACTIVE', id: clinicId } });
+    const stored = (clinic?.settingsJson as { businessHours?: StoredBusinessHours } | null)?.businessHours;
+    const normalized = normalizeStoredBusinessHours(stored);
+    return {
+      ...normalized,
+      source: stored ? 'tenant' as const : 'default' as const,
+    };
+  }
+
+  async updateBusinessHours(
+    organizationId: string,
+    actorId: string,
+    clinicId: string,
+    businessHours: BusinessHoursSettings,
+  ) {
+    const parsed = parseWithZod(businessHoursSchema, businessHours);
+    const clinic = await prisma.clinic.findFirst({ where: { id: clinicId, organizationId } });
+    if (!clinic) throw new NotFoundException('Clínica não encontrada.');
+    const previous = (clinic.settingsJson as Record<string, unknown>) ?? {};
+    const nextHours: BusinessHoursSettings = {
+      rules: parsed.rules.map((rule) => ({
+        start: rule.start,
+        end: rule.end,
+        weekdays: [...new Set(rule.weekdays)].sort((a, b) => a - b),
+      })),
+      timezone: parsed.timezone?.trim() || DEFAULT_BUSINESS_HOURS.timezone,
+    };
+    const next = { ...previous, businessHours: nextHours };
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.clinic.update({
+        where: { id: clinicId },
+        data: { settingsJson: json(next) },
+      });
+      await tx.auditEvent.create({
+        data: {
+          actorId,
+          action: 'businessHours.updated',
+          entity: 'Clinic',
+          entityId: clinicId,
+          clinicId,
+          changes: { fields: ['rules', 'timezone'], ruleCount: nextHours.rules.length },
+          correlationId: randomUUID(),
+        },
+      });
+      return { clinicId: updated.id, businessHours: { ...nextHours, source: 'tenant' as const } };
     });
   }
 

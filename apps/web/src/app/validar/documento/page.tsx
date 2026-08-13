@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
@@ -32,6 +32,14 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export default function ValidateDocumentPage() {
+  return (
+    <Suspense fallback={<main className="legal-page"><p>Carregando…</p></main>}>
+      <ValidateDocumentPageInner />
+    </Suspense>
+  );
+}
+
+function ValidateDocumentPageInner() {
   const searchParams = useSearchParams();
   const [code, setCode] = useState('');
   const [result, setResult] = useState<ValidationResult | null>(null);

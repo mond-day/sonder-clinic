@@ -2,7 +2,7 @@
 
 ERP odontológico interno, multi‑clínica, construído como monorepo TypeScript (Next.js + NestJS + worker + PostgreSQL/Prisma). Cobre a operação de uma clínica de ponta a ponta: agenda, pacientes, prontuário clínico, odontograma, planos de tratamento, documentos, financeiro, comissões, comunicação, integrações e configurações.
 
-> Versão atual: **1.1.6**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
+> Versão atual: **1.2.0**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
 
 ---
 
@@ -279,7 +279,7 @@ Deploy via **Docker Swarm** em `infra/swarm/stack.production.yml`:
 - **Traefik** faz roteamento por host com TLS (Let's Encrypt): `web` em `app.sonder.clinic` (porta 3000), `api` em `api.sonder.clinic` (porta 4000). Hosts configuráveis por env (`APP_HOST`, `API_HOST`).
 - Segredos via **Docker secrets** externos: `jwt_access_secret`, `jwt_refresh_secret`, `encryption_master_key`, `s3_access_key`, `s3_secret_key`.
 
-Imagens publicadas no **GHCR** (`ghcr.io/mond-day`), tag padrão **1.1.6**:
+Imagens publicadas no **GHCR** (`ghcr.io/mond-day`), tag padrão **1.2.0**:
 
 - `ghcr.io/mond-day/sonder-clinic-api`
 - `ghcr.io/mond-day/sonder-clinic-web`
@@ -295,9 +295,9 @@ Passos de release (detalhes em `docs/RELEASE.md`):
 ```bash
 # 1. Atualize a versão nos package.json (root + apps + packages)
 # 2. Commit
-git tag -a v1.1.6 -m "Release 1.1.6"
+git tag -a v1.2.0 -m "Release 1.2.0"
 git push origin main
-git push origin v1.1.6
+git push origin v1.2.0
 # 3. Atualize WEB_IMAGE/API_IMAGE/WORKER_IMAGE no stack de produção
 ```
 

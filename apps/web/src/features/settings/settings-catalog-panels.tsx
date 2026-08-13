@@ -102,7 +102,7 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
         </div>
       )}
       <p className="muted-note">Contexto ativo: {clinics.length} clínica(s) no seletor. A última clínica ativa não pode ser inativada.</p>
-      <Modal open={open} title="Nova clínica" description="Cadastro administrativo da unidade." onClose={() => setOpen(false)} size="small">
+      <Modal open={open} title="Nova clínica" description="Cadastro administrativo da unidade." onClose={() => setOpen(false)} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={createClinic}>
           <label className="span-2">Nome fantasia<input name="tradeName" minLength={2} required autoFocus /></label>
           <label className="span-2">Razão social<input name="legalName" minLength={2} required /></label>
@@ -229,7 +229,7 @@ export function PriceTablesAdminPanel({ clinicId, procedures }: { clinicId: stri
           })}
         </div>
       )}
-      <Modal open={open} title="Nova tabela de preço" description="Vigência e escopo por clínica." onClose={() => setOpen(false)} size="small">
+      <Modal open={open} title="Nova tabela de preço" description="Vigência e escopo por clínica." onClose={() => setOpen(false)} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={createTable}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label>Tipo
@@ -245,7 +245,7 @@ export function PriceTablesAdminPanel({ clinicId, procedures }: { clinicId: stri
           <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar tabela'}</button>
         </form>
       </Modal>
-      <Modal open={Boolean(itemTableId)} title="Adicionar preço" description="Vincula procedimento à tabela." onClose={() => { setItemTableId(''); setFormError(''); }} size="small">
+      <Modal open={Boolean(itemTableId)} title="Adicionar preço" description="Vincula procedimento à tabela." onClose={() => { setItemTableId(''); setFormError(''); }} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={addItem}>
           <label className="span-2">Procedimento
             <select name="procedureId" required>
@@ -391,7 +391,7 @@ export function FinanceCatalogAdminPanel() {
       {!loading && categories.length === 0 && centers.length === 0 ? (
         <EmptyState title="Catálogo vazio" description="Categorias alimentam Payables (A32). Expense legado permanece só em seed/relatório." />
       ) : null}
-      <Modal open={open === 'category'} title="Nova categoria financeira" onClose={() => setOpen(null)} size="small">
+      <Modal open={open === 'category'} title="Nova categoria financeira" onClose={() => setOpen(null)} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={createCategory}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label className="span-2">Tipo
@@ -404,7 +404,7 @@ export function FinanceCatalogAdminPanel() {
           <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar'}</button>
         </form>
       </Modal>
-      <Modal open={open === 'center'} title="Novo centro de custo" onClose={() => setOpen(null)} size="small">
+      <Modal open={open === 'center'} title="Novo centro de custo" onClose={() => setOpen(null)} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={createCenter}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label className="span-2">Código<input name="code" /></label>
@@ -502,7 +502,7 @@ export function LaboratoriesAdminPanel({ clinicId }: { clinicId: string }) {
           ))}
         </div>
       )}
-      <Modal open={open} title="Novo laboratório" onClose={() => setOpen(false)} size="small">
+      <Modal open={open} title="Novo laboratório" onClose={() => setOpen(false)} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={createLab}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label>Telefone<input name="phone" /></label>
@@ -675,7 +675,7 @@ export function CommunicationTemplatesPanel() {
               <div className="row-actions">
                 <StatusBadge tone={row.active ? 'green' : 'gray'}>{row.active ? 'Ativo' : 'Inativo'}</StatusBadge>
                 <StatusBadge tone={row.requiresConsent ? 'amber' : 'blue'}>
-                  {row.requiresConsent ? 'Exige opt-in' : 'Sem opt-in'}
+                  {row.requiresConsent ? 'Exige autorização' : 'Sem autorização'}
                 </StatusBadge>
                 <button className="button small" type="button" onClick={() => void toggleActive(row)}>
                   {row.active ? 'Inativar' : 'Ativar'}
@@ -685,8 +685,8 @@ export function CommunicationTemplatesPanel() {
           ))}
         </div>
       )}
-      <p className="muted-note">SMTP cobre e-mail. WhatsApp usa Evolution real quando EVOLUTION_MOCK=false + credenciais — ver canais abaixo.</p>
-      <Modal open={open} title="Novo template" description="Variáveis: {{patientName}}, {{date}}, {{clinicName}}, {{professionalName}}." onClose={() => setOpen(false)}>
+      <p className="muted-note">E-mail e WhatsApp usam os canais configurados abaixo. Sem canal ativo, os envios ficam pendentes.</p>
+      <Modal open={open} title="Novo template" description="Variáveis: {{patientName}}, {{date}}, {{clinicName}}, {{professionalName}}." onClose={() => setOpen(false)} confirmOnClose>
         <form className="mutation-form" onSubmit={createTemplate}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
           <label>Categoria
@@ -786,8 +786,8 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
       });
       setSendResult(
         result.status === 'SENT'
-          ? 'Mensagem enviada (SMTP).'
-          : `Delivery ${presentationLabel(result.status)}${result.error ? `: ${text(result.error)}` : ''}`,
+          ? 'Mensagem enviada por e-mail.'
+          : `Envio ${presentationLabel(result.status)}${result.error ? `: ${text(result.error)}` : ''}`,
       );
       if (result.status === 'SENT') setSendOpen(false);
       load();
@@ -812,7 +812,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
       {loading ? <div className="state-message">Carregando…</div> : null}
       {!loading && channels.length === 0 ? (
-        <EmptyState title="Nenhum canal" description="Crie um canal EMAIL (SMTP) ou WHATSAPP (Evolution)." />
+        <EmptyState title="Nenhum canal" description="Crie um canal de e-mail ou WhatsApp para começar a enviar mensagens." />
       ) : (
         <div className="settings-list">
           {channels.map((row) => (
@@ -834,23 +834,23 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
         </div>
       )}
       <p className="muted-note">
-        EMAIL exige SMTP_HOST. WHATSAPP registra FAILED se Evolution estiver em MOCK ou sem baseUrl/apiKey/instance. SMS permanece stub.
+        E-mail e WhatsApp precisam estar configurados pelo administrador. SMS ainda não está disponível nesta versão.
       </p>
-      <Modal open={open} title="Novo canal" description="Canal operacional para envio manual e futuras automações." onClose={() => setOpen(false)}>
+      <Modal open={open} title="Novo canal" description="Canal operacional para envio manual e futuras automações." onClose={() => setOpen(false)} confirmOnClose>
         <form className="mutation-form" onSubmit={createChannel}>
           <label className="span-2">Nome de exibição<input name="displayName" minLength={2} required autoFocus /></label>
           <label className="span-2">Tipo
             <select name="type" defaultValue="EMAIL">
-              <option value="EMAIL">E-mail (SMTP)</option>
-              <option value="WHATSAPP">WhatsApp (Evolution)</option>
-              <option value="SMS">SMS (stub)</option>
+              <option value="EMAIL">E-mail</option>
+              <option value="WHATSAPP">WhatsApp</option>
+              <option value="SMS">SMS (em breve)</option>
             </select>
           </label>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
           <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar canal'}</button>
         </form>
       </Modal>
-      <Modal open={sendOpen} title="Envio manual" description="Respeita opt-in do template quando houver patientId; aqui o destino é livre." onClose={() => setSendOpen(false)}>
+      <Modal open={sendOpen} title="Envio manual" description="Se houver paciente vinculado e o modelo exigir autorização, a preferência de comunicação será respeitada. Neste envio o destino pode ser informado livremente." onClose={() => setSendOpen(false)} confirmOnClose>
         <form className="mutation-form" onSubmit={sendManual}>
           <label className="span-2">Canal
             <select name="channelId" required defaultValue="">
@@ -958,7 +958,7 @@ export function OdontogramConditionsAdminPanel() {
           ))}
         </div>
       )}
-      <Modal open={open} title="Nova condição odontológica" onClose={() => setOpen(false)} size="small">
+      <Modal open={open} title="Nova condição odontológica" onClose={() => setOpen(false)} size="small" confirmOnClose>
         <form className="mutation-form" onSubmit={createCondition}>
           <label>Código<input name="code" minLength={1} maxLength={20} required autoFocus placeholder="CARIE" /></label>
           <label>Cor<input name="color" type="color" defaultValue="#c45c26" required /></label>
@@ -1122,6 +1122,7 @@ export function MedicationCatalogPanel() {
         title={editing ? 'Editar medicamento' : 'Novo medicamento'}
         description="Cadastre identificação. Dose e posologia são confirmadas na prescrição."
         onClose={() => { setOpen(false); setEditing(null); }}
+        confirmOnClose
       >
         <form className="mutation-form" onSubmit={(e) => void submit(e)}>
           <label className="span-2">Nome / princípio ativo<input name="name" required defaultValue={String(editing?.name ?? '')} /></label>
@@ -1217,6 +1218,7 @@ export function ExamCatalogPanel() {
         title={editing ? 'Editar tipo de exame' : 'Novo tipo de exame'}
         description="O catálogo aparece na busca ao criar uma solicitação."
         onClose={() => { setOpen(false); setEditing(null); }}
+        confirmOnClose
       >
         <form className="mutation-form" onSubmit={(e) => void submit(e)}>
           <label className="span-2">Nome<input name="name" required defaultValue={String(editing?.name ?? '')} /></label>

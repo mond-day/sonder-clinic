@@ -3,6 +3,7 @@
 import { FormEvent, useState } from 'react';
 import { Modal } from '@/components/modal';
 import type { Professional } from '@/components/selection-provider';
+import { dateInputToIso, toDateInputValue } from '@/lib/format';
 import { sessionSchema } from './treatment-schemas';
 import type { TreatmentItem } from './treatment-types';
 
@@ -27,6 +28,7 @@ export function TreatmentSessionDialog({
     executionNotes: string;
     complications?: string;
     allowExtraSession?: boolean;
+    completedAt?: string;
   }) => Promise<void>;
   variant?: 'modal' | 'drawer';
 }) {
@@ -44,6 +46,7 @@ export function TreatmentSessionDialog({
       executionNotes: data.get('executionNotes'),
       complications: String(data.get('complications') ?? '').trim() || undefined,
       allowExtraSession: needsExtra || data.get('allowExtraSession') === 'on',
+      completedAt: dateInputToIso(String(data.get('completedAt') ?? '')),
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? 'Dados inválidos.');
@@ -63,6 +66,10 @@ export function TreatmentSessionDialog({
             <option key={professional.id} value={professional.id}>{professional.name}</option>
           ))}
         </select>
+      </label>
+      <label>
+        Data da sessão
+        <input type="date" name="completedAt" required defaultValue={toDateInputValue()} />
       </label>
       <label className="span-2">
         Notas de execução
@@ -108,6 +115,7 @@ export function TreatmentSessionDialog({
       description={item ? `${item.procedure?.name ?? 'Procedimento'} · ${doneSessions}/${planned} sessões` : undefined}
       onClose={onClose}
       size="medium"
+      confirmOnClose
     >
       {form}
     </Modal>

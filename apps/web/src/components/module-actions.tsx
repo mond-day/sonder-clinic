@@ -4,9 +4,18 @@ import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
 import { APPOINTMENT_DURATIONS } from '@/lib/duration';
+import {
+  cpfDigits,
+  formatPostalCode,
+  isMinorFromBirthDate,
+  maskCpfInput,
+  maskPhoneInput,
+  phoneDigits,
+} from '@/lib/format';
+import { lookupViaCep } from '@/lib/via-cep';
 import type { Clinic, Professional } from './selection-provider';
 import { SearchableSelect } from './searchable-select';
-import { Disclosure } from './ui';
+import { Disclosure, StatusBadge } from './ui';
 
 type Item = Record<string, unknown>;
 type ModuleKey = 'agenda' | 'pacientes' | 'tratamentos' | 'documentos' | 'financeiro' | 'comissoes' | 'comunicacao' | 'integracoes' | 'relatorios';
@@ -94,12 +103,12 @@ const legalSchema = z.object({
 const integrationProviders = ['NIBO', 'ABACATEPAY', 'EVOLUTION', 'CHATWOOT', 'GOOGLE_CALENDAR', 'OPENAI'] as const;
 type IntegrationProvider = (typeof integrationProviders)[number];
 const integrationFields: Record<IntegrationProvider, Array<{ key: string; label: string; secret?: boolean; type?: string }>> = {
-  NIBO: [{ key: 'clientId', label: 'Client ID' }, { key: 'clientSecret', label: 'Client secret', secret: true }, { key: 'token', label: 'Token', secret: true }, { key: 'organizationId', label: 'Organização' }, { key: 'accountId', label: 'Conta' }],
-  ABACATEPAY: [{ key: 'apiKey', label: 'Chave da API', secret: true }, { key: 'webhookSecret', label: 'Segredo do webhook', secret: true }, { key: 'environment', label: 'Ambiente' }],
-  EVOLUTION: [{ key: 'baseUrl', label: 'URL base', type: 'url' }, { key: 'apiKey', label: 'Chave da API', secret: true }, { key: 'instanceName', label: 'Nome da instância' }, { key: 'webhookUrl', label: 'URL do webhook', type: 'url' }],
-  CHATWOOT: [{ key: 'baseUrl', label: 'URL base', type: 'url' }, { key: 'accountId', label: 'ID da conta' }, { key: 'inboxId', label: 'ID da caixa de entrada' }, { key: 'apiToken', label: 'Token da API', secret: true }, { key: 'webhookSecret', label: 'Segredo do webhook', secret: true }],
-  GOOGLE_CALENDAR: [{ key: 'clientId', label: 'Client ID' }, { key: 'clientSecret', label: 'Client secret', secret: true }],
-  OPENAI: [{ key: 'provider', label: 'Provedor' }, { key: 'apiKey', label: 'Chave da API', secret: true }, { key: 'model', label: 'Modelo' }],
+  NIBO: [{ key: 'clientId', label: 'ID do cliente' }, { key: 'clientSecret', label: 'Segredo do cliente', secret: true }, { key: 'token', label: 'Token', secret: true }, { key: 'organizationId', label: 'Organização' }, { key: 'accountId', label: 'Conta' }],
+  ABACATEPAY: [{ key: 'apiKey', label: 'Chave de acesso', secret: true }, { key: 'webhookSecret', label: 'Segredo de confirmação', secret: true }, { key: 'environment', label: 'Ambiente' }],
+  EVOLUTION: [{ key: 'baseUrl', label: 'Endereço do serviço', type: 'url' }, { key: 'apiKey', label: 'Chave de acesso', secret: true }, { key: 'instanceName', label: 'Nome da instância' }, { key: 'webhookUrl', label: 'URL de retorno', type: 'url' }],
+  CHATWOOT: [{ key: 'baseUrl', label: 'Endereço do serviço', type: 'url' }, { key: 'accountId', label: 'ID da conta' }, { key: 'inboxId', label: 'ID da caixa de entrada' }, { key: 'apiToken', label: 'Token de acesso', secret: true }, { key: 'webhookSecret', label: 'Segredo de confirmação', secret: true }],
+  GOOGLE_CALENDAR: [{ key: 'clientId', label: 'ID do cliente' }, { key: 'clientSecret', label: 'Segredo do cliente', secret: true }],
+  OPENAI: [{ key: 'provider', label: 'Provedor' }, { key: 'apiKey', label: 'Chave de acesso', secret: true }, { key: 'model', label: 'Modelo' }],
 };
 const providerCredentialKeys: Record<IntegrationProvider, string[]> = {
   NIBO: ['clientId', 'clientSecret', 'token', 'organizationId', 'accountId'],
@@ -151,7 +160,6 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [appointments, setAppointments] = useState<Item[]>([]);
   const [receivables, setReceivables] = useState<Item[]>([]);
   const [conditions, setConditions] = useState<Item[]>([]);
   const [patientToEdit, setPatientToEdit] = useState(selectedPatientId);
@@ -159,6 +167,24 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [integrationProvider, setIntegrationProvider] = useState<IntegrationProvider>('NIBO');
   const [brandingUrls, setBrandingUrls] = useState<{ logoUrl?: string; faviconUrl?: string }>({});
   const [patientIsMinor, setPatientIsMinor] = useState(false);
+  const [guardianDisclosureOpen, setGuardianDisclosureOpen] = useState(false);
+  const [birthDate, setBirthDate] = useState('');
+  const [patientCpf, setPatientCpf] = useState('');
+  const [guardianCpf, setGuardianCpf] = useState('');
+  const [personalWarning, setPersonalWarning] = useState('');
+  const [acknowledgePersonalWarning, setAcknowledgePersonalWarning] = useState(false);
+  const [primaryPhone, setPrimaryPhone] = useState('');
+  const [secondaryPhone, setSecondaryPhone] = useState('');
+  const [guardianPhone, setGuardianPhone] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [street, setStreet] = useState('');
+  const [number, setNumber] = useState('');
+  const [complement, setComplement] = useState('');
+  const [district, setDistrict] = useState('');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('');
+  const [cepHint, setCepHint] = useState('');
+  const [cepBusy, setCepBusy] = useState(false);
   const lockedPatientEdit = Boolean(selectedPatientId);
   const agendaPatientDefault = selectedPatientId || defaultPatientId || '';
 
@@ -169,8 +195,62 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   useEffect(() => {
     if (module !== 'pacientes') return;
     const current = patients.find((patient) => patient.id === patientToEdit);
-    setPatientIsMinor(Boolean(current?.isMinor));
+    const nextBirth = current?.birthDate ? String(current.birthDate).slice(0, 10) : '';
+    const minor = Boolean(current?.isMinor) || isMinorFromBirthDate(nextBirth);
+    setBirthDate(nextBirth);
+    setPatientIsMinor(minor);
+    setGuardianDisclosureOpen(minor);
+    setPatientCpf(maskCpfInput(String(current?.cpf ?? '')));
+    setGuardianCpf('');
+    setPrimaryPhone(maskPhoneInput(String(current?.primaryPhone ?? '')));
+    setSecondaryPhone(maskPhoneInput(String(current?.secondaryPhone ?? '')));
+    setGuardianPhone('');
+    setPostalCode(formatPostalCode(String(current?.postalCode ?? '')));
+    setStreet(String(current?.street ?? ''));
+    setNumber(String(current?.number ?? ''));
+    setComplement(String(current?.complement ?? ''));
+    setDistrict(String(current?.district ?? ''));
+    setCity(String(current?.city ?? ''));
+    setState(String(current?.state ?? ''));
+    setCepHint('');
   }, [module, patientToEdit, patients]);
+
+  function markMinorAndExpand(next: boolean) {
+    setPatientIsMinor(next);
+    if (next) setGuardianDisclosureOpen(true);
+  }
+
+  function onBirthDateChange(value: string) {
+    setBirthDate(value);
+    if (isMinorFromBirthDate(value)) markMinorAndExpand(true);
+  }
+
+  async function fillAddressFromCep(rawCep: string) {
+    const digits = rawCep.replace(/\D/g, '');
+    if (digits.length !== 8) {
+      setCepHint('');
+      return;
+    }
+    setCepBusy(true);
+    setCepHint('Buscando endereço…');
+    try {
+      const address = await lookupViaCep(digits);
+      if (!address) {
+        setCepHint('CEP não encontrado. Preencha o endereço manualmente.');
+        return;
+      }
+      setPostalCode(formatPostalCode(address.postalCode));
+      if (address.street) setStreet(address.street);
+      if (address.district) setDistrict(address.district);
+      if (address.city) setCity(address.city);
+      if (address.state) setState(address.state);
+      setCepHint('Endereço preenchido pelo CEP.');
+    } catch (cause) {
+      setCepHint(cause instanceof Error ? cause.message : 'Não foi possível consultar o CEP.');
+    } finally {
+      setCepBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!initialIntegrationProvider) return;
@@ -181,11 +261,6 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   }, [initialIntegrationProvider]);
 
   useEffect(() => {
-    if (module === 'agenda') {
-      const from = new Date(); from.setDate(from.getDate() - 30);
-      const to = new Date(); to.setDate(to.getDate() + 90);
-      api.get<Item[]>(`/appointments?from=${from.toISOString()}&to=${to.toISOString()}&clinicId=${clinicId}`).then(setAppointments).catch(() => setAppointments([]));
-    }
     if (module === 'financeiro') api.get<Item[]>(`/receivables?clinicId=${clinicId}`).then(setReceivables).catch(() => setReceivables([]));
     if (module === 'tratamentos') api.get<Item[]>('/odontogram-conditions').then(setConditions).catch(() => setConditions([]));
     if (module === 'integracoes' && (!configurationKind || configurationKind === 'branding')) {
@@ -228,6 +303,8 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
 
   if (module === 'pacientes') {
     const current = patients.find((patient) => patient.id === patientToEdit);
+    const alreadyMarkedMinor = Boolean(current?.isMinor);
+    const mustProvideGuardian = patientIsMinor && (!current || !alreadyMarkedMinor);
     return <MutationPanel
       title={lockedPatientEdit ? (current ? 'Editar paciente' : 'Cadastrar paciente') : 'Cadastrar ou editar paciente'}
       description="Dados pessoais, contato e endereço. Endereço é opcional para cadastro rápido."
@@ -237,52 +314,56 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
       {!lockedPatientEdit ? (
         <div className="form-toolbar"><label>Editar cadastro<select value={patientToEdit} onChange={(event) => setPatientToEdit(event.target.value)}><option value="">Novo paciente</option>{patientOptions}</select></label></div>
       ) : null}
-      <form className="mutation-form" key={patientToEdit} onSubmit={(event) => {
+      <form className="mutation-form patient-mutation-form" key={patientToEdit} onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
         const isMinor = data.get('isMinor') === 'on';
         const guardianName = optional(data.get('guardianName'));
-        const guardianPhone = optional(data.get('guardianPhone'));
+        const guardianPhoneValue = phoneDigits(guardianPhone) || undefined;
         const guardianRelationship = optional(data.get('guardianRelationship'));
-        const guardianCpf = optional(data.get('guardianCpf'));
+        const guardianCpfDigits = cpfDigits(guardianCpf) || undefined;
         const guardianIsLegal = data.get('guardianIsLegalGuardian') === 'on';
-        if (isMinor && !current) {
-          if (!guardianName || !guardianPhone || !guardianRelationship) {
+        if (mustProvideGuardian) {
+          if (!guardianName || !guardianPhoneValue || !guardianRelationship) {
             setError('Para paciente menor de idade, informe nome, telefone e parentesco do responsável.');
-            return;
-          }
-          if (guardianCpf && !/^\d{11}$/.test(guardianCpf)) {
-            setError('CPF do responsável deve ter 11 dígitos.');
+            setGuardianDisclosureOpen(true);
             return;
           }
         }
-        if (isMinor && current && guardianName) {
-          if (!guardianPhone || !guardianRelationship) {
+        if (isMinor && guardianName) {
+          if (!guardianPhoneValue || !guardianRelationship) {
             setError('Informe telefone e parentesco do responsável.');
+            setGuardianDisclosureOpen(true);
             return;
           }
-          if (guardianCpf && !/^\d{11}$/.test(guardianCpf)) {
+          if (guardianCpfDigits && guardianCpfDigits.length !== 11) {
             setError('CPF do responsável deve ter 11 dígitos.');
+            setGuardianDisclosureOpen(true);
             return;
           }
+        }
+        const patientCpfDigits = cpfDigits(patientCpf) || undefined;
+        if (patientCpfDigits && patientCpfDigits.length !== 11) {
+          setError('CPF deve ter 11 dígitos.');
+          return;
         }
         const parsed = validate(patientSchema, {
           fullName: data.get('fullName'),
           preferredName: optional(data.get('preferredName')),
-          cpf: optional(data.get('cpf')),
+          cpf: patientCpfDigits,
           passportNumber: optional(data.get('passportNumber')),
-          birthDate: optional(data.get('birthDate')),
+          birthDate: birthDate || undefined,
           email: optional(data.get('email')),
-          primaryPhone: data.get('primaryPhone'),
-          secondaryPhone: optional(data.get('secondaryPhone')),
+          primaryPhone: phoneDigits(primaryPhone),
+          secondaryPhone: phoneDigits(secondaryPhone) || undefined,
           isMinor,
           status: optional(data.get('status')) as 'ACTIVE' | 'INACTIVE' | undefined,
-          postalCode: optional(data.get('postalCode')),
-          street: optional(data.get('street')),
-          number: optional(data.get('number')),
-          complement: optional(data.get('complement')),
-          district: optional(data.get('district')),
-          city: optional(data.get('city')),
-          state: optional(data.get('state')),
+          postalCode: postalCode.replace(/\D/g, '') || undefined,
+          street: street.trim() || undefined,
+          number: number.trim() || undefined,
+          complement: complement.trim() || undefined,
+          district: district.trim() || undefined,
+          city: city.trim() || undefined,
+          state: state.trim() || undefined,
           country: optional(data.get('country')) ?? 'Brasil',
         });
         if (!parsed) return;
@@ -291,12 +372,12 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             ? await api.put<Item>(`/patients/${current.id}`, parsed)
             : await api.post<Item>('/patients', { ...parsed, clinicId });
           const patientId = String(saved.id ?? current?.id ?? '');
-          if (isMinor && guardianName && guardianPhone && guardianRelationship && patientId) {
+          if (isMinor && guardianName && guardianPhoneValue && guardianRelationship && patientId) {
             await api.post(`/patients/${patientId}/guardians`, {
               name: guardianName,
-              phone: guardianPhone,
+              phone: guardianPhoneValue,
               relationship: guardianRelationship,
-              cpf: guardianCpf,
+              cpf: guardianCpfDigits,
               isLegalGuardian: guardianIsLegal,
               canSign: true,
               isPrimary: true,
@@ -305,11 +386,33 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         }, current ? 'Paciente atualizado.' : 'Paciente criado.', event.currentTarget);
       }}>
         <Disclosure title="Dados pessoais" description="Identificação do paciente">
-          <label>Nome completo<input name="fullName" defaultValue={String(current?.fullName ?? '')} required /></label>
+          <label className="span-2">Nome completo<input name="fullName" defaultValue={String(current?.fullName ?? '')} required /></label>
           <label>Nome preferido<input name="preferredName" defaultValue={String(current?.preferredName ?? '')} /></label>
-          <label>CPF<input name="cpf" inputMode="numeric" maxLength={11} defaultValue={String(current?.cpf ?? '')} /></label>
+          <label className="birth-date-field">
+            Nascimento
+            <input
+              name="birthDate"
+              type="date"
+              value={birthDate}
+              onChange={(event) => onBirthDateChange(event.target.value)}
+            />
+            {patientIsMinor ? (
+              <StatusBadge tone="amber">Menor de idade — responsável obrigatório</StatusBadge>
+            ) : null}
+          </label>
+          <label>
+            CPF
+            <input
+              name="cpf"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={14}
+              placeholder="000.000.000-00"
+              value={patientCpf}
+              onChange={(event) => setPatientCpf(maskCpfInput(event.target.value))}
+            />
+          </label>
           <label>Passaporte<input name="passportNumber" defaultValue={String(current?.passportNumber ?? '')} /></label>
-          <label>Nascimento<input name="birthDate" type="date" defaultValue={current?.birthDate ? String(current.birthDate).slice(0, 10) : ''} /></label>
           <label>Status
             <select name="status" defaultValue={String(current?.status ?? 'ACTIVE')}>
               <option value="ACTIVE">Ativo</option>
@@ -318,48 +421,148 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           </label>
         </Disclosure>
         <Disclosure title="Contato" description="Telefones e e-mail">
-          <label>Telefone principal<input name="primaryPhone" defaultValue={String(current?.primaryPhone ?? '')} required /></label>
-          <label>Segundo telefone<input name="secondaryPhone" defaultValue={String(current?.secondaryPhone ?? '')} /></label>
+          <label>Telefone principal
+            <input
+              name="primaryPhone"
+              inputMode="tel"
+              autoComplete="tel"
+              value={primaryPhone}
+              onChange={(event) => setPrimaryPhone(maskPhoneInput(event.target.value))}
+              required
+            />
+          </label>
+          <label>Segundo telefone
+            <input
+              name="secondaryPhone"
+              inputMode="tel"
+              autoComplete="tel"
+              value={secondaryPhone}
+              onChange={(event) => setSecondaryPhone(maskPhoneInput(event.target.value))}
+            />
+          </label>
           <label className="span-2">E-mail<input name="email" type="email" defaultValue={String(current?.email ?? '')} /></label>
         </Disclosure>
-        <Disclosure title="Endereço" description="Opcional no cadastro rápido">
-          <label>CEP<input name="postalCode" inputMode="numeric" maxLength={9} defaultValue={String(current?.postalCode ?? '')} placeholder="00000-000" /></label>
-          <label>Número<input name="number" defaultValue={String(current?.number ?? '')} /></label>
-          <label className="span-2">Rua / logradouro<input name="street" defaultValue={String(current?.street ?? '')} /></label>
-          <label>Complemento<input name="complement" defaultValue={String(current?.complement ?? '')} placeholder="Apartamento, bloco…" /></label>
-          <label>Bairro<input name="district" defaultValue={String(current?.district ?? '')} /></label>
-          <label>Cidade<input name="city" defaultValue={String(current?.city ?? '')} /></label>
-          <label>UF<input name="state" maxLength={2} defaultValue={String(current?.state ?? '')} placeholder="SP" /></label>
+        <Disclosure title="Endereço" description="Opcional no cadastro rápido" defaultOpen={false}>
+          <label>CEP
+            <input
+              name="postalCode"
+              inputMode="numeric"
+              maxLength={9}
+              value={postalCode}
+              placeholder="00000-000"
+              onChange={(event) => {
+                const next = formatPostalCode(event.target.value);
+                setPostalCode(next);
+                void fillAddressFromCep(next);
+              }}
+              disabled={cepBusy}
+            />
+          </label>
+          <label>UF
+            <input
+              name="state"
+              maxLength={2}
+              value={state}
+              placeholder="SP"
+              onChange={(event) => setState(event.target.value.toUpperCase().slice(0, 2))}
+            />
+          </label>
+          <label className="span-2">Rua / logradouro
+            <input name="street" value={street} onChange={(event) => setStreet(event.target.value)} />
+          </label>
+          <label>Número
+            <input name="number" value={number} onChange={(event) => setNumber(event.target.value)} />
+          </label>
+          <label>Complemento
+            <input
+              name="complement"
+              value={complement}
+              placeholder="Apartamento, bloco…"
+              onChange={(event) => setComplement(event.target.value)}
+            />
+          </label>
+          <label>Bairro
+            <input name="district" value={district} onChange={(event) => setDistrict(event.target.value)} />
+          </label>
+          <label>Cidade
+            <input name="city" value={city} onChange={(event) => setCity(event.target.value)} />
+          </label>
           <label>País
             <select name="country" defaultValue={String(current?.country ?? 'Brasil')}>
               <option value="Brasil">Brasil</option>
               <option value="Outro">Outro</option>
             </select>
           </label>
+          {cepHint ? <p className={`muted-note span-2 ${cepHint.includes('não') || cepHint.includes('Não') ? 'form-error' : ''}`}>{cepHint}</p> : null}
         </Disclosure>
-        <Disclosure title="Responsável" description="Obrigatório para menor de idade — dados separados do paciente">
+        <Disclosure
+          title="Responsável"
+          description={patientIsMinor
+            ? 'Obrigatório para menor de idade — dados separados do paciente'
+            : 'Marque menor de idade ou informe nascimento abaixo de 18 anos'}
+          open={guardianDisclosureOpen}
+          onOpenChange={setGuardianDisclosureOpen}
+        >
           <label className="check-field span-2">
             <input
               name="isMinor"
               type="checkbox"
               checked={patientIsMinor}
-              onChange={(event) => setPatientIsMinor(event.target.checked)}
+              onChange={(event) => markMinorAndExpand(event.target.checked)}
             />
             Paciente menor de idade
           </label>
           {patientIsMinor ? (
             <>
-              {current ? (
+              {current && alreadyMarkedMinor ? (
                 <p className="muted-note span-2">
                   Responsáveis já vinculados ficam no prontuário. Preencha abaixo para adicionar outro; os dados não misturam com o cadastro do paciente.
                 </p>
               ) : (
-                <p className="muted-note span-2">Informe o responsável legal. Os dados ficam no cadastro de guardiões, não no paciente.</p>
+                <p className="muted-note span-2">
+                  Informe o responsável legal (obrigatório). Os dados ficam no cadastro de guardiões, não no paciente.
+                </p>
               )}
-              <label>Nome do responsável<input name="guardianName" minLength={2} required={!current} placeholder="Nome completo" /></label>
-              <label>Telefone<input name="guardianPhone" minLength={10} required={!current} /></label>
-              <label>Parentesco<input name="guardianRelationship" minLength={2} required={!current} placeholder="Mãe, pai, tutor…" /></label>
-              <label>CPF<input name="guardianCpf" inputMode="numeric" maxLength={11} placeholder="11 dígitos" /></label>
+              <label className="span-2">
+                Nome do responsável
+                <input
+                  name="guardianName"
+                  minLength={2}
+                  required={mustProvideGuardian}
+                  placeholder="Nome completo"
+                />
+              </label>
+              <label>
+                Telefone
+                <input
+                  name="guardianPhone"
+                  inputMode="tel"
+                  minLength={10}
+                  required={mustProvideGuardian}
+                  value={guardianPhone}
+                  onChange={(event) => setGuardianPhone(maskPhoneInput(event.target.value))}
+                />
+              </label>
+              <label>
+                Parentesco
+                <input
+                  name="guardianRelationship"
+                  minLength={2}
+                  required={mustProvideGuardian}
+                  placeholder="Mãe, pai, tutor…"
+                />
+              </label>
+              <label>
+                CPF
+                <input
+                  name="guardianCpf"
+                  inputMode="numeric"
+                  maxLength={14}
+                  placeholder="000.000.000-00"
+                  value={guardianCpf}
+                  onChange={(event) => setGuardianCpf(maskCpfInput(event.target.value))}
+                />
+              </label>
               <label className="check-field span-2">
                 <input name="guardianIsLegalGuardian" type="checkbox" defaultChecked />
                 Responsável legal
@@ -375,9 +578,9 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   }
 
   if (module === 'agenda') {
-    return <MutationPanel title="Gerenciar agenda" description="Crie, remarque ou cancele; conflitos de profissional/cadeira são bloqueados pela API." message={message} error={error}>
+    return <MutationPanel title="Novo agendamento" description="Escolha paciente, profissional e horário. O sistema impede conflito com outra consulta do mesmo profissional ou cadeira." message={message} error={error}>
       <form className="mutation-form" onSubmit={(event) => {
-        event.preventDefault(); const data = fields(event.currentTarget);
+        event.preventDefault(); const form = event.currentTarget; const data = fields(form);
         let endAt: string;
         try {
           endAt = endAtFromDuration(data.get('startAt'), data.get('duration'));
@@ -390,7 +593,42 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           chairId: optional(data.get('chairId')), startAt: iso(data.get('startAt')), endAt, notes: optional(data.get('notes')),
         });
         if (!parsed) return;
-        void run(() => api.post('/appointments', { ...parsed, clinicId }), 'Consulta criada.', event.currentTarget);
+        const payload = { ...parsed, clinicId };
+        setBusy(true); setError(''); setMessage('');
+        void (async () => {
+          try {
+            const check = await api.post<{
+              conflict?: boolean;
+              warnings?: Array<{ type?: string; message?: string }>;
+            }>('/appointments/check-conflicts', payload).catch(() => ({
+              conflict: false,
+              warnings: [] as Array<{ type?: string; message?: string }>,
+            }));
+            if (check.conflict) {
+              setPersonalWarning('');
+              setAcknowledgePersonalWarning(false);
+              setError('O horário selecionado está em conflito com outro agendamento.');
+              return;
+            }
+            const personal = (check.warnings ?? []).find((item) => item.type === 'personal_calendar');
+            if (personal && !acknowledgePersonalWarning) {
+              setPersonalWarning(personal.message || 'Há um evento pessoal do Google neste horário. Você pode agendar mesmo assim.');
+              setAcknowledgePersonalWarning(true);
+              return;
+            }
+            await api.post('/appointments', payload);
+            setPersonalWarning('');
+            setAcknowledgePersonalWarning(false);
+            setMessage(acknowledgePersonalWarning ? 'Consulta criada (com aviso de agenda pessoal).' : 'Consulta criada.');
+            form.reset();
+            setResourceRevision((value) => value + 1);
+            onSaved();
+          } catch (cause) {
+            setError(errorMessage(cause));
+          } finally {
+            setBusy(false);
+          }
+        })();
       }}>
         <Disclosure title="Informações principais" description="Paciente e equipe de atendimento">
           <SearchableSelect
@@ -404,46 +642,34 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           <SearchableSelect name="unitId" label="Unidade" required options={(clinic?.units ?? []).map((item) => ({ value: item.id, label: item.name }))} />
           <SearchableSelect name="chairId" label="Cadeira" placeholder="Sem cadeira" options={(clinic?.units ?? []).flatMap((item) => item.chairs).map((item) => ({ value: item.id, label: item.name }))} />
         </Disclosure>
-        <Disclosure title="Data e duração" description="Conflitos são verificados pela API">
-          <label>Início<input name="startAt" type="datetime-local" required /></label>
+        <Disclosure title="Data e duração" description="Horários em conflito com outra consulta são bloqueados">
+          <label>Início<input name="startAt" type="datetime-local" required onChange={() => { setPersonalWarning(''); setAcknowledgePersonalWarning(false); }} /></label>
           <label>Duração (min)
-            <select name="duration" defaultValue="30" required>
+            <select name="duration" defaultValue="30" required onChange={() => { setPersonalWarning(''); setAcknowledgePersonalWarning(false); }}>
               {APPOINTMENT_DURATIONS.map((m) => <option key={m} value={m}>{m} min</option>)}
             </select>
           </label>
         </Disclosure>
         <Disclosure title="Detalhes e comunicação" defaultOpen={false}>
           <label className="span-2">Observações<input name="notes" /></label>
-          <p className="muted-note span-2">Etiquetas e lembrete de WhatsApp podem ser ajustados nos detalhes após criar a consulta.</p>
+          <p className="muted-note span-2">Etiquetas e lembrete de WhatsApp podem ser ajustados nos detalhes após criar a consulta. Para remarcar ou cancelar, abra a consulta na agenda.</p>
         </Disclosure>
-        <button className="button primary" disabled={busy}>Criar consulta</button>
-      </form>
-      <form className="mutation-form compact" onSubmit={(event) => {
-        event.preventDefault(); const data = fields(event.currentTarget); const appointmentId = validate(uuid, data.get('appointmentId'));
-        if (!appointmentId) return;
-        const appointment = appointments.find((item) => item.id === appointmentId);
-        if (!appointment) return setError('Selecione um agendamento.');
-        const parsed = validate(appointmentSchema, {
-          patientId: appointment.patientId, professionalId: appointment.professionalId, unitId: appointment.unitId,
-          chairId: appointment.chairId || undefined, startAt: iso(data.get('startAt')), endAt: iso(data.get('endAt')), notes: appointment.notes || undefined,
-        });
-        if (!parsed) return;
-        void run(() => api.put(`/appointments/${appointmentId}`, { ...parsed, clinicId }), 'Consulta remarcada.', event.currentTarget);
-      }}>
-        <label className="span-2">Consulta<select name="appointmentId" required><option value="">Selecione</option>{appointments.filter((item) => item.status !== 'CANCELLED').map((item) => <option key={String(item.id)} value={String(item.id)}>{new Date(String(item.startAt)).toLocaleString('pt-BR')} · {String((item.patient as Item)?.fullName ?? '')}</option>)}</select></label>
-        <label>Novo início<input name="startAt" type="datetime-local" required /></label><label>Novo término<input name="endAt" type="datetime-local" required /></label>
-        <button className="button primary" disabled={busy}>Remarcar</button>
-        <button className="button danger" type="button" disabled={busy} onClick={(event) => {
-          const form = event.currentTarget.form!; const id = String(new FormData(form).get('appointmentId') ?? '');
-          if (!id) return setError('Selecione um agendamento.');
-          void run(() => api.post(`/appointments/${id}/cancel`), 'Consulta cancelada.', form);
-        }}>Cancelar consulta</button>
+        {personalWarning ? (
+          <div className="secure-notice form-warning span-2" role="status">
+            <strong>Aviso da agenda pessoal</strong>
+            <span>{personalWarning}</span>
+            <span>Clique novamente em “Criar mesmo assim” para confirmar.</span>
+          </div>
+        ) : null}
+        <button className="button primary" disabled={busy}>
+          {acknowledgePersonalWarning ? 'Criar mesmo assim' : 'Criar consulta'}
+        </button>
       </form>
     </MutationPanel>;
   }
 
   if (module === 'tratamentos') {
-    return <MutationPanel title="Prontuário e odontograma" description="O paciente selecionado é persistido neste navegador." message={message} error={error}>
+    return <MutationPanel title="Prontuário e odontograma" description="Selecione o paciente para registrar evolução e odontograma." message={message} error={error}>
       <div className="form-toolbar"><label>Paciente<select value={selectedPatientId} onChange={(event) => onPatientChange(event.target.value)}><option value="">Selecione</option>{patientOptions}</select></label></div>
       <form className="mutation-form compact" onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
@@ -477,7 +703,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   }
 
   if (module === 'documentos') {
-    return <MutationPanel title="Paciente dos documentos" description="A seleção é persistida e filtra a visualização clínica relacionada." message={message} error={error}>
+    return <MutationPanel title="Paciente dos documentos" description="Escolha o paciente para filtrar os documentos e a visualização clínica." message={message} error={error}>
       <div className="form-toolbar"><label>Paciente<select value={selectedPatientId} onChange={(event) => onPatientChange(event.target.value)}><option value="">Selecione</option>{patientOptions}</select></label></div>
     </MutationPanel>;
   }
@@ -528,7 +754,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   }
 
   if (module === 'integracoes') {
-    return <MutationPanel title="Configurações seguras" description="Segredos são enviados uma vez, criptografados no servidor e nunca relidos em claro." message={message} error={error}>
+    return <MutationPanel title="Configurações seguras" description="Credenciais são salvas de forma segura e não podem ser visualizadas novamente em texto aberto." message={message} error={error}>
       {(!configurationKind || configurationKind === 'branding') && (
       <form className="mutation-form compact" encType="multipart/form-data" onSubmit={(event) => {
         event.preventDefault();
@@ -603,13 +829,13 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           if (providerCredentialKeys[integrationProvider].includes(field.key)) credentials[field.key] = value;
           else configuration[field.key] = value;
         });
-        void run(() => api.post('/integrations', { clinicId, provider: integrationProvider, credentials, configuration }), 'Credenciais salvas e mascaradas.', event.currentTarget);
+        void run(() => api.post('/integrations', { clinicId, provider: integrationProvider, credentials, configuration }), 'Credenciais salvas com segurança.', event.currentTarget);
       }}>
         <SearchableSelect name="provider" label="Provedor" value={integrationProvider} onChange={(value) => setIntegrationProvider(value as IntegrationProvider)} options={integrationProviders.map((provider) => ({ value: provider, label: provider === 'GOOGLE_CALENDAR' ? 'Google Agenda' : provider }))} />
         {integrationFields[integrationProvider].map((field) => (
           <label key={field.key}>{field.label}<input name={field.key} type={field.secret ? 'password' : field.type ?? 'text'} autoComplete={field.secret ? 'new-password' : 'off'} required /></label>
         ))}
-        <p className="muted-note span-2">Campos específicos de {integrationProvider}. Credenciais são criptografadas; altere o provedor acima para ver o formulário correspondente.</p>
+        <p className="muted-note span-2">Campos do provedor selecionado. As credenciais ficam protegidas após salvar; troque o provedor acima para ver o formulário correspondente.</p>
         <button className="button primary" disabled={busy}>Salvar integração</button>
       </form>
       )}

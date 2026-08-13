@@ -787,6 +787,7 @@ export function PatientDocumentWorkspace({
         title={promptForm?.title ?? ''}
         description={promptForm?.description}
         onClose={() => setPromptForm(null)}
+        confirmOnClose
       >
         <form
           className="mutation-form"

@@ -7,7 +7,7 @@ const policies = {
       'Esta Política de Privacidade descreve como a Sonder Clinic (operadora da plataforma) trata dados pessoais no contexto da disponibilização do software às clínicas contratantes, em conformidade com a LGPD (Lei nº 13.709/2018).',
       'A Sonder processa dados técnicos e cadastrais necessários à operação do SaaS (contas de usuário, logs de autenticação, telemetria operacional e suporte). Dados clínicos e de pacientes são tratados sob responsabilidade da clínica contratante, que atua como controladora desses dados; a Sonder atua como operadora técnica quando processa esses dados sob instrução contratual.',
       'Não vendemos dados pessoais. Compartilhamentos ocorrem apenas com prestadores essenciais (hospedagem, e-mail, monitoramento) sob contrato e medidas de segurança, ou quando exigido por autoridade competente.',
-      'Adotamos controles técnicos e organizacionais: autenticação, RBAC, criptografia em trânsito, mascaramento de segredos e auditoria. Esta política cobre a plataforma Sonder e é distinta das políticas legais configuráveis por cada clínica no módulo Configurações.',
+      'Adotamos controles técnicos e organizacionais: autenticação, permissões por perfil, criptografia em trânsito, proteção de credenciais e auditoria. Esta política cobre a plataforma Sonder e é distinta das políticas legais configuráveis por cada clínica no módulo Configurações.',
       'O titular pode exercer direitos LGPD pelos canais de privacidade indicados abaixo. Políticas da clínica (privacidade, termos e consentimento apresentados aos pacientes) são publicadas e geridas pela própria clínica.',
     ],
   },

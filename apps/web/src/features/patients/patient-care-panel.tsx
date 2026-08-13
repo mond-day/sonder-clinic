@@ -3,9 +3,18 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { BellPlus, Link2Off, Plus, Settings2, UserMinus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { formatCpf, formatPhone, list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
+
+function preferenceSourceLabel(source: unknown) {
+  const key = String(source ?? '').toUpperCase();
+  if (!key || key === '—') return null;
+  if (key === 'MANUAL') return 'Cadastrado manualmente';
+  if (key === 'IMPORT') return 'Importado';
+  if (key === 'SYSTEM') return 'Sistema';
+  return presentationLabel(source);
+}
 
 export function PatientCarePanel({
   patientId,
@@ -25,8 +34,10 @@ export function PatientCarePanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  async function ensurePrefs() {
-    if (prefsLoaded) return;
+  const activeAlerts = alerts.filter((alert) => alert.active !== false);
+
+  async function ensurePrefs(force = false) {
+    if (prefsLoaded && !force) return;
     try {
       const rows = await api.get<RecordValue[]>(`/patients/${patientId}/communication-preferences`);
       setPrefs(list(rows));
@@ -116,8 +127,8 @@ export function PatientCarePanel({
         source: 'MANUAL',
       });
       setModal(null);
-      setPrefsLoaded(false);
-      await ensurePrefs();
+      await ensurePrefs(true);
+      onChanged();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Falha ao salvar preferência.');
     } finally {
@@ -131,7 +142,7 @@ export function PatientCarePanel({
       <div className="settings-list">
         <div className="settings-row">
           <div>
-            <strong>Responsáveis / guardiões</strong>
+            <strong>Responsáveis</strong>
             <span>{guardians.length ? `${guardians.length} vinculado(s)` : 'Nenhum responsável cadastrado'}</span>
           </div>
           <button
@@ -155,8 +166,8 @@ export function PatientCarePanel({
                   {row.isLegalGuardian ? ' · responsável legal' : ''}
                 </strong>
                 <span>
-                  {text(guardian.relationship)} · {text(guardian.phone)}
-                  {guardian.cpf ? ` · CPF ${text(guardian.cpf)}` : ''}
+                  {text(guardian.relationship)} · {formatPhone(guardian.phone)}
+                  {guardian.cpf ? ` · CPF ${formatCpf(guardian.cpf)}` : ''}
                   {row.canSign ? ' · pode assinar' : ''}
                 </span>
               </div>
@@ -175,7 +186,11 @@ export function PatientCarePanel({
         <div className="settings-row">
           <div>
             <strong>Alertas clínicos</strong>
-            <span>CRUD com inativação (sem exclusão física)</span>
+            <span>
+              {activeAlerts.length
+                ? `${activeAlerts.length} alerta${activeAlerts.length === 1 ? '' : 's'} ativo${activeAlerts.length === 1 ? '' : 's'}`
+                : 'Nenhum alerta ativo'}
+            </span>
           </div>
           <button
             className="icon-button"
@@ -214,8 +229,8 @@ export function PatientCarePanel({
         ))}
         <div className="settings-row">
           <div>
-            <strong>Opt-in de comunicação</strong>
-            <span>Preferências por canal/categoria</span>
+            <strong>Preferências de comunicação</strong>
+            <span>Defina quais comunicações o paciente autoriza receber.</span>
           </div>
           <button
             className="icon-button"
@@ -227,32 +242,40 @@ export function PatientCarePanel({
             <Settings2 size={16} />
           </button>
         </div>
-        {(prefsLoaded ? prefs : preferences).map((pref) => (
-          <div className="settings-row" key={String(pref.id ?? `${pref.channel}-${pref.category}`)}>
-            <div>
-              <strong>{presentationLabel(pref.channel)} · {presentationLabel(pref.category)}</strong>
-              <span>origem {text(pref.source, '—')}</span>
+        {(prefsLoaded ? prefs : preferences).map((pref) => {
+          const sourceLabel = preferenceSourceLabel(pref.source);
+          return (
+            <div className="settings-row" key={String(pref.id ?? `${pref.channel}-${pref.category}`)}>
+              <div>
+                <strong>{presentationLabel(pref.channel)} · {presentationLabel(pref.category)}</strong>
+                {sourceLabel ? <span>{sourceLabel}</span> : null}
+              </div>
+              <StatusBadge tone={pref.optedIn ? 'green' : 'red'}>
+                {pref.optedIn ? 'Autorizado' : 'Não autorizado'}
+              </StatusBadge>
             </div>
-            <StatusBadge tone={pref.optedIn ? 'green' : 'red'}>{pref.optedIn ? 'Opt-in' : 'Opt-out'}</StatusBadge>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      <Modal open={modal === 'guardian'} title="Novo responsável" onClose={() => setModal(null)} size="small">
-        <form className="mutation-form" onSubmit={createGuardian}>
+      <Modal open={modal === 'guardian'} title="Novo responsável" onClose={() => setModal(null)} size="small" confirmOnClose>
+        <form className="mutation-form care-form" onSubmit={createGuardian}>
           <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
-          <label>Telefone<input name="phone" minLength={10} required /></label>
+          <label>Telefone<input name="phone" minLength={10} required placeholder="(66) 99999-9999" /></label>
           <label>Parentesco<input name="relationship" minLength={2} required placeholder="Mãe" /></label>
-          <label>CPF<input name="cpf" inputMode="numeric" maxLength={11} placeholder="11 dígitos" /></label>
-          <label className="span-2">E-mail<input name="email" type="email" /></label>
-          <label><input name="isLegalGuardian" type="checkbox" defaultChecked /> Responsável legal</label>
-          <label><input name="isPrimary" type="checkbox" /> Principal</label>
-          <label><input name="canSign" type="checkbox" defaultChecked /> Pode assinar</label>
-          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
+          <label>CPF<input name="cpf" inputMode="numeric" maxLength={14} placeholder="000.000.000-00" /></label>
+          <label>E-mail<input name="email" type="email" /></label>
+          <fieldset className="span-2 care-form-flags">
+            <legend>Permissões</legend>
+            <label className="check-field"><input name="isLegalGuardian" type="checkbox" defaultChecked /> Responsável legal</label>
+            <label className="check-field"><input name="isPrimary" type="checkbox" /> Principal</label>
+            <label className="check-field"><input name="canSign" type="checkbox" defaultChecked /> Pode assinar</label>
+          </fieldset>
+          <button className="button primary span-2" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
         </form>
       </Modal>
-      <Modal open={modal === 'alert'} title="Novo alerta clínico" onClose={() => setModal(null)} size="small">
-        <form className="mutation-form" onSubmit={createAlert}>
+      <Modal open={modal === 'alert'} title="Novo alerta clínico" onClose={() => setModal(null)} size="small" confirmOnClose>
+        <form className="mutation-form care-form" onSubmit={createAlert}>
           <label>Tipo<input name="type" minLength={2} required placeholder="Alergia" autoFocus /></label>
           <label>Severidade
             <select name="severity" defaultValue="WARNING">
@@ -263,11 +286,11 @@ export function PatientCarePanel({
             </select>
           </label>
           <label className="span-2">Mensagem<textarea name="message" rows={3} required minLength={2} /></label>
-          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
+          <button className="button primary span-2" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
         </form>
       </Modal>
-      <Modal open={modal === 'pref'} title="Preferência de comunicação" onClose={() => setModal(null)} size="small">
-        <form className="mutation-form" onSubmit={savePref}>
+      <Modal open={modal === 'pref'} title="Preferência de comunicação" description="Defina o canal, a categoria e se o paciente autoriza o envio." onClose={() => setModal(null)} size="small" confirmOnClose>
+        <form className="mutation-form care-form" onSubmit={savePref}>
           <label>Canal
             <select name="channel" defaultValue="WHATSAPP">
               <option value="WHATSAPP">WhatsApp</option>
@@ -284,8 +307,11 @@ export function PatientCarePanel({
               <option value="MARKETING">Marketing</option>
             </select>
           </label>
-          <label className="span-2"><input name="optedIn" type="checkbox" defaultChecked /> Paciente autoriza envios nesta categoria</label>
-          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar preferência'}</button>
+          <label className="span-2 check-field care-form-consent">
+            <input name="optedIn" type="checkbox" defaultChecked />
+            Paciente autoriza envios nesta categoria
+          </label>
+          <button className="button primary span-2" disabled={busy}>{busy ? 'Salvando…' : 'Salvar preferência'}</button>
         </form>
       </Modal>
     </div>

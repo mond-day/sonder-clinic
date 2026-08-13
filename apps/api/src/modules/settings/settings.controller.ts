@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsArray, IsDateString, IsHexColor, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsArray, IsDateString, IsHexColor, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
@@ -15,6 +16,18 @@ class BrandingDto {
   @IsHexColor() primaryColor!: string;
   @IsOptional() @IsString() logoUrl?: string;
   @IsOptional() @IsString() faviconUrl?: string;
+}
+
+class BusinessHoursRuleDto {
+  @IsString() start!: string;
+  @IsString() end!: string;
+  @IsArray() weekdays!: number[];
+}
+
+class BusinessHoursDto {
+  @IsUUID() clinicId!: string;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => BusinessHoursRuleDto) rules!: BusinessHoursRuleDto[];
+  @IsOptional() @IsString() timezone?: string;
 }
 
 class LegalDto {
@@ -104,6 +117,19 @@ export class SettingsController {
   updateBranding(@Req() req: AuthenticatedRequest, @Body() body: BrandingDto) {
     const { clinicId, ...branding } = body;
     return this.settings.updateBranding(req.auth.organizationId, req.auth.userId, clinicId, branding);
+  }
+
+  @Get('business-hours')
+  @RequirePermissions('clinic.view')
+  businessHours(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId?: string) {
+    return this.settings.getBusinessHours(req.auth.organizationId, clinicId);
+  }
+
+  @Put('business-hours')
+  @RequirePermissions('clinic.manage')
+  updateBusinessHours(@Req() req: AuthenticatedRequest, @Body() body: BusinessHoursDto) {
+    const { clinicId, ...hours } = body;
+    return this.settings.updateBusinessHours(req.auth.organizationId, req.auth.userId, clinicId, hours);
   }
 
   @Post('branding/assets')

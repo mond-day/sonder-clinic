@@ -121,6 +121,7 @@ export function ReferralEditor({
       description="Editor dedicado para encaminhar a outro profissional ou especialidade."
       onClose={onClose}
       size="large"
+      confirmOnClose
     >
       <form className="mutation-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>

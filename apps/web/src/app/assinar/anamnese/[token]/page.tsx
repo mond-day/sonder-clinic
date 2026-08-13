@@ -158,9 +158,7 @@ export default function PublicAnamnesisSignPage() {
           );
         })}
         {!sections.length ? (
-          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
-            {JSON.stringify(answers, null, 2)}
-          </pre>
+          <p className="muted-note">Não há perguntas estruturadas para exibir neste formulário.</p>
         ) : null}
       </section>
 

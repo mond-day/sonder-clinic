@@ -86,7 +86,7 @@ function LoginForm() {
     setSubmitting(true);
     try {
       await api.post('/auth/forgot-password', { email });
-      setMessage('Se o e-mail existir e o SMTP estiver ativo, enviamos o link de redefinição.');
+      setMessage('Se o e-mail estiver cadastrado, enviaremos um link para redefinir a senha.');
       setMode('login');
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível solicitar a redefinição.');
@@ -197,7 +197,7 @@ function LoginForm() {
             Esqueci minha senha
           </button>
           {smtpConfigured === false ? (
-            <p className="muted-note">Recuperação de senha exige SMTP configurado no servidor.</p>
+            <p className="muted-note">A recuperação de senha por e-mail ainda não está disponível nesta clínica. Fale com o administrador.</p>
           ) : null}
           {error && <p className="form-error" role="alert">{error}</p>}
           {message && <p className="muted-note" role="status">{message}</p>}
@@ -208,7 +208,7 @@ function LoginForm() {
         <>
           <div>
             <h1>Esqueci minha senha</h1>
-            <p>Enviaremos um link por e-mail quando o SMTP estiver configurado.</p>
+            <p>Informe seu e-mail para receber um link de redefinição, se o envio de e-mail estiver ativo nesta clínica.</p>
           </div>
           <label>E-mail<input name="email" type="email" autoComplete="email" required /></label>
           {error && <p className="form-error" role="alert">{error}</p>}

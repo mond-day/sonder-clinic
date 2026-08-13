@@ -163,7 +163,7 @@ export function TreatmentItemEditor({
         <header className="treatment-procedure-drawer-head">
           <div>
             <h3>{mode === 'create' ? 'Adicionar procedimento' : 'Editar procedimento'}</h3>
-            <p>Valores finais são recalculados no servidor.</p>
+            <p>Os valores finais são calculados automaticamente ao salvar.</p>
           </div>
           <button type="button" className="button ghost small" onClick={onClose}>Fechar</button>
         </header>
@@ -176,9 +176,10 @@ export function TreatmentItemEditor({
     <Modal
       open={open}
       title={mode === 'create' ? 'Adicionar procedimento' : 'Editar procedimento'}
-      description="Valores finais são recalculados no servidor."
+      description="Os valores finais são calculados automaticamente ao salvar."
       onClose={onClose}
       size="large"
+      confirmOnClose
     >
       {form}
     </Modal>

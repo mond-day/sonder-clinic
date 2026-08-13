@@ -46,6 +46,8 @@ function summarizePayload(payload: unknown) {
   if (!payload || typeof payload !== 'object') return 'Registro operacional.';
   const data = payload as Record<string, unknown>;
   const bits = [
+    data.procedureName ? text(data.procedureName) : null,
+    data.toothFdi ? `Dente ${text(data.toothFdi)}` : null,
     data.reason ? `Motivo: ${text(data.reason)}` : null,
     data.total != null ? `Total: ${text(data.total)}` : null,
     data.presentedVersion != null ? `Versão apresentada: ${text(data.presentedVersion)}` : null,

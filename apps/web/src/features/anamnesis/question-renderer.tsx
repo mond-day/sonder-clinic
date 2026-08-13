@@ -15,6 +15,8 @@ type Question = {
 
 type AnswerValue = unknown;
 
+const SCALE_VALUES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+
 export function QuestionRenderer({
   question,
   value,
@@ -40,10 +42,10 @@ export function QuestionRenderer({
 
   return (
     <div className={`question-block${readOnly ? ' read-only' : ''}`} data-question={question.code}>
-      <label>
+      <label className="question-label">
         <span>
           {question.label}
-          {question.required ? ' *' : ''}
+          {question.required ? <abbr className="question-required" title="Obrigatório">*</abbr> : null}
         </span>
         {question.helpText ? <small>{question.helpText}</small> : null}
       </label>
@@ -90,13 +92,15 @@ export function QuestionRenderer({
       {question.type === 'LONG_TEXT' || question.type === 'SHORT_TEXT' ? (
         question.type === 'LONG_TEXT' ? (
           <textarea
-            rows={3}
+            className="question-input"
+            rows={4}
             value={String(current.value ?? '')}
             readOnly={readOnly}
             onChange={(event) => setValue(event.target.value)}
           />
         ) : (
           <input
+            className="question-input"
             value={String(current.value ?? '')}
             readOnly={readOnly}
             onChange={(event) => setValue(event.target.value)}
@@ -104,22 +108,46 @@ export function QuestionRenderer({
         )
       ) : null}
 
-      {question.type === 'NUMBER' || question.type === 'NUMBER_UNIT' || question.type === 'SCALE_0_10' ? (
+      {question.type === 'SCALE_0_10' ? (
+        <div className="scale-field" role="group" aria-label={question.label}>
+          <div className="scale-track">
+            {SCALE_VALUES.map((score) => (
+              <button
+                key={score}
+                type="button"
+                className={Number(current.value) === score ? 'active' : ''}
+                disabled={readOnly}
+                aria-pressed={Number(current.value) === score}
+                onClick={() => setValue(score)}
+              >
+                {score}
+              </button>
+            ))}
+          </div>
+          <div className="scale-ends" aria-hidden>
+            <span>Nada</span>
+            <span>Máximo</span>
+          </div>
+        </div>
+      ) : null}
+
+      {question.type === 'NUMBER' || question.type === 'NUMBER_UNIT' ? (
         <div className="inline-field">
           <input
+            className="question-input question-input-number"
             type="number"
-            min={question.type === 'SCALE_0_10' ? 0 : undefined}
-            max={question.type === 'SCALE_0_10' ? 10 : undefined}
+            min={0}
             value={current.value == null ? '' : String(current.value)}
             readOnly={readOnly}
             onChange={(event) => setValue(event.target.value === '' ? null : Number(event.target.value))}
           />
-          {question.unit ? <span>{question.unit}</span> : null}
+          {question.unit ? <span className="question-unit">{question.unit}</span> : null}
         </div>
       ) : null}
 
       {question.type === 'DATE' ? (
         <input
+          className="question-input question-input-date"
           type="date"
           value={String(current.value ?? '')}
           readOnly={readOnly}
@@ -129,6 +157,7 @@ export function QuestionRenderer({
 
       {question.type === 'PHONE_CHANNEL' ? (
         <input
+          className="question-input"
           placeholder="Telefone e canal preferencial"
           value={String(current.value ?? '')}
           readOnly={readOnly}
@@ -138,6 +167,7 @@ export function QuestionRenderer({
 
       {question.type === 'REPEATER_MEDICATION' ? (
         <textarea
+          className="question-input"
           rows={3}
           placeholder="Medicamento, dose e frequência (um por linha)"
           value={String(current.value ?? '')}
@@ -164,6 +194,7 @@ export function QuestionRenderer({
           || (typeof current.value === 'string' && !['no', 'never', 'low'].includes(current.value) && current.value !== ''))
         ? (
           <textarea
+            className="question-input question-details"
             rows={2}
             placeholder={question.details?.label ?? 'Detalhes'}
             value={String(current.details ?? '')}

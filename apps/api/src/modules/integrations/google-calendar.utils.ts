@@ -356,6 +356,102 @@ export async function getGoogleCalendarEvent(
   };
 }
 
+export type GoogleCalendarListedEvent = {
+  id: string;
+  summary: string;
+  description?: string;
+  startAt: Date;
+  endAt: Date;
+  allDay: boolean;
+  status?: string;
+  /** Marcador privado gravado pelo sync clinic→Google. */
+  clinicSource?: string;
+  clinicAppointmentId?: string;
+};
+
+type GoogleApiEventItem = {
+  id?: string;
+  summary?: string;
+  description?: string;
+  status?: string;
+  start?: { dateTime?: string; date?: string };
+  end?: { dateTime?: string; date?: string };
+  extendedProperties?: { private?: Record<string, string> };
+};
+
+function mapGoogleApiEvent(item: GoogleApiEventItem): GoogleCalendarListedEvent | null {
+  const id = pickString(item.id);
+  if (!id) return null;
+  const startRaw = item.start?.dateTime ?? item.start?.date;
+  const endRaw = item.end?.dateTime ?? item.end?.date;
+  if (!startRaw || !endRaw) return null;
+  const allDay = Boolean(item.start?.date && !item.start?.dateTime);
+  const privateProps = item.extendedProperties?.private ?? {};
+  return {
+    id,
+    summary: pickString(item.summary) || '(Sem título)',
+    description: pickString(item.description) || undefined,
+    startAt: new Date(startRaw),
+    endAt: new Date(endRaw),
+    allDay,
+    status: pickString(item.status) || undefined,
+    clinicSource: pickString(privateProps.source) || undefined,
+    clinicAppointmentId: pickString(privateProps.appointmentId) || undefined,
+  };
+}
+
+/** Evento criado/atualizado pelo Sonder (não é agenda pessoal). */
+export function isSonderClinicSyncedEvent(event: {
+  clinicSource?: string;
+  clinicAppointmentId?: string;
+}): boolean {
+  return event.clinicSource === 'sonder-clinic' || Boolean(event.clinicAppointmentId);
+}
+
+export function rangesOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
+  return aStart.getTime() < bEnd.getTime() && aEnd.getTime() > bStart.getTime();
+}
+
+/** Lista eventos no intervalo (singleEvents). Pagina até ~500 itens. */
+export async function listGoogleCalendarEvents(
+  accessToken: string,
+  calendarId: string,
+  range: { timeMin: Date; timeMax: Date },
+): Promise<GoogleCalendarListedEvent[]> {
+  const cal = encodeURIComponent(calendarId || 'primary');
+  const events: GoogleCalendarListedEvent[] = [];
+  let pageToken = '';
+  for (let page = 0; page < 4; page += 1) {
+    const params = new URLSearchParams({
+      timeMin: range.timeMin.toISOString(),
+      timeMax: range.timeMax.toISOString(),
+      singleEvents: 'true',
+      orderBy: 'startTime',
+      maxResults: '250',
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    const response = await fetch(
+      `${GOOGLE_CALENDAR}/calendars/${cal}/events?${params}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+    const result = await parseJsonResponse(response);
+    if (!result.ok || !result.body || typeof result.body !== 'object') {
+      throw new Error(`Google Calendar events.list falhou (HTTP ${result.status}).`);
+    }
+    const body = result.body as { items?: GoogleApiEventItem[]; nextPageToken?: string };
+    for (const item of body.items ?? []) {
+      const mapped = mapGoogleApiEvent(item);
+      if (mapped && mapped.status !== 'cancelled') events.push(mapped);
+    }
+    pageToken = pickString(body.nextPageToken);
+    if (!pageToken) break;
+  }
+  return events;
+}
+
 export function readCalendarId(configuration: unknown): string {
   if (configuration && typeof configuration === 'object' && !Array.isArray(configuration)) {
     const id = pickString(

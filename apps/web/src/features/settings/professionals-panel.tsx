@@ -197,6 +197,7 @@ export function ProfessionalsPanel() {
         description="Profissional vinculado a um usuário da organização."
         onClose={() => setModal(null)}
         size="medium"
+        confirmOnClose
       >
         <form className="mutation-form" onSubmit={(event) => void submitUpsert(event)}>
           {!editing ? (

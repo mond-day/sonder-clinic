@@ -381,7 +381,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
             className={`finance-tab ${tab === item.id ? 'active' : ''}`}
             onClick={() => setTab(item.id)}
           >
-            {item.label}{!item.available ? ' · API' : ''}
+            {item.label}{!item.available ? ' · em breve' : ''}
           </button>
         ))}
       </div>
@@ -395,7 +395,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
             <MetricCard label="Regras de comissão" value={rules.length} meta={canCommission ? 'Carregadas' : 'Sem permissão'} />
           </section>
           <div className="dashboard-grid">
-            <Panel title="Atenção financeira" description="Pendências acionáveis dos receivables">
+            <Panel title="Atenção financeira" description="Títulos em aberto que pedem ação">
               <div className="billing-list">
                 <div className="billing-row">
                   <div><strong>{overdue.length} títulos vencidos</strong><span>{currency(overdueTotal)}</span></div>
@@ -594,6 +594,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
             title="Nova regra de comissão"
             description="Regras versionadas: desative ou revise sem alterar eventos já gerados."
             onClose={() => setRuleOpen(false)}
+            confirmOnClose
           >
             <form className="mutation-form compact" onSubmit={(event) => void createCommissionRule(event)}>
               <label>Base
@@ -878,6 +879,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
             description="Gera contas a pagar ou a receber no vencimento (worker + geração manual)."
             onClose={() => setRecurrenceOpen(false)}
             size="medium"
+            confirmOnClose
           >
             {!canFinanceCreate ? (
               <div className="state-message error" role="alert">Sem permissão financial.create.</div>

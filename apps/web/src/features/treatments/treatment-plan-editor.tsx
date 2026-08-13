@@ -150,6 +150,7 @@ export function TreatmentPlanEditor({
         if (mode === 'create') resetCreateItems();
       }}
       size="large"
+      confirmOnClose
     >
       <form
         className="mutation-form"

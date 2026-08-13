@@ -191,6 +191,7 @@ export function ExamRequestEditor({
       description="Liste exames, indicação clínica e urgência a partir do catálogo da clínica."
       onClose={onClose}
       size="medium"
+      confirmOnClose
     >
       <form className="mutation-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>

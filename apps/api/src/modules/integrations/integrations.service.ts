@@ -10,7 +10,10 @@ import {
   exchangeGoogleAuthCode,
   getGoogleCalendarEvent,
   isGoogleCalendarMock,
+  isSonderClinicSyncedEvent,
+  listGoogleCalendarEvents,
   mergeTokenCredentials,
+  rangesOverlap,
   readCalendarId,
   resolveGoogleCalendarWebhookToken,
   resolveGoogleCalendarWebhookUrl,
@@ -22,7 +25,26 @@ import {
   verifyGoogleWebhookHeaders,
   verifyOAuthState,
   watchGoogleCalendarEvents,
+  type GoogleCalendarListedEvent,
 } from './google-calendar.utils';
+
+export type PersonalCalendarWarning = {
+  type: 'personal_calendar';
+  message: string;
+  eventId: string;
+  summary: string;
+  startAt: string;
+  endAt: string;
+};
+
+export type PersonalCalendarEventDto = {
+  id: string;
+  summary: string;
+  startAt: string;
+  endAt: string;
+  allDay: boolean;
+  source: 'google_personal';
+};
 
 const envSchema = z.object({
   NIBO_MOCK: z.string().default('true'),
@@ -591,6 +613,167 @@ export class IntegrationsService {
     }
   }
 
+  /**
+   * Indica se a clínica tem Google Calendar utilizável (OAuth live, sem mock).
+   * Usado pela agenda para exibir o toggle de eventos pessoais.
+   */
+  async googleCalendarClinicAvailability(organizationId: string, clinicId: string) {
+    const clinic = await prisma.clinic.findFirst({
+      where: { id: clinicId, organizationId },
+      select: { id: true },
+    });
+    if (!clinic) throw new NotFoundException('Clínica não encontrada.');
+
+    if (isGoogleCalendarMock()) {
+      return {
+        available: false as const,
+        connected: false,
+        reason: 'mock' as const,
+        message: 'Google Agenda está em modo demonstração. Conecte em produção para ver eventos pessoais.',
+      };
+    }
+
+    const connection = await this.findGoogleCalendarConnection(clinicId);
+    if (!connection?.encryptedCredentials) {
+      return {
+        available: false as const,
+        connected: false,
+        reason: 'not_connected' as const,
+        message: 'Google Agenda não está conectada nesta clínica.',
+      };
+    }
+
+    const credentials = this.decryptForAdapter(connection.encryptedCredentials);
+    if (!resolveGoogleOAuthCredentials(credentials) || !tokensFromCredentials(credentials)) {
+      return {
+        available: false as const,
+        connected: true,
+        reason: 'oauth_incomplete' as const,
+        message: 'Google Agenda conectada, mas falta concluir a autorização.',
+      };
+    }
+
+    return {
+      available: true as const,
+      connected: true,
+      reason: 'ready' as const,
+      message: 'Google Agenda pronta para avisos e visualização de eventos pessoais.',
+      connectionId: connection.id,
+    };
+  }
+
+  /**
+   * Lista eventos pessoais (não sincronizados pela clínica) no intervalo.
+   * Falhas de OAuth/API retornam lista vazia — nunca derruba a agenda.
+   */
+  async listPersonalGoogleEvents(
+    organizationId: string,
+    clinicId: string,
+    from: string,
+    to: string,
+    professionalId?: string,
+  ): Promise<{ available: boolean; events: PersonalCalendarEventDto[]; message?: string }> {
+    const timeMin = new Date(from);
+    const timeMax = new Date(to);
+    if (!Number.isFinite(timeMin.getTime()) || !Number.isFinite(timeMax.getTime()) || timeMin >= timeMax) {
+      throw new BadRequestException('Informe um intervalo from/to válido.');
+    }
+
+    const availability = await this.googleCalendarClinicAvailability(organizationId, clinicId);
+    if (!availability.available) {
+      return { available: false, events: [], message: availability.message };
+    }
+
+    try {
+      const ctx = await this.openGoogleCalendarContext(organizationId, clinicId, professionalId);
+      if (!ctx) {
+        return { available: false, events: [], message: 'Google Agenda indisponível no momento.' };
+      }
+
+      const remote = await listGoogleCalendarEvents(ctx.accessToken, ctx.calendarId, { timeMin, timeMax });
+      const clinicSyncedIds = await this.clinicSyncedExternalEventIds(organizationId, clinicId, timeMin, timeMax);
+      const events = remote
+        .filter((event) => this.isPersonalGoogleEvent(event, clinicSyncedIds))
+        .map((event): PersonalCalendarEventDto => ({
+          id: event.id,
+          summary: event.summary,
+          startAt: event.startAt.toISOString(),
+          endAt: event.endAt.toISOString(),
+          allDay: event.allDay,
+          source: 'google_personal',
+        }));
+
+      return { available: true, events };
+    } catch {
+      return {
+        available: true,
+        events: [],
+        message: 'Não foi possível carregar eventos pessoais do Google agora.',
+      };
+    }
+  }
+
+  /**
+   * Avisos não bloqueantes quando o horário proposto sobrepõe evento pessoal do Google.
+   */
+  async findPersonalCalendarWarnings(
+    organizationId: string,
+    input: {
+      clinicId: string;
+      professionalId?: string;
+      startAt: string;
+      endAt: string;
+      excludeAppointmentId?: string;
+    },
+  ): Promise<PersonalCalendarWarning[]> {
+    const startAt = new Date(input.startAt);
+    const endAt = new Date(input.endAt);
+    if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime()) || startAt >= endAt) {
+      return [];
+    }
+
+    try {
+      const availability = await this.googleCalendarClinicAvailability(organizationId, input.clinicId);
+      if (!availability.available) return [];
+
+      const ctx = await this.openGoogleCalendarContext(
+        organizationId,
+        input.clinicId,
+        input.professionalId,
+      );
+      if (!ctx) return [];
+
+      const remote = await listGoogleCalendarEvents(ctx.accessToken, ctx.calendarId, {
+        timeMin: startAt,
+        timeMax: endAt,
+      });
+      const clinicSyncedIds = await this.clinicSyncedExternalEventIds(
+        organizationId,
+        input.clinicId,
+        startAt,
+        endAt,
+        input.excludeAppointmentId,
+      );
+
+      const warnings: PersonalCalendarWarning[] = [];
+      for (const event of remote) {
+        if (!this.isPersonalGoogleEvent(event, clinicSyncedIds)) continue;
+        if (!rangesOverlap(startAt, endAt, event.startAt, event.endAt)) continue;
+        warnings.push({
+          type: 'personal_calendar',
+          message: `Conflito com agenda pessoal: “${event.summary}”. Você pode agendar mesmo assim.`,
+          eventId: event.id,
+          summary: event.summary,
+          startAt: event.startAt.toISOString(),
+          endAt: event.endAt.toISOString(),
+        });
+      }
+      return warnings;
+    } catch {
+      return [];
+    }
+  }
+
   /** Usado por test-connection quando já há refresh_token. */
   async probeGoogleCalendarLive(connectionId: string, credentials: Record<string, string>, configuration: unknown) {
     const status = this.googleCalendarOauthStatus(undefined, connectionId, credentials, configuration);
@@ -757,6 +940,106 @@ export class IntegrationsService {
       }),
     ]);
     return { id, status };
+  }
+
+  private async findGoogleCalendarConnection(clinicId: string, professionalId?: string) {
+    if (professionalId) {
+      const professionalScoped = await prisma.integrationConnection.findFirst({
+        where: {
+          clinicId,
+          provider: 'GOOGLE_CALENDAR',
+          status: 'ACTIVE',
+          encryptedCredentials: { not: null },
+          scopeType: 'PROFESSIONAL',
+          scopeId: professionalId,
+        },
+      });
+      if (professionalScoped) return professionalScoped;
+    }
+
+    return prisma.integrationConnection.findFirst({
+      where: {
+        clinicId,
+        provider: 'GOOGLE_CALENDAR',
+        status: 'ACTIVE',
+        encryptedCredentials: { not: null },
+        OR: [
+          { scopeType: 'CLINIC' },
+          { scopeType: { not: 'PROFESSIONAL' } },
+        ],
+      },
+      orderBy: { lastSyncAt: 'desc' },
+    });
+  }
+
+  private async openGoogleCalendarContext(
+    organizationId: string,
+    clinicId: string,
+    professionalId?: string,
+  ): Promise<{ accessToken: string; calendarId: string; connectionId: string } | null> {
+    if (isGoogleCalendarMock()) return null;
+    const clinic = await prisma.clinic.findFirst({
+      where: { id: clinicId, organizationId },
+      select: { id: true },
+    });
+    if (!clinic) return null;
+
+    const connection = await this.findGoogleCalendarConnection(clinicId, professionalId);
+    if (!connection?.encryptedCredentials) return null;
+
+    let credentials = this.decryptForAdapter(connection.encryptedCredentials);
+    const oauth = resolveGoogleOAuthCredentials(credentials);
+    if (!oauth || !tokensFromCredentials(credentials)) return null;
+
+    const fresh = await ensureFreshAccessToken(oauth, credentials);
+    if (fresh.refreshed) {
+      credentials = fresh.credentials;
+      await prisma.integrationConnection.update({
+        where: { id: connection.id },
+        data: { encryptedCredentials: this.encrypt(credentials) },
+      });
+    }
+
+    return {
+      accessToken: fresh.accessToken,
+      calendarId: readCalendarId(connection.configuration),
+      connectionId: connection.id,
+    };
+  }
+
+  private async clinicSyncedExternalEventIds(
+    organizationId: string,
+    clinicId: string,
+    timeMin: Date,
+    timeMax: Date,
+    excludeAppointmentId?: string,
+  ): Promise<Set<string>> {
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        organizationId,
+        clinicId,
+        ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+        externalCalendarEventId: { not: null },
+        startAt: { lt: timeMax },
+        endAt: { gt: timeMin },
+      },
+      select: { externalCalendarEventId: true },
+      take: 500,
+    });
+    return new Set(
+      appointments
+        .map((item) => item.externalCalendarEventId)
+        .filter((value): value is string => Boolean(value)),
+    );
+  }
+
+  private isPersonalGoogleEvent(
+    event: GoogleCalendarListedEvent,
+    clinicSyncedIds: Set<string>,
+  ): boolean {
+    if (isSonderClinicSyncedEvent(event)) return false;
+    if (clinicSyncedIds.has(event.id)) return false;
+    return true;
   }
 
   private hasCredentials(provider: Provider): boolean {

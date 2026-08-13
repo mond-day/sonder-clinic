@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildGoogleAuthorizeUrl,
   isGoogleCalendarMock,
+  isSonderClinicSyncedEvent,
   mergeTokenCredentials,
+  rangesOverlap,
   readCalendarId,
   resolveGoogleOAuthCredentials,
   signOAuthState,
@@ -77,6 +79,16 @@ describe('google-calendar.utils', () => {
     expect(readCalendarId({ calendarId: 'clinic-cal' })).toBe('clinic-cal');
     vi.stubEnv('GOOGLE_CALENDAR_MOCK', 'false');
     expect(isGoogleCalendarMock()).toBe(false);
+  });
+
+  it('identifica eventos sincronizados pela clínica e sobreposição', () => {
+    expect(isSonderClinicSyncedEvent({ clinicSource: 'sonder-clinic' })).toBe(true);
+    expect(isSonderClinicSyncedEvent({ clinicAppointmentId: 'appt-1' })).toBe(true);
+    expect(isSonderClinicSyncedEvent({ clinicSource: 'other' })).toBe(false);
+    const aStart = new Date('2026-08-11T12:00:00.000Z');
+    const aEnd = new Date('2026-08-11T13:00:00.000Z');
+    expect(rangesOverlap(aStart, aEnd, new Date('2026-08-11T12:30:00.000Z'), new Date('2026-08-11T14:00:00.000Z'))).toBe(true);
+    expect(rangesOverlap(aStart, aEnd, new Date('2026-08-11T13:00:00.000Z'), new Date('2026-08-11T14:00:00.000Z'))).toBe(false);
   });
 
   it('verifyGoogleWebhookHeaders valida token e sync', async () => {

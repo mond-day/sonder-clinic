@@ -91,6 +91,7 @@ class SessionDto {
   @IsOptional() @IsString() professionalSignatureHash?: string;
   @IsOptional() @IsString() idempotencyKey?: string;
   @IsOptional() @IsBoolean() allowExtraSession?: boolean;
+  @IsOptional() @IsDateString() completedAt?: string;
 }
 class SessionCorrectionDto {
   @IsString() @MinLength(3) reason!: string;
@@ -100,6 +101,7 @@ class SessionCorrectionDto {
 }
 class CompleteItemDto {
   @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsDateString() clinicalDate?: string;
 }
 class DocumentTemplateDto {
   @IsString() @MinLength(2) type!: string;
@@ -472,7 +474,10 @@ export class OperationsController {
   }
   @Post('treatment-items/:id/complete') @RequirePermissions('treatment.execute')
   completeItem(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: CompleteItemDto) {
-    return this.operations.completeTreatmentItem(req.auth.organizationId, req.auth.userId, id, body.notes);
+    return this.operations.completeTreatmentItem(req.auth.organizationId, req.auth.userId, id, {
+      notes: body.notes,
+      clinicalDate: body.clinicalDate,
+    });
   }
   @Post('treatment-sessions/:id/corrections') @RequirePermissions('treatment.execute', 'medical_record.correct')
   correctSession(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: SessionCorrectionDto) {

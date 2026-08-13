@@ -8,7 +8,6 @@ import { EmptyState, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
 
 type DentitionType = 'PERMANENT' | 'DECIDUOUS' | 'MIXED';
-type CreateKind = 'odontogram' | 'indication' | 'existing' | null;
 
 const PERMANENT_UPPER = [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28];
 const PERMANENT_LOWER = [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38];
@@ -92,10 +91,8 @@ export function OdontogramBoard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [createKind, setCreateKind] = useState<CreateKind>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [legendOpen, setLegendOpen] = useState(false);
 
   const activeTooth = selectedTeeth[selectedTeeth.length - 1] ?? null;
 
@@ -165,11 +162,8 @@ export function OdontogramBoard({
     ));
   }
 
-  function openCreate(kind: CreateKind) {
-    setCreateKind(kind);
-    if (kind === 'indication') setStatus('PLANNED');
-    if (kind === 'existing') setStatus('EXISTING');
-    if (kind === 'odontogram' && !selectedTeeth.length) {
+  function openInspectorForNew() {
+    if (!selectedTeeth.length) {
       const defaultTooth = arches.upper[Math.floor(arches.upper.length / 2)];
       if (defaultTooth) setSelectedTeeth([defaultTooth]);
     }
@@ -210,7 +204,6 @@ export function OdontogramBoard({
       );
       setSelectedFaces([]);
       setNotes('');
-      setCreateKind(null);
       onSaved();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Falha ao salvar odontograma.');
@@ -315,14 +308,17 @@ export function OdontogramBoard({
             {conditions.map((item) => <option key={String(item.id)} value={String(item.id)}>{text(item.name)}</option>)}
           </select>
         </label>
-        <label>Status
+        <label>Status no dente
           <select value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="EXISTING">Existente</option>
-            <option value="PLANNED">Planejado</option>
+            <option value="EXISTING">Existente — já está na boca</option>
+            <option value="PLANNED">Planejado (indicação visual)</option>
             <option value="IN_PROGRESS">Em andamento</option>
             <option value="COMPLETED">Concluído</option>
           </select>
         </label>
+        <p className="field-hint span-2">
+          A indicação visual marca o que se pretende tratar neste dente. Vincular um procedimento ao dente no orçamento continua na aba Tratamentos.
+        </p>
         <label className="span-2">Observações
           <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Profundidade, material, etc." />
         </label>
@@ -368,23 +364,6 @@ export function OdontogramBoard({
 
   return (
     <div className="odontogram-board odontogram-workspace">
-      <Modal open={createKind != null && !inspectorOpen} title="Adicionar ao odontograma" description="Escolha o tipo de registro." onClose={() => setCreateKind(null)}>
-        <div className="template-picker">
-          <button type="button" className="template-picker-item" onClick={() => openCreate('odontogram')}>
-            <strong>Novo odontograma / achado</strong>
-            <span>Registra condição em dente e faces selecionados.</span>
-          </button>
-          <button type="button" className="template-picker-item" onClick={() => openCreate('indication')}>
-            <strong>Indicação (planejado)</strong>
-            <span>Marca procedimento planejado no elemento.</span>
-          </button>
-          <button type="button" className="template-picker-item" onClick={() => openCreate('existing')}>
-            <strong>Restauração / condição existente</strong>
-            <span>Registra o que já está presente clinicamente.</span>
-          </button>
-        </div>
-      </Modal>
-
       <Modal
         open={historyOpen}
         title={activeTooth ? `Histórico · dente ${activeTooth}` : 'Histórico do elemento'}
@@ -411,15 +390,6 @@ export function OdontogramBoard({
         )}
       </Modal>
 
-      <Modal open={legendOpen} title="Legenda do odontograma" onClose={() => setLegendOpen(false)} size="small">
-        <ul className="odontogram-legend">
-          <li><span className="swatch done" /> Existente / concluído</li>
-          <li><span className="swatch planned" /> Planejado / em andamento</li>
-          <li><span className="swatch active" /> Selecionado / outro status</li>
-          <li>V vestibular · L/P lingual ou palatina · M mesial · D distal · O/I oclusal ou incisal</li>
-        </ul>
-      </Modal>
-
       <div className="odontogram-toolbar compact">
         <div>
           <p className="muted-note">
@@ -428,7 +398,7 @@ export function OdontogramBoard({
               : `Nenhuma versão ${presentationLabel(dentitionType)}.`}
           </p>
         </div>
-        <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div className="segmented" role="group" aria-label="Tipo de dentição">
             {DENTITION_OPTIONS.map((option) => (
               <button
@@ -441,12 +411,14 @@ export function OdontogramBoard({
               </button>
             ))}
           </div>
-          <button type="button" className="button soft small" onClick={() => setLegendOpen(true)}>Legenda</button>
-          <label className="checkbox-row" style={{ margin: 0 }}>
-            <input type="checkbox" checked={multiTooth} onChange={(event) => setMultiTooth(event.target.checked)} />
-            Lote
-          </label>
-          <button type="button" className="button primary small" onClick={() => setCreateKind('odontogram')}>
+          <div className="lote-field">
+            <label className="checkbox-row" style={{ margin: 0 }}>
+              <input type="checkbox" checked={multiTooth} onChange={(event) => setMultiTooth(event.target.checked)} />
+              Pintura em lote
+            </label>
+            <small>Marque para selecionar vários dentes e aplicar a mesma condição de uma vez.</small>
+          </div>
+          <button type="button" className="button primary small" onClick={openInspectorForNew}>
             <Plus size={14} /> Registrar condição
           </button>
         </div>
@@ -462,6 +434,16 @@ export function OdontogramBoard({
         </div>
         {inspector}
       </div>
+
+      <footer className="odontogram-footer">
+        <small className="eyebrow">Legenda</small>
+        <ul className="odontogram-legend">
+          <li><span className="swatch done" /> Existente / concluído</li>
+          <li><span className="swatch planned" /> Planejado (indicação) / em andamento</li>
+          <li><span className="swatch active" /> Selecionado / outro status</li>
+          <li>V vestibular · L/P lingual ou palatina · M mesial · D distal · O/I oclusal ou incisal</li>
+        </ul>
+      </footer>
     </div>
   );
 }

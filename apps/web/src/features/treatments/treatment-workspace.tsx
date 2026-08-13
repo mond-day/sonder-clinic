@@ -7,21 +7,28 @@ import {
   Copy,
   Pencil,
   Presentation,
+  Printer,
   RotateCcw,
   Ban,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   currency,
+  dateInputToIso,
   dateOnly,
   dateTime,
   hasPermission,
+  list,
   presentationLabel,
   statusTone,
   text,
+  toDateInputValue,
+  type RecordValue,
 } from '@/lib/format';
 import { useAuth } from '@/components/auth-provider';
-import type { Professional } from '@/components/selection-provider';
+import { useSelection, type Professional } from '@/components/selection-provider';
+import { printTreatmentDocument, buildTreatmentPrintHtml } from './print-treatment';
+import { completeItemSchema } from './treatment-schemas';
 import { EmptyState, ErrorState, Panel, Skeleton, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
 import * as treatmentApi from './treatment-api';
@@ -50,15 +57,18 @@ import {
 export function TreatmentWorkspace({
   clinicId,
   patientId,
+  patientName,
   professionals,
   onChanged,
 }: {
   clinicId: string;
   patientId: string;
+  patientName?: string;
   professionals: Professional[];
   onChanged?: () => void;
 }) {
   const { user } = useAuth();
+  const { clinics } = useSelection();
   const permissions = user?.permissions;
 
   const canView = hasPermission(permissions, 'treatment.view');
@@ -77,6 +87,7 @@ export function TreatmentWorkspace({
   const [planModalOpen, setPlanModalOpen] = useState(false);
   const [detail, setDetail] = useState<TreatmentPlan | null>(null);
   const [history, setHistory] = useState<TreatmentPlanEvent[]>([]);
+  const [evolutions, setEvolutions] = useState<RecordValue[]>([]);
   const [filters, setFilters] = useState<TreatmentFiltersState>({
     search: '',
     status: 'all',
@@ -105,6 +116,10 @@ export function TreatmentWorkspace({
     description: string;
     onConfirm: () => void;
   }>(null);
+  const [completeItem, setCompleteItem] = useState<TreatmentItem | null>(null);
+  const [completeDate, setCompleteDate] = useState(toDateInputValue());
+  const [completeNotes, setCompleteNotes] = useState('');
+  const [completeError, setCompleteError] = useState('');
 
   const professionalName = useCallback(
     (id: string) => professionals.find((row) => row.id === id)?.name ?? 'Profissional',
@@ -145,12 +160,14 @@ export function TreatmentWorkspace({
     setDetailLoading(true);
     setActionError('');
     try {
-      const [plan, events] = await Promise.all([
+      const [plan, events, entries] = await Promise.all([
         treatmentApi.getTreatmentPlan(id),
         treatmentApi.getTreatmentHistory(id).catch(() => [] as TreatmentPlanEvent[]),
+        treatmentApi.listPlanEvolutions(patientId, clinicId, id).catch(() => [] as RecordValue[]),
       ]);
       setDetail(plan);
       setHistory(events);
+      setEvolutions(list(entries));
       setApproveIds([]);
     } catch (cause) {
       setActionError(cause instanceof ApiError ? cause.message : 'Falha ao carregar o plano.');
@@ -158,7 +175,7 @@ export function TreatmentWorkspace({
     } finally {
       setDetailLoading(false);
     }
-  }, []);
+  }, [clinicId, patientId]);
 
   useEffect(() => {
     void loadPlans();
@@ -169,6 +186,7 @@ export function TreatmentWorkspace({
       if (!planModalOpen) {
         setDetail(null);
         setHistory([]);
+        setEvolutions([]);
       }
       return;
     }
@@ -223,6 +241,7 @@ export function TreatmentWorkspace({
     setSessionItem(null);
     setReasonModal(null);
     setConfirmModal(null);
+    setCompleteItem(null);
   }
 
   if (!canView) {
@@ -279,15 +298,58 @@ export function TreatmentWorkspace({
         onClose={closePlanModal}
         closeOnBackdrop={false}
         size="xlarge"
+        confirmOnClose
       >
         <div className={`treatment-plan-modal ${itemEditor || sessionItem ? 'with-drawer' : ''}`}>
           <div className="treatment-plan-modal-main">
-            {(reasonModal || confirmModal) ? (
+            {(reasonModal || confirmModal || completeItem) ? (
               <div className="treatment-inline-confirm" role="dialog" aria-modal="true">
                 <div className="treatment-inline-confirm-card">
-                  <h3>{reasonModal?.title ?? confirmModal?.title}</h3>
-                  <p>{reasonModal?.description ?? confirmModal?.description}</p>
-                  {reasonModal ? (
+                  <h3>
+                    {completeItem
+                      ? 'Concluir procedimento'
+                      : (reasonModal?.title ?? confirmModal?.title)}
+                  </h3>
+                  <p>
+                    {completeItem
+                      ? `Informe quando ${text(completeItem.procedure?.name, 'o procedimento')} foi realizado.`
+                      : (reasonModal?.description ?? confirmModal?.description)}
+                  </p>
+                  {completeItem ? (
+                    <form
+                      className="mutation-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        setCompleteError('');
+                        const parsed = completeItemSchema.safeParse({
+                          clinicalDate: completeDate,
+                          notes: completeNotes.trim() || undefined,
+                        });
+                        if (!parsed.success) {
+                          setCompleteError(parsed.error.issues[0]?.message ?? 'Dados inválidos.');
+                          return;
+                        }
+                        const itemId = completeItem.id;
+                        setCompleteItem(null);
+                        void runAction(() => treatmentApi.completeTreatmentItem(itemId, {
+                          notes: parsed.data.notes,
+                          clinicalDate: dateInputToIso(parsed.data.clinicalDate),
+                        }));
+                      }}
+                    >
+                      <label>Data da conclusão
+                        <input type="date" required value={completeDate} onChange={(event) => setCompleteDate(event.target.value)} />
+                      </label>
+                      <label>Notas clínicas (opcional)
+                        <textarea rows={3} value={completeNotes} onChange={(event) => setCompleteNotes(event.target.value)} placeholder="O que foi realizado, materiais, oclusão…" />
+                      </label>
+                      {completeError ? <p className="form-error" role="alert">{completeError}</p> : null}
+                      <div className="modal-footer">
+                        <button type="button" className="button ghost" onClick={() => setCompleteItem(null)}>Voltar</button>
+                        <button type="submit" className="button primary" disabled={busy}>Concluir procedimento</button>
+                      </div>
+                    </form>
+                  ) : reasonModal ? (
                     <form
                       className="mutation-form"
                       onSubmit={(event) => {
@@ -344,6 +406,39 @@ export function TreatmentWorkspace({
                     </p>
                   </div>
                   <div className="detail-actions">
+                    <button
+                      type="button"
+                      className="button small"
+                      onClick={() => {
+                        const clinic = clinics.find((item) => item.id === clinicId);
+                        const html = buildTreatmentPrintHtml({
+                          title: text(selected.title),
+                          patientName,
+                          clinicName: clinic?.tradeName,
+                          professionalName: professionalName(selected.professionalId),
+                          statusLabel: presentationLabel(selected.status),
+                          notes: selected.notes,
+                          items: (selected.items ?? []).map((item) => ({
+                            name: text(item.procedure?.name, 'Procedimento'),
+                            tooth: item.toothFdi,
+                            face: item.face,
+                            quantity: item.quantity,
+                            sessions: `${(item.sessions ?? []).filter((session) => !session.correctionOfId).length}/${item.plannedSessions}`,
+                            unitPrice: currency(item.unitPrice),
+                            total: currency(item.total),
+                            status: presentationLabel(item.status),
+                          })),
+                          subtotal: currency(selected.subtotal),
+                          discount: currency(selected.discount),
+                          total: currency(selected.total),
+                        });
+                        if (!printTreatmentDocument(html)) {
+                          setActionError('Permita a impressão para gerar o orçamento.');
+                        }
+                      }}
+                    >
+                      <Printer size={14} /> Imprimir orçamento
+                    </button>
                     {canEditPlan ? (
                       <button type="button" className="button small" disabled={busy} onClick={() => setEditorMode('edit')}>
                         <Pencil size={14} /> Editar
@@ -532,13 +627,10 @@ export function TreatmentWorkspace({
                           setSessionItem(item);
                         }}
                         onComplete={(item) => {
-                          setConfirmModal({
-                            title: 'Concluir procedimento',
-                            description: 'Confirma a conclusão deste procedimento?',
-                            onConfirm: () => {
-                              void runAction(() => treatmentApi.completeTreatmentItem(item.id));
-                            },
-                          });
+                          setCompleteItem(item);
+                          setCompleteDate(toDateInputValue());
+                          setCompleteNotes('');
+                          setCompleteError('');
                         }}
                       />
                     </>
@@ -569,10 +661,26 @@ export function TreatmentWorkspace({
 
                   {detailTab === 'evolutions' ? (
                     <div className="session-stack">
-                      <EmptyState
-                        title="Evoluções do plano"
-                        description="Registre evoluções clínicas vinculadas a este plano ou a um procedimento."
-                      />
+                      {!evolutions.length ? (
+                        <EmptyState
+                          title="Evoluções do plano"
+                          description="Concluir um procedimento ou registrar uma sessão gera evolução automaticamente."
+                        />
+                      ) : (
+                        evolutions.map((entry) => (
+                          <article className="session-card" key={String(entry.id)}>
+                            <div className="date">
+                              <strong>{new Date(String(entry.clinicalDate)).getDate()}</strong>
+                              <span>{new Date(String(entry.clinicalDate)).toLocaleDateString('pt-BR', { month: 'short' })}</span>
+                            </div>
+                            <div>
+                              <h4>{presentationLabel(entry.type)}</h4>
+                              <p>{text(entry.renderedText)}</p>
+                            </div>
+                            <time>{dateTime(entry.clinicalDate)}</time>
+                          </article>
+                        ))
+                      )}
                       {canExecute && !readonly ? (
                         <div className="form-section">
                           <header><h3>Nova evolução</h3></header>

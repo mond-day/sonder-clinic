@@ -24,7 +24,7 @@ const OPTIONS: Array<{
   {
     kind: 'exam-request',
     title: 'Solicitação de exame',
-    description: 'Exames adicionados sob demanda.',
+    description: 'Crie uma solicitação com os exames necessários.',
     icon: 'EX',
   },
   {
@@ -62,7 +62,7 @@ export function NewDocumentPicker({
     <Modal
       open={open}
       title="Novo documento"
-      description="Escolha o tipo antes de exibir qualquer formulário."
+      description="Escolha o tipo de documento que deseja criar."
       onClose={onClose}
       size="large"
     >

@@ -86,9 +86,10 @@ export function DocumentEditor({
     <Modal
       open={open}
       title="Gerar documento a partir de modelo"
-      description="O conteúdo clínico será congelado no servidor com identidade do paciente e do profissional."
+      description="Ao gerar, o conteúdo clínico fica registrado com os dados do paciente e do profissional."
       onClose={onClose}
       size="large"
+      confirmOnClose
     >
       <form className="mutation-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>

@@ -1,15 +1,18 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { MessageCircle, Pencil } from 'lucide-react';
-import { api, ApiError } from '@/lib/api';
+import { Camera, MessageCircle, Pencil } from 'lucide-react';
+import { api, ApiError, API_URL } from '@/lib/api';
 import {
   ageLabel,
   currency,
   dateOnly,
   dateTime,
+  daysUntilBirthday,
+  formatCpf,
+  formatPhone,
   hasPermission,
   initials,
   list,
@@ -70,6 +73,8 @@ export function PatientChart({ patientId }: { patientId: string }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [photoMediaId, setPhotoMediaId] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState('');
 
   const setTab = useCallback((tab: TabId) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -90,14 +95,17 @@ export function PatientChart({ patientId }: { patientId: string }) {
         ? api.get<RecordValue[]>(`/receivables?clinicId=${clinicId}&patientId=${patientId}`).catch(() => [])
         : Promise.resolve([] as RecordValue[]),
       api.get<RecordValue[]>('/odontogram-conditions').catch(() => []),
+      api.get<RecordValue[]>(`/patients/${patientId}/media`).catch(() => []),
     ])
-      .then(([nextPatient, nextRecord, nextPlans, nextOdontograms, nextReceivables, nextConditions]) => {
+      .then(([nextPatient, nextRecord, nextPlans, nextOdontograms, nextReceivables, nextConditions, nextMedia]) => {
         setPatient(nextPatient);
         setRecord(nextRecord);
         setPlans(list(nextPlans));
         setOdontograms(list(nextOdontograms));
         setReceivables(list(nextReceivables));
         setOdontogramConditions(list(nextConditions));
+        const profilePhoto = list(nextMedia).find((item) => String(item.type) === 'PROFILE_PHOTO' && !item.archivedAt);
+        setPhotoMediaId(profilePhoto ? String(profilePhoto.id) : null);
         window.localStorage.setItem('sonder.selectedPatientId', patientId);
       })
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Não foi possível abrir o prontuário.'))
@@ -107,7 +115,14 @@ export function PatientChart({ patientId }: { patientId: string }) {
   useEffect(load, [load]);
 
   const entries = list(record?.entries);
-  const alerts = list(record?.alerts ?? patient?.alerts);
+  const patientAlerts = list(patient?.alerts).filter((alert) => alert.active !== false);
+  const alerts = patientAlerts;
+  const allergyAlerts = patientAlerts.filter((alert) => {
+    const haystack = `${alert.type ?? ''} ${alert.message ?? ''} ${alert.title ?? ''}`.toLowerCase();
+    return haystack.includes('allerg') || haystack.includes('alerg');
+  });
+  const birthdayInDays = daysUntilBirthday(patient?.birthDate);
+  const birthdaySoon = birthdayInDays != null && birthdayInDays >= 0 && birthdayInDays <= 14;
   const latestFindings = list(odontograms[0]?.findings);
   const findingsByToothFace = useMemo(() => {
     const map = new Map<string, string>();
@@ -124,7 +139,12 @@ export function PatientChart({ patientId }: { patientId: string }) {
   );
 
   const age = ageLabel(patient?.birthDate);
-  const code = patient?.id ? `#${String(patient.id).slice(0, 8).toUpperCase()}` : '—';
+  const preferred = text(patient?.preferredName, '');
+  const identityMeta = [
+    age,
+    preferred ? `“${preferred}”` : null,
+    presentationLabel(patient?.status),
+  ].filter(Boolean);
 
   async function submitModal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -197,9 +217,16 @@ export function PatientChart({ patientId }: { patientId: string }) {
       <Modal
         open={Boolean(activeModal)}
         title={activeModal === 'evolution' ? 'Nova evolução' : 'Receber pagamento'}
-        description="O registro será persistido no prontuário."
+        description={
+          activeModal === 'evolution'
+            ? 'A evolução ficará registrada no prontuário do paciente.'
+            : activeModal === 'receive'
+              ? 'O recebimento será registrado no financeiro do paciente.'
+              : undefined
+        }
         onClose={() => { setActiveModal(null); setFormError(''); }}
         size="medium"
+        confirmOnClose
       >
         <form className="mutation-form" onSubmit={submitModal}>
           {activeModal === 'evolution' ? (
@@ -280,7 +307,19 @@ export function PatientChart({ patientId }: { patientId: string }) {
       <article className="patient-profile-head">
         <div className="patient-cover" />
         <div className="patient-identity">
-          <div className="patient-avatar">{initials(patient.fullName)}</div>
+          <PatientAvatar
+            patientId={patientId}
+            clinicId={clinicId}
+            name={text(patient.fullName)}
+            mediaId={photoMediaId}
+            canUpload={hasPermission(user?.permissions, 'medical_record.create', 'document.create')}
+            error={photoError}
+            onError={setPhotoError}
+            onUploaded={(id) => {
+              setPhotoMediaId(id);
+              setPhotoError('');
+            }}
+          />
           <div className="patient-name">
             <h2>
               {text(patient.fullName)}
@@ -299,8 +338,42 @@ export function PatientChart({ patientId }: { patientId: string }) {
               ) : null}
             </h2>
             <p>
-              {[age, code, presentationLabel(patient.status)].filter(Boolean).join(' · ')}
+              {identityMeta.join(' · ')}
             </p>
+            {photoError ? <p className="form-error" role="alert">{photoError}</p> : null}
+            {(birthdaySoon || allergyAlerts.length > 0 || patientAlerts.length > 0) ? (
+              <div className="patient-cue-badges" aria-label="Indicadores clínicos">
+                {birthdaySoon ? (
+                  <span className="patient-cue birthday" title="Aniversário próximo">
+                    {birthdayInDays === 0 ? 'Aniversário hoje' : `Aniversário em ${birthdayInDays} dia${birthdayInDays === 1 ? '' : 's'}`}
+                  </span>
+                ) : null}
+                {allergyAlerts.slice(0, 2).map((alert, index) => {
+                  const message = text(alert.message ?? alert.type, 'Alergia');
+                  const label = /alerg/i.test(message) ? message : `Alergia: ${message}`;
+                  return (
+                    <span
+                      key={String(alert.id ?? `allergy-${index}`)}
+                      className="patient-cue allergy"
+                      title={message}
+                    >
+                      {label.length > 40 ? `${label.slice(0, 40)}…` : label}
+                    </span>
+                  );
+                })}
+                {allergyAlerts.length === 0
+                  ? patientAlerts.slice(0, 2).map((alert, index) => (
+                    <span
+                      key={String(alert.id ?? `alert-${index}`)}
+                      className={`patient-cue ${String(alert.severity ?? '').toLowerCase().includes('crit') || String(alert.severity).toUpperCase() === 'HIGH' ? 'critical' : 'warn'}`}
+                      title={text(alert.message ?? alert.type, 'Alerta')}
+                    >
+                      {text(alert.type ?? alert.title, 'Alerta')}
+                    </span>
+                  ))
+                  : null}
+              </div>
+            ) : null}
           </div>
           <div className="patient-head-actions">
             {!presentationMode && patient.primaryPhone ? (
@@ -348,13 +421,23 @@ export function PatientChart({ patientId }: { patientId: string }) {
               <div className="info-grid">
                 <div className="info-item"><small>Tratamento atual</small><strong>{text(plans[0]?.title, 'Sem plano ativo')}</strong></div>
                 <div className="info-item"><small>Profissional</small><strong>{text(professionals.find((item) => item.id === plans[0]?.professionalId)?.name, '—')}</strong></div>
-                <div className="info-item"><small>Contato</small><strong className="sensitive">{text(patient.primaryPhone)}</strong></div>
-                <div className="info-item"><small>CPF</small><strong className="sensitive">{maskCpf(patient.cpf)}</strong></div>
+                <div className="info-item">
+                  <small>Contato</small>
+                  <strong>
+                    {presentationMode ? '•••' : formatPhone(patient.primaryPhone)}
+                  </strong>
+                </div>
+                <div className="info-item">
+                  <small>CPF</small>
+                  <strong>
+                    {presentationMode ? maskCpf(patient.cpf) : formatCpf(patient.cpf)}
+                  </strong>
+                </div>
                 <div className="info-item"><small>Nascimento</small><strong>{dateOnly(patient.birthDate)}</strong></div>
                 <div className="info-item"><small>Evoluções</small><strong>{entries.length}</strong></div>
               </div>
             </Panel>
-            <Panel title="Odontograma resumido" description="Última versão · 5 faces (V, L/P, M, D, O/I)" actions={<button className="button small" type="button" onClick={() => setTab('odontograma')}>Abrir</button>}>
+            <Panel title="Odontograma resumido" description="Situação atual por dente e face" actions={<button className="button small" type="button" onClick={() => setTab('odontograma')}>Abrir</button>}>
               <div className="odontogram-wrap compact-summary">
                 <div className="arch" aria-label="Odontograma resumido">
                   {[18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28].map((tooth) => {
@@ -436,11 +519,11 @@ export function PatientChart({ patientId }: { patientId: string }) {
                 </div>
               )}
             </Panel>
-            <Panel title="Responsáveis, alertas e opt-in" description="CRUD mínimo sem exclusão física de alertas">
+            <Panel title="Responsáveis e comunicação" description="Responsáveis, alertas clínicos e autorizações de contato.">
               <PatientCarePanel patientId={patientId} patient={patient} onChanged={load} />
             </Panel>
             {canFinance && (
-              <Panel title="Resumo financeiro" description="Ocultado no modo atendimento" sensitive actions={<button className="button small" type="button" onClick={() => setTab('financeiro')}>Abrir</button>}>
+              <Panel title="Resumo financeiro" sensitive actions={<button className="button small" type="button" onClick={() => setTab('financeiro')}>Abrir</button>}>
                 <div className="summary-strip" style={{ gridTemplateColumns: '1fr 1fr' }}>
                   <div><small>Títulos</small><strong>{receivables.length}</strong></div>
                   <div><small>Em aberto</small><strong>{currency(receivables.reduce((sum, item) => sum + Number(item.outstandingAmount ?? 0), 0))}</strong></div>
@@ -460,7 +543,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
       )}
 
       {activeTab === 'odontograma' && (
-        <Panel title="Odontograma 2D" description="Adicione achados sob demanda; painel compacto por dente.">
+        <Panel title="Odontograma" description="Registre condições e procedimentos por dente e face.">
           <div className="odontogram-wrap">
             <OdontogramBoard
               patientId={patientId}
@@ -478,6 +561,7 @@ export function PatientChart({ patientId }: { patientId: string }) {
         <TreatmentWorkspace
           clinicId={clinicId}
           patientId={patientId}
+          patientName={text(patient.fullName)}
           professionals={professionals}
           onChanged={load}
         />
@@ -553,6 +637,114 @@ export function PatientChart({ patientId }: { patientId: string }) {
           onChanged={load}
         />
       )}
+    </>
+  );
+}
+
+function PatientAvatar({
+  patientId,
+  clinicId,
+  name,
+  mediaId,
+  canUpload,
+  error,
+  onError,
+  onUploaded,
+}: {
+  patientId: string;
+  clinicId: string;
+  name: string;
+  mediaId: string | null;
+  canUpload: boolean;
+  error: string;
+  onError: (message: string) => void;
+  onUploaded: (mediaId: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    if (!mediaId) {
+      setPhotoUrl(null);
+      return;
+    }
+    let revoked = false;
+    let created: string | null = null;
+    void fetch(`${API_URL}/patients/${patientId}/media/${mediaId}/download`, { credentials: 'include' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Não foi possível carregar a foto.');
+        const blob = await response.blob();
+        created = URL.createObjectURL(blob);
+        if (!revoked) setPhotoUrl(created);
+      })
+      .catch(() => {
+        if (!revoked) setPhotoUrl(null);
+      });
+    return () => {
+      revoked = true;
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [mediaId, patientId]);
+
+  async function onFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !clinicId) return;
+    if (!file.type.startsWith('image/')) {
+      onError('Envie uma imagem (JPG, PNG ou WEBP).');
+      return;
+    }
+    setUploading(true);
+    onError('');
+    try {
+      const form = new FormData();
+      form.set('clinicId', clinicId);
+      form.set('type', 'PROFILE_PHOTO');
+      form.set('displayName', 'Foto de perfil');
+      form.set('file', file);
+      const uploaded = await api.postForm<RecordValue>(`/patients/${patientId}/media`, form);
+      onUploaded(String(uploaded.id));
+    } catch (cause) {
+      const message = cause instanceof ApiError ? cause.message : '';
+      onError(
+        /storage|STORAGE_/i.test(message)
+          ? 'O envio de fotos ainda não está disponível nesta instalação.'
+          : (message || 'Não foi possível enviar a foto.'),
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const inner = photoUrl ? <img src={photoUrl} alt="" /> : initials(name);
+
+  if (!canUpload) {
+    return <div className="patient-avatar">{inner}</div>;
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="patient-avatar patient-avatar-upload"
+        onClick={() => inputRef.current?.click()}
+        disabled={uploading || !clinicId}
+        title={error || (photoUrl ? 'Alterar foto do paciente' : 'Adicionar foto do paciente')}
+        aria-label={photoUrl ? 'Alterar foto do paciente' : 'Adicionar foto do paciente'}
+      >
+        {inner}
+        <span className="patient-avatar-hint">
+          <Camera size={16} />
+        </span>
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        hidden
+        onChange={(event) => void onFile(event)}
+      />
     </>
   );
 }

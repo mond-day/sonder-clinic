@@ -70,7 +70,11 @@ export function SearchableSelect({
 
   function handleKeyDown(event: React.KeyboardEvent) {
     if (event.key === 'Escape') {
-      setOpen(false);
+      if (open) {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+      }
       return;
     }
     if (!open && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {

@@ -364,6 +364,7 @@ export function UsersView() {
           ? 'O usuário receberá um e-mail para criar a própria senha.'
           : 'Cria o usuário ativo com senha inicial.'}
         onClose={() => setInviteOpen(false)}
+        confirmOnClose
       >
         <div className="choice-pills">
           <button type="button" className={inviteMode === 'invite' ? 'active' : ''} onClick={() => setInviteMode('invite')}>Convite</button>
@@ -398,6 +399,7 @@ export function UsersView() {
         title="Editar usuário"
         description={editUser ? `${text(editUser.name)} · ${text(editUser.email)}` : undefined}
         onClose={() => setEditUser(null)}
+        confirmOnClose
       >
         {editUser ? (
           <form className="mutation-form" key={String(editUser.id)} onSubmit={(event) => void submitEditUser(event)}>
@@ -440,6 +442,7 @@ export function UsersView() {
         description="Crie um perfil e configure as permissões na próxima etapa."
         onClose={() => setRoleModalOpen(false)}
         size="small"
+        confirmOnClose
       >
         <form className="mutation-form" onSubmit={(event) => void submitCreateRole(event)}>
           <label className="span-2">Nome do perfil<input name="name" required minLength={2} placeholder="Ex.: Coordenador clínico" /></label>

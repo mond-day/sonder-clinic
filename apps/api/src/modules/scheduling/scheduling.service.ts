@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { Prisma, prisma } from '@sonder/database';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
+import { IntegrationsService, type PersonalCalendarWarning } from '../integrations/integrations.service';
 
 const appointmentSchema = z.object({
   clinicId: z.string().uuid(),
@@ -51,6 +52,10 @@ export type AppointmentInput = {
   reminderLeadMinutes?: number | number[];
 };
 
+export type CheckConflictInput = AppointmentInput & {
+  excludeAppointmentId?: string;
+};
+
 const appointmentInclude = {
   patient: true,
   professional: true,
@@ -61,6 +66,8 @@ const appointmentInclude = {
 
 @Injectable()
 export class SchedulingService {
+  constructor(private readonly integrations: IntegrationsService) {}
+
   list(organizationId: string, from?: string, to?: string, clinicId?: string) {
     return prisma.appointment.findMany({
       where: {
@@ -77,6 +84,26 @@ export class SchedulingService {
     });
   }
 
+  personalCalendarStatus(organizationId: string, clinicId: string) {
+    return this.integrations.googleCalendarClinicAvailability(organizationId, clinicId);
+  }
+
+  listPersonalCalendar(
+    organizationId: string,
+    clinicId: string,
+    from: string,
+    to: string,
+    professionalId?: string,
+  ) {
+    return this.integrations.listPersonalGoogleEvents(
+      organizationId,
+      clinicId,
+      from,
+      to,
+      professionalId,
+    );
+  }
+
   async create(organizationId: string, input: AppointmentInput) {
     parseWithZod(appointmentSchema, input);
     await this.assertResources(organizationId, input);
@@ -84,7 +111,7 @@ export class SchedulingService {
     const endAt = new Date(input.endAt);
     if (startAt >= endAt) throw new ConflictException('O término deve ser posterior ao início.');
 
-    return prisma.$transaction(async (transaction) => {
+    const created = await prisma.$transaction(async (transaction) => {
       const conflict = await transaction.appointment.findFirst({
         where: {
           organizationId,
@@ -110,7 +137,7 @@ export class SchedulingService {
       }
 
       const { tagIds = [], reminderEnabled, reminderLeadMinutes = 1440, ...appointment } = input;
-      const created = await transaction.appointment.create({
+      const row = await transaction.appointment.create({
         data: {
           organizationId,
           ...appointment,
@@ -120,10 +147,13 @@ export class SchedulingService {
         },
         include: appointmentInclude,
       });
-      await this.configureReminder(transaction, organizationId, created.id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
-      await this.enqueueCalendarSync(transaction, created.id, 'UPSERT');
-      return transaction.appointment.findUniqueOrThrow({ where: { id: created.id }, include: appointmentInclude });
+      await this.configureReminder(transaction, organizationId, row.id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
+      await this.enqueueCalendarSync(transaction, row.id, 'UPSERT');
+      return transaction.appointment.findUniqueOrThrow({ where: { id: row.id }, include: appointmentInclude });
     }, { isolationLevel: 'Serializable' });
+
+    const warnings = await this.safePersonalWarnings(organizationId, input);
+    return { ...created, warnings };
   }
 
   async reschedule(organizationId: string, id: string, input: AppointmentInput) {
@@ -135,7 +165,7 @@ export class SchedulingService {
     const startAt = new Date(input.startAt);
     const endAt = new Date(input.endAt);
     if (startAt >= endAt) throw new ConflictException('O término deve ser posterior ao início.');
-    return prisma.$transaction(async (transaction) => {
+    const updated = await prisma.$transaction(async (transaction) => {
       const conflict = await transaction.appointment.findFirst({
         where: {
           id: { not: id },
@@ -151,7 +181,7 @@ export class SchedulingService {
       });
       if (conflict) throw new ConflictException('O horário selecionado está em conflito com outro agendamento.');
       const { tagIds, reminderEnabled, reminderLeadMinutes = 1440, ...appointmentData } = input;
-      const updated = await transaction.appointment.update({
+      const row = await transaction.appointment.update({
         where: { id },
         data: {
           ...appointmentData,
@@ -181,8 +211,11 @@ export class SchedulingService {
           },
         });
       }
-      return transaction.appointment.findUniqueOrThrow({ where: { id: updated.id }, include: appointmentInclude });
+      return transaction.appointment.findUniqueOrThrow({ where: { id: row.id }, include: appointmentInclude });
     }, { isolationLevel: 'Serializable' });
+
+    const warnings = await this.safePersonalWarnings(organizationId, input, id);
+    return { ...updated, warnings };
   }
 
   async cancel(organizationId: string, id: string) {
@@ -200,10 +233,16 @@ export class SchedulingService {
     });
   }
 
-  async checkConflict(organizationId: string, input: AppointmentInput) {
+  async checkConflict(organizationId: string, input: CheckConflictInput) {
     const conflict = await this.findConflict(organizationId, input);
+    const warnings = await this.safePersonalWarnings(
+      organizationId,
+      input,
+      input.excludeAppointmentId,
+    );
     return {
       conflict: Boolean(conflict),
+      warnings,
       ...(conflict
         ? {
             details: {
@@ -215,10 +254,29 @@ export class SchedulingService {
     };
   }
 
-  private findConflict(organizationId: string, input: AppointmentInput) {
+  private async safePersonalWarnings(
+    organizationId: string,
+    input: Pick<AppointmentInput, 'clinicId' | 'professionalId' | 'startAt' | 'endAt'>,
+    excludeAppointmentId?: string,
+  ): Promise<PersonalCalendarWarning[]> {
+    try {
+      return await this.integrations.findPersonalCalendarWarnings(organizationId, {
+        clinicId: input.clinicId,
+        professionalId: input.professionalId,
+        startAt: input.startAt,
+        endAt: input.endAt,
+        excludeAppointmentId,
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private findConflict(organizationId: string, input: CheckConflictInput) {
     return prisma.appointment.findFirst({
       where: {
         organizationId,
+        ...(input.excludeAppointmentId ? { id: { not: input.excludeAppointmentId } } : {}),
         status: { notIn: ['CANCELLED', 'NO_SHOW'] },
         startAt: { lt: new Date(input.endAt) },
         endAt: { gt: new Date(input.startAt) },
@@ -245,13 +303,29 @@ export class SchedulingService {
         },
         select: { id: true },
       }),
-      input.chairId ? prisma.chair.findFirst({ where: { id: input.chairId, unitId: input.unitId, status: 'ACTIVE', isSchedulingEnabled: true }, select: { id: true } }) : Promise.resolve({ id: 'optional' }),
+      input.chairId
+        ? prisma.chair.findFirst({
+            where: { id: input.chairId, unitId: input.unitId, status: 'ACTIVE', isSchedulingEnabled: true },
+            select: { id: true },
+          })
+        : Promise.resolve({ id: 'optional' }),
       input.tagIds?.length
         ? prisma.agendaTag.count({ where: { id: { in: input.tagIds }, organizationId, clinicId: input.clinicId, active: true } })
         : Promise.resolve(0),
     ]);
-    if (!clinic || !unit || !patient || !professional || !chair || tagCount !== new Set(input.tagIds ?? []).size) {
-      throw new NotFoundException('Clínica, unidade, paciente, profissional ou cadeira inválidos.');
+    if (!clinic) throw new NotFoundException('Clínica inválida ou inativa.');
+    if (!unit) throw new NotFoundException('Unidade inválida para a clínica selecionada.');
+    if (!patient) throw new NotFoundException('Paciente inválido ou arquivado.');
+    if (!professional) throw new NotFoundException('Profissional inválido ou sem vínculo ativo com a clínica.');
+    if (!chair) {
+      throw new NotFoundException(
+        input.chairId
+          ? 'Cadeira inválida, inativa, ou não pertence à unidade selecionada.'
+          : 'Cadeira inválida.',
+      );
+    }
+    if (tagCount !== new Set(input.tagIds ?? []).size) {
+      throw new NotFoundException('Uma ou mais etiquetas da agenda são inválidas para esta clínica.');
     }
   }
 

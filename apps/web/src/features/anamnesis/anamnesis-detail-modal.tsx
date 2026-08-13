@@ -256,30 +256,74 @@ export function AnamnesisDetailModal({
         {error ? <ErrorState description={error} /> : null}
         {!loading && detail ? (
           <div className="anamnesis-detail">
-            <div className="summary-strip compact">
-              <div><span>Status</span><strong>{displayStatus(detail)}</strong></div>
-              <div><span>Versão</span><strong>v{text(detail.template?.version) || '—'}</strong></div>
-              <div><span>Risco</span><strong>{presentationLabel(riskLevel ?? '—')}</strong></div>
-              <div><span>Validade</span><strong>{formatDate(detail.validUntil)}</strong></div>
-              {wasSigned ? <div><span>Assinatura</span><strong>Foi assinada</strong></div> : null}
-            </div>
-
-            <Panel title="Alertas">
-              {list(detail.alerts as unknown as RecordValue[]).length ? (
-                <div className="clinical-timeline">
-                  {(detail.alerts ?? []).map((alert, index) => (
-                    <article key={`${alert.message}-${index}`} className="clinical-timeline-item">
-                      <StatusBadge tone={alert.severity === 'CRITICAL' ? 'red' : alert.severity === 'WARNING' ? 'amber' : 'blue'}>
-                        {presentationLabel(alert.severity ?? 'INFO')}
-                      </StatusBadge>
-                      <p>{alert.message}</p>
-                    </article>
-                  ))}
+            <header className="anamnesis-detail-hero">
+              <div className="anamnesis-detail-hero-main">
+                <StatusBadge tone={
+                  status === 'SIGNED' ? 'green'
+                    : status === 'DRAFT' || status === 'AWAITING_SIGNATURE' ? 'amber'
+                      : status === 'CANCELLED' || status === 'EXPIRED' ? 'red'
+                        : 'gray'
+                }>
+                  {displayStatus(detail)}
+                </StatusBadge>
+                <div>
+                  <p className="anamnesis-detail-kicker">Resumo clínico</p>
+                  <h3>{text(detail.template?.name) || 'Anamnese'}</h3>
+                  <p>
+                    {[
+                      detail.patient?.fullName ? text(detail.patient.fullName) : null,
+                      riskLevel ? `Risco ${presentationLabel(riskLevel)}` : null,
+                      detail.validUntil ? `Validade ${formatDate(detail.validUntil)}` : null,
+                    ].filter(Boolean).join(' · ') || 'Sem metadados adicionais'}
+                  </p>
                 </div>
-              ) : (
-                <p className="muted-note">Sem alertas.</p>
-              )}
-            </Panel>
+              </div>
+              <div className="anamnesis-detail-meta">
+                <div><span>Risco</span><strong>{presentationLabel(riskLevel ?? '—')}</strong></div>
+                <div><span>Validade</span><strong>{formatDate(detail.validUntil)}</strong></div>
+                {wasSigned ? <div><span>Assinatura</span><strong>Registrada</strong></div> : null}
+                {detail.riskAssessment?.score != null ? (
+                  <div><span>Pontuação</span><strong>{String(detail.riskAssessment.score)}</strong></div>
+                ) : null}
+              </div>
+            </header>
+
+            <div className="anamnesis-detail-grid">
+              <Panel title="Alertas">
+                {list(detail.alerts as unknown as RecordValue[]).length ? (
+                  <div className="clinical-timeline">
+                    {(detail.alerts ?? []).map((alert, index) => (
+                      <article key={`${alert.message}-${index}`} className="clinical-timeline-item">
+                        <StatusBadge tone={alert.severity === 'CRITICAL' ? 'red' : alert.severity === 'WARNING' ? 'amber' : 'blue'}>
+                          {presentationLabel(alert.severity ?? 'INFO')}
+                        </StatusBadge>
+                        <p>{alert.message}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-note">Sem alertas.</p>
+                )}
+              </Panel>
+
+              <Panel title="Assinaturas">
+                {(detail.signatures ?? []).length ? (
+                  <ul className="settings-list">
+                    {detail.signatures!.map((signature) => (
+                      <li key={signature.id} className="settings-row">
+                        <div>
+                          <strong>{presentationLabel(signature.signerRole)} — {signature.signerName}</strong>
+                          <span>{formatDate(signature.signedAt)} · {presentationLabel(signature.method)}</span>
+                        </div>
+                        <StatusBadge tone="green">Assinado</StatusBadge>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <EmptyState title="Sem assinaturas" description="Ainda não há signatários neste registro." />
+                )}
+              </Panel>
+            </div>
 
             <Panel title="Respostas da anamnese">
               {sections.length ? (
@@ -302,24 +346,6 @@ export function AnamnesisDetailModal({
                 </div>
               ) : (
                 <EmptyState title="Sem respostas" description="Nenhuma pergunta visível para este registro." />
-              )}
-            </Panel>
-
-            <Panel title="Assinaturas">
-              {(detail.signatures ?? []).length ? (
-                <ul className="settings-list">
-                  {detail.signatures!.map((signature) => (
-                    <li key={signature.id} className="settings-row">
-                      <div>
-                        <strong>{presentationLabel(signature.signerRole)} — {signature.signerName}</strong>
-                        <span>{formatDate(signature.signedAt)} · {presentationLabel(signature.method)}</span>
-                      </div>
-                      <StatusBadge tone="green">Assinado</StatusBadge>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <EmptyState title="Sem assinaturas" description="Ainda não há signatários neste registro." />
               )}
             </Panel>
 
@@ -377,7 +403,7 @@ export function AnamnesisDetailModal({
                   </button>
                   {status === 'SIGNED' ? (
                     <button type="button" className="button" disabled={busy} onClick={() => setConfirmCancel(true)}>
-                      Cancelar (preservar assinatura)
+                      Cancelar
                     </button>
                   ) : null}
                 </>

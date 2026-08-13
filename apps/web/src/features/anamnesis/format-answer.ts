@@ -45,6 +45,13 @@ function optionLabel(question: AnamnesisQuestion, code: unknown): string {
   return key || '—';
 }
 
+/** Resposta sem valor útil (não deve aparecer na impressão). */
+export function isEmptyAnamnesisAnswer(raw: unknown): boolean {
+  const { value } = unwrapAnswer(raw);
+  return value == null || value === '' || value === false
+    || (Array.isArray(value) && value.length === 0);
+}
+
 /** Formata valor de resposta com labels humanas do template (nunca JSON cru). */
 export function formatAnamnesisAnswer(question: AnamnesisQuestion, raw: unknown): string {
   const { value, details } = unwrapAnswer(raw);
