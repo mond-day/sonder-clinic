@@ -22,6 +22,7 @@ const appointmentSchema = z.object({
     // [] é aceito quando reminderEnabled===false (defesa para clientes legados).
     z.array(z.number().int().min(15).max(10080)).max(5),
   ]).optional(),
+  source: z.enum(['INTERNAL', 'API']).optional(),
 }).superRefine((value, ctx) => {
   if (
     Array.isArray(value.reminderLeadMinutes)
@@ -50,6 +51,7 @@ export type AppointmentInput = {
   tagIds?: string[];
   reminderEnabled?: boolean;
   reminderLeadMinutes?: number | number[];
+  source?: 'INTERNAL' | 'API';
 };
 
 export type CheckConflictInput = AppointmentInput & {
@@ -81,6 +83,34 @@ export class SchedulingService {
       include: appointmentInclude,
       orderBy: { startAt: 'asc' },
       take: 500,
+    });
+  }
+
+  async find(organizationId: string, id: string) {
+    const appointment = await prisma.appointment.findFirst({
+      where: { id, organizationId },
+      include: appointmentInclude,
+    });
+    if (!appointment) throw new NotFoundException('Agendamento não encontrado.');
+    return appointment;
+  }
+
+  async updateStatus(
+    organizationId: string,
+    id: string,
+    status: AppointmentInput['status'],
+  ) {
+    if (!status) throw new ConflictException('Status inválido.');
+    if (status === 'CANCELLED') return this.cancel(organizationId, id);
+    const appointment = await prisma.appointment.findFirst({ where: { id, organizationId } });
+    if (!appointment) throw new NotFoundException('Agendamento não encontrado.');
+    if (appointment.status === 'CANCELLED') {
+      throw new ConflictException('Agendamento cancelado não pode mudar de status.');
+    }
+    return prisma.appointment.update({
+      where: { id },
+      data: { status, version: { increment: 1 } },
+      include: appointmentInclude,
     });
   }
 

@@ -765,38 +765,53 @@ export function AgendaView() {
       </button>
       {prefsOpen ? (
         <div className="row-menu-popover agenda-prefs-popover" role="menu">
-          <label className="check-field compact">
-            <input
-              type="checkbox"
-              checked={prefs.hideCancelled}
-              onChange={(event) => updatePref('hideCancelled', event.target.checked)}
-            />
-            <span>
-              <strong>Ocultar consultas canceladas</strong>
-              <small>Libera o horário na grade para um novo agendamento</small>
+          <label
+            className="switch-row"
+            title="Libera o horário na grade para um novo agendamento"
+          >
+            <span className="switch">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={prefs.hideCancelled}
+                onChange={(event) => updatePref('hideCancelled', event.target.checked)}
+                aria-label="Ocultar consultas canceladas"
+              />
+              <span className="switch-track" aria-hidden />
             </span>
+            Ocultar consultas canceladas
           </label>
-          <label className="check-field compact">
-            <input
-              type="checkbox"
-              checked={prefs.dimPast}
-              onChange={(event) => updatePref('dimPast', event.target.checked)}
-            />
-            <span>
-              <strong>Reduzir brilho das consultas passadas</strong>
-              <small>Atendimentos de ontem e dias anteriores ficam mais suaves</small>
+          <label
+            className="switch-row"
+            title="Atendimentos de ontem e dias anteriores ficam mais suaves"
+          >
+            <span className="switch">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={prefs.dimPast}
+                onChange={(event) => updatePref('dimPast', event.target.checked)}
+                aria-label="Reduzir brilho das consultas passadas"
+              />
+              <span className="switch-track" aria-hidden />
             </span>
+            Reduzir brilho
           </label>
-          <label className="check-field compact">
-            <input
-              type="checkbox"
-              checked={prefs.showWaiting}
-              onChange={(event) => updatePref('showWaiting', event.target.checked)}
-            />
-            <span>
-              <strong>Listar pacientes aguardando</strong>
-              <small>Pacientes com status “Na clínica”</small>
+          <label
+            className="switch-row"
+            title="Pacientes com status “Na clínica”"
+          >
+            <span className="switch">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={prefs.showWaiting}
+                onChange={(event) => updatePref('showWaiting', event.target.checked)}
+                aria-label="Listar pacientes aguardando"
+              />
+              <span className="switch-track" aria-hidden />
             </span>
+            Listar pacientes aguardando
           </label>
         </div>
       ) : null}

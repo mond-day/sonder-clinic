@@ -56,7 +56,7 @@ Ver `.env.example`. Resumo:
 
 ## Protótipos HTML
 
-[`HTML_REFERENCIAS/README.md`](../HTML_REFERENCIAS/README.md). Índice: `HTML_REFERENCES.md`.
+[`docs/HTML_REFERENCES.md`](./HTML_REFERENCES.md) — o pacote de protótipos `HTML_REFERENCIAS/` foi removido na 1.2.2.
 
 ## Specs históricas
 

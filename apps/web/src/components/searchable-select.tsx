@@ -24,6 +24,7 @@ export function SearchableSelect({
   loading = false,
   required = false,
   disabled = false,
+  hideLabel = false,
   onChange,
 }: {
   name: string;
@@ -37,6 +38,7 @@ export function SearchableSelect({
   loading?: boolean;
   required?: boolean;
   disabled?: boolean;
+  hideLabel?: boolean;
   onChange?: (value: string) => void;
 }) {
   const id = useId();
@@ -100,8 +102,8 @@ export function SearchableSelect({
   }
 
   return (
-    <label className="combobox-field">
-      <span>{label}</span>
+    <label className={`combobox-field${hideLabel ? ' hide-label' : ''}`}>
+      <span className={hideLabel ? 'sr-only' : undefined}>{label}</span>
       <input type="hidden" name={name} value={selectedValue} required={required} />
       <div className="combobox" ref={rootRef} onKeyDown={handleKeyDown}>
         <button

@@ -280,6 +280,7 @@ model Organization {
   duplicateDismissals PatientDuplicateDismissal[]
   medicationCatalog MedicationCatalogItem[]
   examCatalog       ExamCatalogItem[]
+  apiKeys        ApiKey[]
 }
 
 model Clinic {
@@ -306,6 +307,7 @@ model Clinic {
   payables       Payable[]
   professionalLinks ProfessionalClinic[]
   anamnesisResponses AnamnesisResponse[]
+  apiKeys        ApiKey[]
 
   @@index([organizationId])
 }
@@ -937,6 +939,30 @@ model IntegrationConnection {
   jobs                 IntegrationJob[]
 
   @@unique([clinicId, provider, scopeType, scopeId])
+}
+
+/// Chave de API para integrações externas. O valor em claro nunca é persistido — só o hash SHA-256.
+model ApiKey {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  clinicId       String?   @db.Uuid
+  name           String
+  keyPrefix      String
+  keyLastFour    String
+  keyHash        String    @unique
+  encryptedSecret String?
+  scopes         String[]  @default([])
+  createdById    String?   @db.Uuid
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clinic         Clinic?      @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, revokedAt])
+  @@index([clinicId])
 }
 
 model IntegrationJob {

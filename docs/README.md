@@ -12,7 +12,7 @@
 | [ASSUMPTIONS.md](./ASSUMPTIONS.md) | Decisões de implementação adotadas |
 | [ENV](./AGENTS.md#env-vars-críticas) | Variáveis (detalhe em `.env.example`) |
 | [certificado-a1.md](./certificado-a1.md) | Upload/storage do PKCS#12 |
-| [HTML_REFERENCES.md](./HTML_REFERENCES.md) | Protótipos em `HTML_REFERENCIAS/` |
+| [HTML_REFERENCES.md](./HTML_REFERENCES.md) | Protótipos HTML removidos na 1.2.2 |
 | [api/workspace-contracts.md](./api/workspace-contracts.md) | Contratos HTTP do workspace |
 | [adr/](./adr/) | Decisões de infra (dev e produção) |
 | [archive/](./archive/) | Specs e pesquisas históricas (não prevalecem) |

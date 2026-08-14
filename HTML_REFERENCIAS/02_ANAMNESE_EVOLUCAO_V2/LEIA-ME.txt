@@ -1,9 +1,0 @@
-SONDER CLINIC — REVISÃO FOCADA
-
-Este pacote exibe somente:
-1. Anamnese clínica
-2. Evolução clínica
-
-Abra index.html e escolha o módulo.
-Os dados são fictícios e servem apenas para validação visual.
-Nenhum arquivo do repositório foi alterado.

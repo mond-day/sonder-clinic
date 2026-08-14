@@ -3,7 +3,9 @@ import { Manrope, Source_Serif_4 } from 'next/font/google';
 import { AuthProvider } from '@/components/auth-provider';
 import { PresentationProvider } from '@/components/presentation-provider';
 import { SelectionProvider } from '@/components/selection-provider';
+import { ThemeProvider } from '@/components/theme-provider';
 import { WorkspaceProvider } from '@/components/workspace-provider';
+import { THEME_BOOTSTRAP_SCRIPT } from '@/lib/theme';
 import './globals.css';
 
 const sans = Manrope({
@@ -25,15 +27,18 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="pt-BR" className={`${sans.variable} ${display.variable}`}>
+    <html lang="pt-BR" className={`${sans.variable} ${display.variable}`} suppressHydrationWarning>
       <body>
-        <AuthProvider>
-          <SelectionProvider>
-            <WorkspaceProvider>
-              <PresentationProvider>{children}</PresentationProvider>
-            </WorkspaceProvider>
-          </SelectionProvider>
-        </AuthProvider>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
+        <ThemeProvider>
+          <AuthProvider>
+            <SelectionProvider>
+              <WorkspaceProvider>
+                <PresentationProvider>{children}</PresentationProvider>
+              </WorkspaceProvider>
+            </SelectionProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

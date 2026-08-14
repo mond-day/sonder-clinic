@@ -191,6 +191,17 @@ export class AuthService {
     return { smtpConfigured: smtpConfigured() };
   }
 
+  publicBranding() {
+    return {
+      name: process.env.BRAND_NAME ?? 'Sonder',
+      subtitle: process.env.BRAND_SUBTITLE ?? 'Clinic',
+      primaryColor: process.env.BRAND_PRIMARY_COLOR ?? '#176B5B',
+      logoUrl: process.env.BRAND_LOGO_URL,
+      faviconUrl: process.env.BRAND_FAVICON_URL,
+      source: 'environment' as const,
+    };
+  }
+
   private async findPendingInvitation(token: string) {
     if (!token || token.length < 20) {
       throw new BadRequestException('Token de convite inválido.');

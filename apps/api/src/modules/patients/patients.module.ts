@@ -9,5 +9,6 @@ import { PermissionsGuard } from '../../common/permissions.guard';
   imports: [AuthModule],
   controllers: [PatientsController],
   providers: [PatientsService, AuthGuard, PermissionsGuard],
+  exports: [PatientsService],
 })
 export class PatientsModule {}

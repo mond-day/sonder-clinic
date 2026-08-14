@@ -420,10 +420,19 @@ export function OdontogramBoard({
           ))}
         </div>
         <label
-          className="checkbox-row lote-toggle"
+          className="switch-row lote-toggle"
           title="Selecione vários dentes e aplique a mesma condição de uma vez."
         >
-          <input type="checkbox" checked={multiTooth} onChange={(event) => setMultiTooth(event.target.checked)} />
+          <span className="switch">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={multiTooth}
+              onChange={(event) => setMultiTooth(event.target.checked)}
+              aria-label="Pintura em lote"
+            />
+            <span className="switch-track" aria-hidden />
+          </span>
           Pintura em lote
         </label>
         <div className="heading-actions odontogram-toolbar-action">

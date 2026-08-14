@@ -74,6 +74,11 @@ export class AuthController {
     return this.auth.smtpStatus();
   }
 
+  @Get('branding')
+  branding() {
+    return this.auth.publicBranding();
+  }
+
   @Post('forgot-password')
   forgotPassword(@Body() input: ForgotPasswordDto) {
     return this.auth.requestPasswordReset(input.email);

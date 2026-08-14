@@ -12,6 +12,8 @@ import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { UsersModule } from './modules/users/users.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { CatalogsModule } from './modules/catalogs/catalogs.module';
+import { ApiKeysModule } from './modules/public-api/api-keys.module';
+import { PublicApiModule } from './modules/public-api/public-api.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { CatalogsModule } from './modules/catalogs/catalogs.module';
     UsersModule,
     ReportsModule,
     CatalogsModule,
+    ApiKeysModule,
+    PublicApiModule,
   ],
   controllers: [AppController],
 })

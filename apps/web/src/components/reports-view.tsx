@@ -376,7 +376,6 @@ export function ReportsView() {
         <Panel className="report-builder">
           <div className="report-builder-head">
             <strong>Emitir relatório</strong>
-            <p>Escolha o relatório. Os filtros serão exibidos de acordo com a seleção.</p>
           </div>
           <div className="report-builder-body">
             <div className="report-step">
@@ -384,12 +383,12 @@ export function ReportsView() {
               <div className="report-step-content">
                 <div className="report-step-title">
                   <strong>Selecione o relatório</strong>
-                  <small>Busque pelo nome ou pela área</small>
                 </div>
                 <div className="report-selector-grid">
                   <SearchableSelect
                     name="reportId"
                     label="Relatório"
+                    hideLabel
                     value={selected}
                     onChange={selectReport}
                     options={reportOptions}
@@ -440,7 +439,6 @@ export function ReportsView() {
                           <div className="report-filters-main">
                             {additionalFilters.map((key) => renderFilter(key))}
                           </div>
-                          <p className="helper">Os filtros adicionais mudam conforme o relatório selecionado.</p>
                         </div>
                       ) : null}
                     </>

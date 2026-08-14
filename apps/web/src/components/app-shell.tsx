@@ -26,7 +26,9 @@ import { initials, list, formatPhone, text, type RecordValue } from '@/lib/forma
 import { useAuth } from './auth-provider';
 import { NotificationsDrawer } from './notifications-drawer';
 import { useSelection } from './selection-provider';
+import { useTheme } from './theme-provider';
 import { useWorkspace } from './workspace-provider';
+import { ClinicBrandMark, ClinicBrandText, useClinicBranding } from './clinic-brand';
 
 type NavBadge = 'returns' | 'tasks' | 'lab';
 
@@ -79,9 +81,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, loading, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
   const { clinics, clinicId, setClinicId } = useSelection();
   const { notifications, returnSummary, openTasks, openLabCases } = useWorkspace();
-  const clinic = clinics.find((item) => item.id === clinicId);
+  const branding = useClinicBranding(clinicId, Boolean(user));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
@@ -245,12 +248,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               aria-label={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
               title={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
             >
-              S
+              <ClinicBrandMark branding={branding} className="brand-mark-inner" />
             </button>
-            <div className="brand-text">
-              <strong>Sonder Clinic</strong>
-              <small>Gestão odontológica</small>
-            </div>
+            <ClinicBrandText branding={branding} />
           </div>
         </div>
         <div className="clinic-switch">
@@ -325,10 +325,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <strong>{user.name}</strong>
                 <small>{user.email || (user.permissions.includes('organization.manage') ? 'Administrador' : 'Usuário')}</small>
               </div>
+              <label className="switch-row profile-menu-theme" role="menuitemcheckbox" aria-checked={theme === 'dark'}>
+                <span className="switch">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={theme === 'dark'}
+                    onChange={(event) => setTheme(event.target.checked ? 'dark' : 'light')}
+                    aria-label="Tema escuro"
+                  />
+                  <span className="switch-track" aria-hidden />
+                </span>
+                Tema escuro
+              </label>
               <button
                 type="button"
                 role="menuitem"
-                className="profile-menu-item"
+                className="profile-menu-item danger"
                 onClick={() => {
                   setProfileOpen(false);
                   void logout();

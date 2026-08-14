@@ -6,7 +6,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import { z } from 'zod';
 import { useAuth } from '@/components/auth-provider';
+import { ClinicBrandMark, useClinicBranding } from '@/components/clinic-brand';
 import { ApiError, api } from '@/lib/api';
+import { brandDisplayName } from '@/lib/branding';
 
 const loginSchema = z.object({
   email: z.string().email('Informe um e-mail válido.'),
@@ -30,6 +32,8 @@ function LoginForm() {
   );
   const [smtpConfigured, setSmtpConfigured] = useState<boolean | null>(null);
   const [inviteInfo, setInviteInfo] = useState<{ name: string; email: string; organizationName: string } | null>(null);
+  const branding = useClinicBranding(undefined, false);
+  const brandName = brandDisplayName(branding);
 
   useEffect(() => {
     api.get<{ smtpConfigured: boolean }>('/auth/smtp-status')
@@ -164,7 +168,13 @@ function LoginForm() {
 
   return (
     <form className="login-card" onSubmit={onSubmit}>
-      <div className="brand login-brand"><span className="brand-mark">S</span><div><strong>Sonder</strong><small>Clinic</small></div></div>
+      <div className="brand login-brand">
+        <ClinicBrandMark branding={branding} />
+        <div>
+          <strong>{brandName}</strong>
+          <small>{branding?.subtitle?.trim() || 'Clinic'}</small>
+        </div>
+      </div>
       {mode === 'login' ? (
         <>
           <div><h1>Acesse sua conta</h1><p>Use suas credenciais para continuar.</p></div>

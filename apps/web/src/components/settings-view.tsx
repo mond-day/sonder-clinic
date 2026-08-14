@@ -53,11 +53,12 @@ import {
   PriceTablesAdminPanel,
 } from '@/features/settings/settings-catalog-panels';
 import { ProfessionalsPanel } from '@/features/settings/professionals-panel';
+import { ApiKeysPanel, ApiKeysSectionHint } from '@/features/settings/api-keys-panel';
 import { PatientDuplicatesPanel } from '@/features/patients/patient-duplicates-panel';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
 import { useWorkspace } from './workspace-provider';
-import { Disclosure, EmptyState, PageHeader, Panel, StatusBadge } from './ui';
+import { Disclosure, EmptyState, MetricCard, PageHeader, Panel, StatusBadge } from './ui';
 import { DirtyFormModal, Modal } from './modal';
 import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-inputs';
 
@@ -74,6 +75,7 @@ type SectionKey =
   | 'finance'
   | 'communication'
   | 'integrations'
+  | 'apiKeys'
   | 'branding'
   | 'tags'
   | 'certificate'
@@ -99,6 +101,7 @@ const sections: Array<{
   { key: 'finance', label: 'Financeiro e comissões', description: 'Contas, categorias, taxas e regras de repasse.', icon: CircleDollarSign },
   { key: 'communication', label: 'Comunicação', description: 'Entregas, confirmações e lembretes enviados.', icon: MessageSquare },
   { key: 'integrations', label: 'Integrações', description: 'Provedores externos, status e sincronização.', icon: Plug },
+  { key: 'apiKeys', label: 'API pública', description: 'Chaves de API para sistemas externos agendarem e consultarem dados.', icon: KeyRound },
   { key: 'branding', label: 'Identidade visual', description: 'Nome, cores e logotipo da clínica.', icon: Palette },
   { key: 'tags', label: 'Etiquetas', description: 'Cores e nomes para organizar agendamentos.', icon: Tag },
   { key: 'certificate', label: 'Certificado digital', description: 'Status seguro para receitas e atestados.', icon: KeyRound },
@@ -163,6 +166,8 @@ export function SettingsView() {
   const [viewingProcedure, setViewingProcedure] = useState<RecordValue | null>(null);
   const [editingUnit, setEditingUnit] = useState<{ id: string; name: string } | null>(null);
   const [editingChair, setEditingChair] = useState<{ id: string; unitId: string; name: string } | null>(null);
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  const [viewingDelivery, setViewingDelivery] = useState<RecordValue | null>(null);
   const [editingTag, setEditingTag] = useState<RecordValue | null>(null);
   const [editingAutomation, setEditingAutomation] = useState<RecordValue | null>(null);
   const [viewingAutomation, setViewingAutomation] = useState<RecordValue | null>(null);
@@ -224,6 +229,10 @@ export function SettingsView() {
   }, [clinicId]);
 
   useEffect(load, [load]);
+
+  useEffect(() => {
+    setSelectedUnitId(null);
+  }, [clinicId]);
 
   useEffect(() => {
     const key = new URLSearchParams(window.location.search).get('section');
@@ -1181,15 +1190,23 @@ export function SettingsView() {
                     </div>
                   </header>
                   <div className="unit-hierarchy">
-                  {clinic?.units.map((unit) => (
-                    <article className="unit-card" key={unit.id}>
+                  {clinic?.units.map((unit) => {
+                    const selected = selectedUnitId === unit.id;
+                    return (
+                    <article className={`unit-card ${selected ? 'selected' : 'collapsed'}`} key={unit.id}>
                       <header className="unit-card-head">
-                        <div>
+                        <button
+                          type="button"
+                          className="unit-card-select"
+                          aria-expanded={selected}
+                          onClick={() => setSelectedUnitId(selected ? null : unit.id)}
+                        >
                           <strong>{unit.name}</strong>
                           <span>
                             {unit.chairs.length} {unit.chairs.length === 1 ? 'cadeira' : 'cadeiras'}
+                            {selected ? '' : ' · clique para configurar'}
                           </span>
-                        </div>
+                        </button>
                         <div className="row-actions">
                           <button
                             type="button"
@@ -1223,7 +1240,8 @@ export function SettingsView() {
                           </button>
                         </div>
                       </header>
-                      {unit.chairs.length === 0 ? (
+                      {selected ? (
+                        unit.chairs.length === 0 ? (
                         <div className="empty-state compact">
                           <h3>Nenhuma cadeira</h3>
                           <p>Adicione a primeira cadeira para usá-la na agenda.</p>
@@ -1271,18 +1289,30 @@ export function SettingsView() {
                             </div>
                           ))}
                         </div>
-                      )}
+                      )
+                      ) : null}
                     </article>
-                  ))}
+                    );
+                  })}
                   </div>
                 </div>
               )}
               <p className="muted-note" style={{ padding: '0 14px 14px' }}>
                 {clinics.length} {clinics.length === 1 ? 'clínica' : 'clínicas'} · {clinic?.units.length ?? 0} unidades · {chairCount} cadeiras.
+                {' '}Nome e logotipo do sistema ficam em Identidade visual, não nesta estrutura física.
+                {' '}
+                <button type="button" className="text-button" onClick={() => setSection('branding')}>Abrir identidade visual</button>
               </p>
-              <ClinicsAdminPanel clinics={clinics} onClinicsChanged={() => void refreshSelection()} />
-              <LaboratoriesAdminPanel clinicId={clinicId} />
-              <OutboxDeadLetterPanel />
+              <Disclosure title="Clínicas da organização" description="Cadastro legal e nomes comerciais" defaultOpen={false}>
+                <ClinicsAdminPanel clinics={clinics} onClinicsChanged={() => void refreshSelection()} />
+              </Disclosure>
+              <Disclosure title="Laboratórios" description="Parceiros usados nos casos clínicos" defaultOpen={false}>
+                <LaboratoriesAdminPanel clinicId={clinicId} />
+              </Disclosure>
+              <Disclosure title="Fila de integração" description="Eventos que falharam e precisam de revisão" defaultOpen={false}>
+                <OutboxDeadLetterPanel />
+              </Disclosure>
+              <Disclosure title="Profissionais da agenda" description="Quem aparece na grade desta clínica" defaultOpen={false}>
               {professionals.length > 0 ? (
                 <div className="table-wrap">
                   <table className="data-table">
@@ -1315,6 +1345,7 @@ export function SettingsView() {
                 <EmptyState title="Nenhum profissional listado" description="Profissionais aparecem aqui a partir do contexto da clínica." />
               )}
               <ProfessionalsPanel />
+              </Disclosure>
               <div className="settings-list">
                 <div className="settings-row">
                   <div>
@@ -1676,7 +1707,7 @@ export function SettingsView() {
           {section === 'communication' && (
             <Panel
               title={activeLabel}
-              description="Histórico de entregas WhatsApp e demais canais (confirmações, lembretes e retornos)."
+              description="Resumo das entregas e atalhos para modelos e canais. Detalhes abrem sob demanda."
             >
               {loading && <div className="state-message">Carregando entregas…</div>}
               {!loading && deliveries.length === 0 && (
@@ -1686,53 +1717,81 @@ export function SettingsView() {
                 />
               )}
               {deliverySummary.length > 0 && (
-                <div className="settings-list">
+                <div className="module-metrics" style={{ margin: '12px 14px' }}>
                   {deliverySummary.map(([status, total]) => (
-                    <div className="settings-row" key={status}>
-                      <div>
-                        <strong>{presentationLabel(status)}</strong>
-                        <span>{total} {total === 1 ? 'mensagem' : 'mensagens'}</span>
-                      </div>
-                      <StatusBadge tone={status === 'DELIVERED' ? 'green' : status === 'FAILED' ? 'red' : 'amber'}>
-                        {total}
-                      </StatusBadge>
-                    </div>
+                    <MetricCard
+                      key={status}
+                      label={presentationLabel(status)}
+                      value={total}
+                      meta={total === 1 ? 'mensagem' : 'mensagens'}
+                      tone={status === 'DELIVERED' ? 'green' : status === 'FAILED' ? 'red' : 'amber'}
+                    />
                   ))}
                 </div>
               )}
               {deliveries.length > 0 && (
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Destino</th>
-                        <th>Canal</th>
-                        <th>Categoria</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {deliveries.slice(0, 20).map((item) => (
-                        <tr key={String(item.id)}>
-                          <td>{text(item.destinationMasked ?? item.recipient)}</td>
-                          <td>{presentationLabel(item.channel)}</td>
-                          <td>{presentationLabel(item.category)}</td>
-                          <td>
-                            <StatusBadge tone={item.status === 'DELIVERED' ? 'green' : item.status === 'FAILED' ? 'red' : 'amber'}>
-                              {presentationLabel(item.status)}
-                            </StatusBadge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="settings-list">
+                  {deliveries.slice(0, 20).map((item) => (
+                    <button
+                      type="button"
+                      className="settings-row settings-row-button"
+                      key={String(item.id)}
+                      onClick={() => setViewingDelivery(item)}
+                    >
+                      <div>
+                        <strong>{text(item.destinationMasked ?? item.recipient)}</strong>
+                        <span>{presentationLabel(item.channel)} · {presentationLabel(item.category)}</span>
+                      </div>
+                      <StatusBadge tone={item.status === 'DELIVERED' ? 'green' : item.status === 'FAILED' ? 'red' : 'amber'}>
+                        {presentationLabel(item.status)}
+                      </StatusBadge>
+                    </button>
+                  ))}
                 </div>
               )}
               <p className="muted-note" style={{ padding: '0 14px 14px' }}>
                 Esta seção mostra entregas já enfileiradas/enviadas. A conexão do canal (Evolution/Chatwoot) fica em Integrações.
               </p>
-              <CommunicationTemplatesPanel />
-              <MessagingChannelsPanel clinicId={clinicId} />
+              <Disclosure title="Modelos de mensagem" description="Textos de lembrete, confirmação e retorno" defaultOpen={false}>
+                <CommunicationTemplatesPanel />
+              </Disclosure>
+              <Disclosure title="Canais de mensagem" description="E-mail, WhatsApp e envio manual" defaultOpen={false}>
+                <MessagingChannelsPanel clinicId={clinicId} />
+              </Disclosure>
+              <Modal
+                open={Boolean(viewingDelivery)}
+                title="Detalhe da entrega"
+                description="Status operacional da mensagem selecionada."
+                onClose={() => setViewingDelivery(null)}
+                size="small"
+              >
+                {viewingDelivery ? (
+                  <div className="info-grid">
+                    <div className="info-item"><small>Destino</small><strong>{text(viewingDelivery.destinationMasked ?? viewingDelivery.recipient)}</strong></div>
+                    <div className="info-item"><small>Canal</small><strong>{presentationLabel(viewingDelivery.channel)}</strong></div>
+                    <div className="info-item"><small>Categoria</small><strong>{presentationLabel(viewingDelivery.category)}</strong></div>
+                    <div className="info-item"><small>Status</small><strong>{presentationLabel(viewingDelivery.status)}</strong></div>
+                    <div className="info-item"><small>Criada</small><strong>{viewingDelivery.createdAt ? dateOnly(viewingDelivery.createdAt) : '—'}</strong></div>
+                    <div className="info-item"><small>Enviada</small><strong>{viewingDelivery.sentAt ? dateOnly(viewingDelivery.sentAt) : '—'}</strong></div>
+                    {viewingDelivery.error ? (
+                      <div className="info-item span-2"><small>Erro</small><strong>{text(viewingDelivery.error)}</strong></div>
+                    ) : null}
+                    {viewingDelivery.renderedContent ? (
+                      <div className="info-item span-2"><small>Conteúdo</small><strong>{text(viewingDelivery.renderedContent)}</strong></div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </Modal>
+            </Panel>
+          )}
+
+          {section === 'apiKeys' && (
+            <Panel
+              title={activeLabel}
+              description="Emita chaves com escopos mínimos para o sistema integrador."
+            >
+              <ApiKeysSectionHint />
+              <ApiKeysPanel />
             </Panel>
           )}
 
@@ -1916,7 +1975,7 @@ export function SettingsView() {
                 </div>
               )}
               <p className="muted-note" style={{ padding: '0 14px' }}>
-                Use o botão abaixo para alterar nome, cores ou logotipo.
+                Esta identidade alimenta a barra lateral e o login (com fallback Sonder). Não use Unidades e cadeiras para isso — aquele cabeçalho é só o nome comercial da clínica selecionada.
               </p>
               <div className="modal-footer"><button className="button primary" type="button" onClick={() => setConfigModal('branding')}>Editar identidade visual</button></div>
             </Panel>
@@ -2010,7 +2069,7 @@ export function SettingsView() {
             </Panel>
           )}
 
-          {['integrations', 'branding', 'legal', 'certificate'].includes(section) && (
+          {['integrations', 'apiKeys', 'branding', 'legal', 'certificate'].includes(section) && (
             <>
               <div className="secure-notice">
                 <ShieldCheck size={18} />
