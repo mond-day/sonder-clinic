@@ -133,13 +133,7 @@ export function PatientDuplicatesPanel({ clinicId }: { clinicId: string }) {
 
   return (
     <div className="duplicates-panel">
-      <div className="settings-panel-head">
-        <div>
-          <h3 style={{ margin: 0 }}>Pacientes possivelmente duplicados</h3>
-          <p className="muted-note" style={{ margin: '4px 0 0' }}>
-            Nenhum merge é automático. Escolha o principal, revise conflitos e confirme.
-          </p>
-        </div>
+      <div className="duplicates-toolbar">
         <StatusBadge tone={groups.length ? 'amber' : 'green'}>
           {groups.length} suspeita{groups.length === 1 ? '' : 's'}
         </StatusBadge>

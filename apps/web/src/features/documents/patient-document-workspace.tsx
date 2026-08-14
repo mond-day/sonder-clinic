@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@/lib/api';
-import { hasPermission, maskCpf, presentationLabel, text } from '@/lib/format';
+import { hasPermission, presentationLabel, text } from '@/lib/format';
 import { publicAppUrl } from '@/lib/public-url';
 import { useAuth } from '@/components/auth-provider';
 import type { Professional } from '@/components/selection-provider';
@@ -119,6 +119,7 @@ export function PatientDocumentWorkspace({
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [signing, setSigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const [modal, setModal] = useState<DocumentModal>(null);
@@ -180,7 +181,7 @@ export function PatientDocumentWorkspace({
     }
   }, [canView, clinicId, filters.includeArchived, patientId]);
 
-  const loadDetail = useCallback(async (ref: SelectedLibraryRef) => {
+  const loadDetail = useCallback(async (ref: SelectedLibraryRef, options?: { silent?: boolean }) => {
     if (!ref) {
       setDocument(null);
       setPrescription(null);
@@ -188,8 +189,8 @@ export function PatientDocumentWorkspace({
       setHistory([]);
       return;
     }
-    setDetailLoading(true);
-    setActionError('');
+    if (!options?.silent) setDetailLoading(true);
+    if (!options?.silent) setActionError('');
     try {
       if (ref.source === 'generated') {
         const [doc, events] = await Promise.all([
@@ -215,10 +216,12 @@ export function PatientDocumentWorkspace({
       }
     } catch (cause) {
       setActionError(cause instanceof ApiError ? cause.message : 'Falha ao carregar a prévia.');
-      setDocument(null);
-      setPrescription(null);
-      setMedia(null);
-      setHistory([]);
+      if (!options?.silent) {
+        setDocument(null);
+        setPrescription(null);
+        setMedia(null);
+        setHistory([]);
+      }
     } finally {
       setDetailLoading(false);
     }
@@ -263,19 +266,25 @@ export function PatientDocumentWorkspace({
     (item) => item.id === selected?.id && item.source === selected.source,
   ) ?? items.find((item) => item.id === selected?.id && item.source === selected.source) ?? null;
 
-  async function runAction<T>(action: () => Promise<T>, select?: SelectedLibraryRef | ((result: T) => SelectedLibraryRef | null | undefined)) {
+  async function runAction<T>(
+    action: () => Promise<T>,
+    select?: SelectedLibraryRef | ((result: T) => SelectedLibraryRef | null | undefined),
+    options?: { keepPreview?: boolean; silentDetail?: boolean },
+  ) {
     setBusy(true);
     setActionError('');
     setMessage('');
     try {
       const result = await action();
       await loadLibrary();
+      if (options?.keepPreview) setPreviewOpen(true);
       const next = typeof select === 'function' ? select(result) : select;
       if (next) setSelected(next);
-      else if (selected) await loadDetail(selected);
+      else if (selected) await loadDetail(selected, { silent: options?.silentDetail });
       notify();
       return result;
     } catch (cause) {
+      if (options?.keepPreview) setPreviewOpen(true);
       setActionError(cause instanceof ApiError || cause instanceof Error ? cause.message : 'Não foi possível concluir a ação.');
       return undefined;
     } finally {
@@ -473,22 +482,29 @@ export function PatientDocumentWorkspace({
             busy={busy}
             patientId={patientId}
             patientName={patientName}
-            patientCpfMasked={maskCpf(patientCpf)}
+            patientCpf={patientCpf}
             professionalName={professionalName}
             canSign={canSign}
             canArchive={canArchive || (selectedMeta?.source === 'upload' && canCreate)}
             canCancel={canCancel}
             actionError={actionError}
+            signing={signing}
             onSign={(method) => {
               if (!selectedMeta) return;
+              setSigning(true);
+              setPreviewOpen(true);
               if (selectedMeta.source === 'prescription') {
                 void runAction(async () => {
                   await documentApi.signPrescription(selectedMeta.id);
                   setMessage('Prescrição assinada.');
-                });
+                }, undefined, { keepPreview: true, silentDetail: true })
+                  .finally(() => setSigning(false));
                 return;
               }
-              if (selectedMeta.source !== 'generated') return;
+              if (selectedMeta.source !== 'generated') {
+                setSigning(false);
+                return;
+              }
               void runAction(async () => {
                 await documentApi.signDocument(selectedMeta.id, {
                   signerName: user?.name ?? professionalName(document?.professionalId),
@@ -498,7 +514,8 @@ export function PatientDocumentWorkspace({
                   evidence: { source: 'documents-workspace' },
                 });
                 setMessage(method === 'A1' ? 'Assinatura com certificado digital registrada.' : 'Assinatura eletrônica registrada.');
-              });
+              }, undefined, { keepPreview: true, silentDetail: true })
+                .finally(() => setSigning(false));
             }}
             onShare={() => {
               setShareLink('');

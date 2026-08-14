@@ -18,7 +18,7 @@ if (!(BigInt.prototype as unknown as { toJSON?: () => number }).toJSON) {
 async function bootstrap(): Promise<void> {
   assertProductionEnvironment();
   await startObservability('sonder-api');
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   app.setGlobalPrefix('api/v1');
   app.use(cookieParser());
 

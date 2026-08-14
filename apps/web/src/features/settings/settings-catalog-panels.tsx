@@ -1,9 +1,9 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
-import { Pencil, Power } from 'lucide-react';
+import { Eye, Pencil, Power } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import { currency, dateOnly, list, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { currency, dateOnly, list, nested, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
 import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-inputs';
@@ -73,9 +73,8 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
   }
 
   return (
-    <div className="form-section" style={{ padding: '0 14px 14px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <h3 style={{ margin: 0 }}>Clínicas da organização</h3>
+    <div className="disclosure-panel">
+      <header style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginBottom: 12 }}>
         <button className="button small primary" type="button" onClick={() => setOpen(true)}>Nova clínica</button>
       </header>
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
@@ -618,9 +617,8 @@ export function LaboratoriesAdminPanel({ clinicId }: { clinicId: string }) {
   }
 
   return (
-    <div className="form-section" style={{ padding: '0 14px 14px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <h3 style={{ margin: 0 }}>Laboratórios parceiros</h3>
+    <div className="disclosure-panel">
+      <header style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginBottom: 12 }}>
         <button className="button small primary" type="button" onClick={() => setOpen(true)}>Novo laboratório</button>
       </header>
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
@@ -708,14 +706,8 @@ export function OutboxDeadLetterPanel() {
   }
 
   return (
-    <div className="form-section" style={{ padding: '0 14px 14px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-        <div>
-          <h3 style={{ margin: 0 }}>Fila de falhas de envio</h3>
-          <p className="muted-note" style={{ margin: '6px 0 0' }}>
-            Integrações e mensagens que não foram concluídas após várias tentativas. Use reprocessar ou descartar.
-          </p>
-        </div>
+    <div className="disclosure-panel">
+      <header style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', gap: 12 }}>
         <button className="button small" type="button" onClick={load} disabled={loading}>Atualizar</button>
       </header>
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
@@ -756,9 +748,11 @@ export function CommunicationTemplatesPanel() {
   const [templates, setTemplates] = useState<RecordValue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [open, setOpen] = useState(false);
+  const [modal, setModal] = useState<'create' | 'view' | 'edit' | null>(null);
+  const [editing, setEditing] = useState<RecordValue | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
+  const viewing = modal === 'view';
 
   const load = useCallback(() => {
     setLoading(true);
@@ -771,22 +765,52 @@ export function CommunicationTemplatesPanel() {
 
   useEffect(load, [load]);
 
-  async function createTemplate(event: FormEvent<HTMLFormElement>) {
+  function closeModal() {
+    setModal(null);
+    setEditing(null);
+    setFormError('');
+  }
+
+  function openCreate() {
+    setEditing(null);
+    setFormError('');
+    setModal('create');
+  }
+
+  function openView(row: RecordValue) {
+    setEditing(row);
+    setFormError('');
+    setModal('view');
+  }
+
+  function openEdit(row: RecordValue) {
+    setEditing(row);
+    setFormError('');
+    setModal('edit');
+  }
+
+  async function saveTemplate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (viewing) return;
     const data = new FormData(event.currentTarget);
+    const payload = {
+      name: String(data.get('name') || '').trim(),
+      category: String(data.get('category') || 'REMINDER'),
+      content: String(data.get('content') || '').trim(),
+      requiresConsent: data.get('requiresConsent') === 'on',
+    };
     setBusy(true);
     setFormError('');
     try {
-      await api.post('/communication/templates', {
-        name: String(data.get('name') || '').trim(),
-        category: String(data.get('category') || 'REMINDER'),
-        content: String(data.get('content') || '').trim(),
-        requiresConsent: data.get('requiresConsent') === 'on',
-      });
-      setOpen(false);
+      if (modal === 'edit' && editing) {
+        await api.patch(`/communication/templates/${String(editing.id)}`, payload);
+      } else {
+        await api.post('/communication/templates', payload);
+      }
+      closeModal();
       load();
     } catch (cause) {
-      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o modelo.');
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar o modelo.');
     } finally {
       setBusy(false);
     }
@@ -802,10 +826,9 @@ export function CommunicationTemplatesPanel() {
   }
 
   return (
-    <div className="form-section" style={{ padding: '0 14px 14px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <h3 style={{ margin: 0 }}>Modelos de mensagem</h3>
-        <button className="button small primary" type="button" onClick={() => setOpen(true)}>Novo modelo</button>
+    <div className="disclosure-panel">
+      <header style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12 }}>
+        <button className="button small primary" type="button" onClick={openCreate}>Novo modelo</button>
       </header>
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
       {loading ? <div className="state-message">Carregando…</div> : null}
@@ -824,6 +847,24 @@ export function CommunicationTemplatesPanel() {
                 <StatusBadge tone={row.requiresConsent ? 'amber' : 'blue'}>
                   {row.requiresConsent ? 'Exige autorização' : 'Sem autorização'}
                 </StatusBadge>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Visualizar"
+                  aria-label={`Visualizar ${text(row.name)}`}
+                  onClick={() => openView(row)}
+                >
+                  <Eye size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Editar"
+                  aria-label={`Editar ${text(row.name)}`}
+                  onClick={() => openEdit(row)}
+                >
+                  <Pencil size={15} />
+                </button>
                 <button className="button small" type="button" onClick={() => void toggleActive(row)}>
                   {row.active ? 'Inativar' : 'Ativar'}
                 </button>
@@ -833,11 +874,19 @@ export function CommunicationTemplatesPanel() {
         </div>
       )}
       <p className="muted-note">E-mail e WhatsApp usam os canais configurados abaixo. Sem canal ativo, os envios ficam pendentes.</p>
-      <Modal open={open} title="Novo modelo" description="Use {{patientName}}, {{date}}, {{clinicName}} e {{professionalName}} para preencher automaticamente." onClose={() => setOpen(false)} confirmOnClose>
-        <form className="mutation-form" onSubmit={createTemplate}>
-          <label className="span-2">Nome<input name="name" minLength={2} required autoFocus /></label>
+      <Modal
+        open={modal !== null}
+        title={modal === 'view' ? 'Visualizar modelo' : modal === 'edit' ? 'Editar modelo' : 'Novo modelo'}
+        description="Use {{patientName}}, {{date}}, {{clinicName}} e {{professionalName}} para preencher automaticamente."
+        onClose={closeModal}
+        confirmOnClose={!viewing}
+      >
+        <form className="mutation-form" onSubmit={(event) => void saveTemplate(event)}>
+          <label className="span-2">Nome
+            <input name="name" minLength={2} required autoFocus={!viewing} defaultValue={text(editing?.name, '')} readOnly={viewing} disabled={viewing} />
+          </label>
           <label>Categoria
-            <select name="category" defaultValue="REMINDER">
+            <select name="category" defaultValue={String(editing?.category ?? 'REMINDER')} disabled={viewing}>
               <option value="REMINDER">Lembrete</option>
               <option value="CONFIRMATION">Confirmação</option>
               <option value="RETURN">Retorno</option>
@@ -847,11 +896,17 @@ export function CommunicationTemplatesPanel() {
           </label>
           <label>
             Exige consentimento
-            <input name="requiresConsent" type="checkbox" defaultChecked />
+            <input name="requiresConsent" type="checkbox" defaultChecked={editing ? Boolean(editing.requiresConsent) : true} disabled={viewing} />
           </label>
-          <label className="span-2">Conteúdo<textarea name="content" rows={4} required minLength={5} placeholder="Olá {{patientName}}, lembrete da consulta em {{date}}." /></label>
+          <label className="span-2">Conteúdo
+            <textarea name="content" rows={4} required minLength={5} placeholder="Olá {{patientName}}, lembrete da consulta em {{date}}." defaultValue={text(editing?.content, '')} readOnly={viewing} disabled={viewing} />
+          </label>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
-          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar modelo'}</button>
+          {viewing ? (
+            <button className="button" type="button" onClick={closeModal}>Fechar</button>
+          ) : (
+            <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : modal === 'edit' ? 'Salvar modelo' : 'Criar modelo'}</button>
+          )}
         </form>
       </Modal>
     </div>
@@ -868,6 +923,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
   const [sendResult, setSendResult] = useState('');
+  const [channelType, setChannelType] = useState('EMAIL');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -896,6 +952,9 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
         clinicId: clinicId || undefined,
         type: String(data.get('type') || 'EMAIL'),
         displayName: String(data.get('displayName') || '').trim(),
+        configuration: String(data.get('type')) === 'WHATSAPP' && data.get('provider')
+          ? { provider: String(data.get('provider')) }
+          : undefined,
       });
       setOpen(false);
       load();
@@ -933,7 +992,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
       });
       setSendResult(
         result.status === 'SENT'
-          ? 'Mensagem enviada por e-mail.'
+          ? 'Mensagem enviada.'
           : `Envio ${presentationLabel(result.status)}${result.error ? `: ${text(result.error)}` : ''}`,
       );
       if (result.status === 'SENT') setSendOpen(false);
@@ -946,14 +1005,13 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
   }
 
   return (
-    <div className="form-section" style={{ padding: '0 14px 14px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0 }}>Canais de mensagem</h3>
+    <div className="disclosure-panel">
+      <header style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="button small" type="button" onClick={() => { setSendOpen(true); setSendResult(''); setFormError(''); }}>
             Envio manual
           </button>
-          <button className="button small primary" type="button" onClick={() => setOpen(true)}>Novo canal</button>
+          <button className="button small primary" type="button" onClick={() => { setOpen(true); setChannelType('EMAIL'); setFormError(''); }}>Novo canal</button>
         </div>
       </header>
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
@@ -966,7 +1024,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
             <div className="settings-row" key={String(row.id)}>
               <div>
                 <strong>{text(row.displayName)}</strong>
-                <span>{presentationLabel(row.type)}</span>
+                <span>{presentationLabel(row.type)}{typeof nested(row, 'configuration').provider === 'string' ? ` · ${presentationLabel(nested(row, 'configuration').provider)}` : ''}</span>
               </div>
               <div className="row-actions">
                 <StatusBadge tone={row.status === 'ACTIVE' ? 'green' : 'gray'}>
@@ -987,12 +1045,21 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
         <form className="mutation-form" onSubmit={createChannel}>
           <label className="span-2">Nome de exibição<input name="displayName" minLength={2} required autoFocus /></label>
           <label className="span-2">Tipo
-            <select name="type" defaultValue="EMAIL">
+            <select name="type" value={channelType} onChange={(event) => setChannelType(event.target.value)}>
               <option value="EMAIL">E-mail</option>
               <option value="WHATSAPP">WhatsApp</option>
               <option value="SMS">SMS (em breve)</option>
             </select>
           </label>
+          {channelType === 'WHATSAPP' ? (
+            <label className="span-2">Transporte
+              <select name="provider" defaultValue="EVOLUTION">
+                <option value="EVOLUTION">Evolution (direto)</option>
+                <option value="CHATWOOT">Chatwoot (inbox WhatsApp/API)</option>
+              </select>
+              <span className="field-hint">Chatwoot usa a conexão salva em Integrações. Evolution continua o padrão.</span>
+            </label>
+          ) : null}
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
           <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar canal'}</button>
         </form>

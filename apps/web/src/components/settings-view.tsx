@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Clock3,
   Eye,
+  EyeOff,
   FileText,
   FlaskConical,
   MessageSquare,
@@ -27,7 +28,7 @@ import {
   Trash2,
   KeyRound,
 } from 'lucide-react';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, API_URL } from '@/lib/api';
 import {
   DEFAULT_BUSINESS_HOURS,
   WEEKDAY_OPTIONS,
@@ -38,7 +39,7 @@ import {
   type BusinessHours,
 } from '@/lib/business-hours';
 import { formatDnSummary } from '@/lib/dn-parse';
-import { currency, dateOnly, initials, list, moneyInputToApi, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { currency, dateOnly, formatCpf, list, moneyInputToApi, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { AnamnesisTemplateEditor } from '@/features/anamnesis/template-editor';
 import {
   ClinicsAdminPanel,
@@ -145,10 +146,15 @@ export function SettingsView() {
   const [legal, setLegal] = useState<RecordValue[]>([]);
   const [agendaTags, setAgendaTags] = useState<RecordValue[]>([]);
   const [certificate, setCertificate] = useState<RecordValue | null>(null);
+  const [professionalCertificates, setProfessionalCertificates] = useState<RecordValue[]>([]);
+  const [certificateProfessionalId, setCertificateProfessionalId] = useState('');
+  const [certModalStatus, setCertModalStatus] = useState<RecordValue | null>(null);
+  const [showCertPassword, setShowCertPassword] = useState(false);
   const [automationRules, setAutomationRules] = useState<RecordValue[]>([]);
   const [configModal, setConfigModal] = useState<ConfigModal>(null);
   const [chairUnitId, setChairUnitId] = useState('');
   const [unitName, setUnitName] = useState('');
+  const [unitCity, setUnitCity] = useState('');
   const [chairName, setChairName] = useState('');
   const [automationName, setAutomationName] = useState('');
   const [automationReason, setAutomationReason] = useState('Retorno pós-consulta');
@@ -161,10 +167,11 @@ export function SettingsView() {
   const [certificateEditing, setCertificateEditing] = useState(false);
   const [viewingIntegration, setViewingIntegration] = useState<RecordValue | null>(null);
   const [integrationProviderPrefill, setIntegrationProviderPrefill] = useState<string | undefined>();
+  const [editingIntegration, setEditingIntegration] = useState<RecordValue | null>(null);
   const [integrationMenuId, setIntegrationMenuId] = useState<string | null>(null);
   const [editingProcedure, setEditingProcedure] = useState<RecordValue | null>(null);
   const [viewingProcedure, setViewingProcedure] = useState<RecordValue | null>(null);
-  const [editingUnit, setEditingUnit] = useState<{ id: string; name: string } | null>(null);
+  const [editingUnit, setEditingUnit] = useState<{ id: string; name: string; city?: string | null } | null>(null);
   const [editingChair, setEditingChair] = useState<{ id: string; unitId: string; name: string } | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [viewingDelivery, setViewingDelivery] = useState<RecordValue | null>(null);
@@ -206,10 +213,11 @@ export function SettingsView() {
       api.get<RecordValue[]>(`/settings/legal?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
       api.get<RecordValue[]>(`/settings/agenda-tags?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
       api.get<RecordValue>(`/settings/certificate?clinicId=${clinicId}`).catch(() => null),
+      api.get<{ professionals?: RecordValue[] }>(`/settings/certificates?clinicId=${clinicId}`).catch(() => ({ professionals: [] })),
       api.get<RecordValue[]>(`/automation-rules?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
       api.get<RecordValue[]>(`/price-tables?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
     ])
-      .then(([nextProcedures, nextRules, nextDeliveries, nextIntegrations, nextBranding, nextBusinessHours, nextLegal, nextTags, nextCertificate, nextAutomation, nextPriceTables]) => {
+      .then(([nextProcedures, nextRules, nextDeliveries, nextIntegrations, nextBranding, nextBusinessHours, nextLegal, nextTags, nextCertificate, nextCertList, nextAutomation, nextPriceTables]) => {
         setProcedures(list(nextProcedures));
         setRules(list(nextRules));
         setDeliveries(list(nextDeliveries));
@@ -221,6 +229,7 @@ export function SettingsView() {
         setLegal(list(nextLegal));
         setAgendaTags(list(nextTags));
         setCertificate(nextCertificate);
+        setProfessionalCertificates(list(nextCertList?.professionals));
         setAutomationRules(list(nextAutomation));
         setPriceTables(list(nextPriceTables));
       })
@@ -245,8 +254,8 @@ export function SettingsView() {
     setFormBusy(true);
     setFormError('');
     try {
-      if (editingUnit) await api.patch(`/settings/units/${editingUnit.id}`, { name: unitName.trim() });
-      else await api.post('/settings/units', { clinicId, name: unitName.trim() });
+      if (editingUnit) await api.patch(`/settings/units/${editingUnit.id}`, { name: unitName.trim(), city: unitCity.trim() || null });
+      else await api.post('/settings/units', { clinicId, name: unitName.trim(), city: unitCity.trim() || undefined });
       await refreshSelection();
       closeConfigModal();
       load();
@@ -436,10 +445,27 @@ export function SettingsView() {
 
   const overviewCards = sections.filter((item) => item.key !== 'overview');
   const activeLabel = sections.find((item) => item.key === section)?.label ?? 'Configurações';
-  const certificateSubject = formatDnSummary(certificate?.subject);
-  const certificateIssuer = formatDnSummary(certificate?.issuer);
+  const certificateSubject = formatDnSummary((certModalStatus ?? certificate)?.subject);
+  const certificateIssuer = formatDnSummary((certModalStatus ?? certificate)?.issuer);
 
-  function openCertificateModal() {
+  function openCertificateModal(professionalId?: string) {
+    setCertificateProfessionalId(professionalId ?? '');
+    setShowCertPassword(false);
+    if (professionalId) {
+      api.get<RecordValue>(`/settings/certificate?clinicId=${clinicId}&professionalId=${professionalId}`)
+        .then((status) => {
+          setCertModalStatus(status);
+          setCertificateEditing(!status?.configured);
+          setConfigModal('certificate');
+        })
+        .catch(() => {
+          setCertModalStatus(null);
+          setCertificateEditing(true);
+          setConfigModal('certificate');
+        });
+      return;
+    }
+    setCertModalStatus(certificate);
     setCertificateEditing(!certificate?.configured);
     setConfigModal('certificate');
   }
@@ -447,15 +473,20 @@ export function SettingsView() {
   function closeConfigModal() {
     setConfigModal(null);
     setCertificateEditing(false);
+    setCertificateProfessionalId('');
+    setCertModalStatus(null);
+    setShowCertPassword(false);
     setEditingProcedure(null);
     setEditingUnit(null);
     setEditingChair(null);
     setEditingTag(null);
     setEditingAutomation(null);
     setIntegrationProviderPrefill(undefined);
+    setEditingIntegration(null);
     setFormError('');
     setFormBusy(false);
     setUnitName('');
+    setUnitCity('');
     setChairName('');
     setChairUnitId('');
     setAutomationName('');
@@ -467,8 +498,17 @@ export function SettingsView() {
     setProcedurePrice('');
   }
 
-  function openIntegrationConfig(provider?: string) {
-    setIntegrationProviderPrefill(provider);
+  function openIntegrationConfig(item?: RecordValue | string) {
+    if (typeof item === 'string') {
+      setIntegrationProviderPrefill(item);
+      setEditingIntegration(null);
+    } else if (item) {
+      setIntegrationProviderPrefill(text(item.provider));
+      setEditingIntegration(item);
+    } else {
+      setIntegrationProviderPrefill(undefined);
+      setEditingIntegration(null);
+    }
     setConfigModal('integration');
     setIntegrationMenuId(null);
   }
@@ -630,13 +670,39 @@ export function SettingsView() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     data.set('clinicId', clinicId);
+    if (certificateProfessionalId) data.set('professionalId', certificateProfessionalId);
     try {
       await api.postForm('/settings/certificate', data);
       closeConfigModal();
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Não foi possível validar e armazenar o certificado.');
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível validar e armazenar o certificado.');
     }
+  }
+
+  async function removeCertificate(professionalId?: string) {
+    if (!clinicId) return;
+    const query = new URLSearchParams({ clinicId });
+    if (professionalId) query.set('professionalId', professionalId);
+    try {
+      await api.delete(`/settings/certificate?${query.toString()}`);
+      closeConfigModal();
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível remover o certificado.');
+    }
+  }
+
+  function confirmRemoveCertificate(professionalId?: string, professionalName?: string) {
+    const isProfessional = Boolean(professionalId);
+    setPendingConfirm({
+      title: isProfessional ? 'Remover e-CPF?' : 'Remover certificado A1 da clínica?',
+      description: isProfessional
+        ? `Remover o e-CPF de ${professionalName || 'este profissional'}? Ele não poderá assinar digitalmente até vincular outro certificado. Assinaturas já registradas permanecem no histórico.`
+        : 'O certificado deixa de ser usado em novas assinaturas. Assinaturas já registradas permanecem no histórico.',
+      confirmLabel: 'Remover',
+      onConfirm: () => void removeCertificate(professionalId),
+    });
   }
 
   async function disableIntegration(id: string) {
@@ -816,7 +882,7 @@ export function SettingsView() {
       </DirtyFormModal>
       <DirtyFormModal open={configModal === 'integration'} title="Configurar integração" description="Cada provedor tem campos próprios. As credenciais ficam protegidas e não são exibidas depois de salvas." onClose={closeConfigModal}>
         <ModuleActions
-          key={integrationProviderPrefill ?? 'new'}
+          key={`${integrationProviderPrefill ?? 'new'}-${text(editingIntegration?.id, 'new')}`}
           module="integracoes"
           configurationKind="integration"
           clinicId={clinicId}
@@ -826,6 +892,17 @@ export function SettingsView() {
           selectedPatientId=""
           onPatientChange={() => undefined}
           initialIntegrationProvider={integrationProviderPrefill}
+          initialIntegration={editingIntegration ? {
+            id: editingIntegration.id ? String(editingIntegration.id) : undefined,
+            credentialsConfigured: Boolean(
+              editingIntegration.credentials
+              && typeof editingIntegration.credentials === 'object'
+              && (editingIntegration.credentials as RecordValue).configured,
+            ),
+            configuration: editingIntegration.configuration && typeof editingIntegration.configuration === 'object'
+              ? editingIntegration.configuration as Record<string, unknown>
+              : {},
+          } : undefined}
           onSaved={() => { load(); closeConfigModal(); }}
         />
       </DirtyFormModal>
@@ -838,6 +915,15 @@ export function SettingsView() {
             <div className="info-item"><small>Modo</small><strong>{text(viewingIntegration.mode, 'salvo')}</strong></div>
             <div className="info-item"><small>Credenciais</small><strong>{viewingIntegration.credentials && typeof viewingIntegration.credentials === 'object' && (viewingIntegration.credentials as RecordValue).configured ? 'Configuradas' : 'Não configuradas'}</strong></div>
             <div className="info-item"><small>Última sincronização</small><strong>{viewingIntegration.lastSyncAt ? dateOnly(viewingIntegration.lastSyncAt) : '—'}</strong></div>
+            {String(viewingIntegration.provider).toUpperCase() === 'ABACATEPAY' ? (
+              <div className="info-item span-2">
+                <small>URL do webhook</small>
+                <strong className="contract-hint" style={{ display: 'block', marginTop: 6 }}>
+                  {`${API_URL}/integrations/abacatepay/webhook?webhookSecret=SEU_SEGREDO`}
+                </strong>
+                <span>Cadastre esta URL no dashboard da AbacatePay (evento transparent.completed). Inclua o segredo salvo na integração.</span>
+              </div>
+            ) : null}
             {viewingIntegration.configuration && typeof viewingIntegration.configuration === 'object' ? (
               <div className="info-item span-2">
                 <small>Configuração</small>
@@ -929,6 +1015,15 @@ export function SettingsView() {
       <DirtyFormModal open={configModal === 'unit'} title={editingUnit ? 'Editar unidade' : 'Nova unidade'} description="Unidade física vinculada à clínica ativa." onClose={closeConfigModal} size="small">
         <form className="mutation-form" onSubmit={submitUnit}>
           <label className="span-2">Nome<input value={unitName} onChange={(e) => setUnitName(e.target.value)} minLength={2} required autoFocus /></label>
+          <label className="span-2">Cidade
+            <input
+              value={unitCity}
+              onChange={(e) => setUnitCity(e.target.value)}
+              placeholder="Ex.: Cuiabá"
+              maxLength={120}
+            />
+            <span className="field-hint">Aparece na linha de lugar dos documentos oficiais (Cuiabá, 14 de agosto de 2026).</span>
+          </label>
           {formError ? <p className="state-message error" role="alert">{formError}</p> : null}
           <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : editingUnit ? 'Salvar unidade' : 'Criar unidade'}</button>
         </form>
@@ -1051,34 +1146,51 @@ export function SettingsView() {
       </Modal>
       <DirtyFormModal
         open={configModal === 'certificate'}
-        title="Certificado digital A1"
-        description="O arquivo e a senha nunca são expostos ou disponibilizados para download."
+        title={certificateProfessionalId ? 'Certificado e-CPF do profissional' : 'Certificado digital A1 da clínica'}
+        description="O arquivo e a senha nunca são expostos ou disponibilizados para download. A conferência de CPF usa o DN do PKCS#12 — não é validação ICP-Brasil."
         onClose={closeConfigModal}
         size="small"
       >
-        {!certificateEditing ? (
+        {(() => {
+          const status = certModalStatus ?? certificate;
+          const viewing = !certificateEditing && Boolean(status?.configured);
+          const modalProfessionalName = certificateProfessionalId
+            ? text(professionalCertificates.find((row) => String(row.professionalId) === certificateProfessionalId)?.professionalName)
+            : undefined;
+          return viewing ? (
           <>
             <div className="info-grid">
-              <div className="info-item"><small>Certificado</small><strong>{certificate?.configured ? 'Configurado' : 'Não configurado'}</strong></div>
-              <div className="info-item"><small>Senha</small><strong>{certificate?.passwordConfigured ? 'Configurada' : 'Não configurada'}</strong></div>
-              {certificate?.subject ? (
+              <div className="info-item"><small>Certificado</small><strong>{status?.configured ? 'Configurado' : 'Não configurado'}</strong></div>
+              <div className="info-item"><small>Senha</small><strong>{status?.passwordConfigured ? 'Configurada' : 'Não configurada'}</strong></div>
+              {status?.subject ? (
                 <div className="info-item span-2">
                   <small>Titular</small>
                   <strong>{certificateSubject.title}</strong>
                   {certificateSubject.detail ? <span>{certificateSubject.detail}</span> : null}
                 </div>
               ) : null}
-              {certificate?.issuer ? (
+              {status?.issuer ? (
                 <div className="info-item span-2">
                   <small>Emissor</small>
                   <strong>{certificateIssuer.title}</strong>
                   {certificateIssuer.detail ? <span>{certificateIssuer.detail}</span> : null}
                 </div>
               ) : null}
-              {certificate?.serialNumber ? <div className="info-item"><small>Número de série</small><strong>{text(certificate.serialNumber)}</strong></div> : null}
-              {certificate?.validTo ? <div className="info-item"><small>Validade</small><strong>{dateOnly(certificate.validTo)}</strong></div> : null}
+              {status?.serialNumber ? <div className="info-item"><small>Número de série</small><strong>{text(status.serialNumber)}</strong></div> : null}
+              {status?.validTo ? <div className="info-item"><small>Validade</small><strong>{dateOnly(status.validTo)}</strong></div> : null}
             </div>
             <div className="modal-footer">
+              <button className="button" type="button" onClick={closeConfigModal}>Fechar</button>
+              <button
+                className="button"
+                type="button"
+                onClick={() => confirmRemoveCertificate(
+                  certificateProfessionalId || undefined,
+                  modalProfessionalName,
+                )}
+              >
+                <Trash2 size={14} /> Remover
+              </button>
               <button className="button primary" type="button" onClick={() => setCertificateEditing(true)}>
                 Substituir certificado
               </button>
@@ -1086,19 +1198,41 @@ export function SettingsView() {
           </>
         ) : (
           <>
-            <form className="mutation-form" onSubmit={uploadCertificate}>
+            <form id="certificate-upload-form" className="mutation-form" onSubmit={uploadCertificate}>
               <label className="span-2">Arquivo do certificado (.pfx / .p12)<input name="file" type="file" accept=".pfx,.p12,application/x-pkcs12" required /></label>
-              <label className="span-2">Senha do certificado<input name="password" type="password" autoComplete="new-password" required /></label>
-              <button className="button primary">Validar e armazenar</button>
+              <label className="span-2">
+                Senha do certificado
+                <div className="password-field">
+                  <input
+                    name="password"
+                    type={showCertPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={showCertPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                    onClick={() => setShowCertPassword((value) => !value)}
+                  >
+                    {showCertPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </label>
+              {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
             </form>
-            {certificate?.configured ? (
-              <div className="modal-footer">
-                <button className="button soft" type="button" onClick={() => setCertificateEditing(false)}>Voltar à visualização</button>
-              </div>
-            ) : null}
+            <div className="modal-footer">
+              {status?.configured ? (
+                <button className="button" type="button" onClick={() => setCertificateEditing(false)}>Voltar à visualização</button>
+              ) : (
+                <button className="button" type="button" onClick={closeConfigModal}>Cancelar</button>
+              )}
+              <button className="button primary" type="submit" form="certificate-upload-form">Validar e armazenar</button>
+            </div>
             <div className="secure-notice" style={{ margin: 14 }}>Máximo de 5 MB. O arquivo e a senha ficam protegidos e nunca são expostos para download.</div>
           </>
-        )}
+        );
+        })()}
       </DirtyFormModal>
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Seções de configuração">
@@ -1142,7 +1276,7 @@ export function SettingsView() {
               title={activeLabel}
               description="Estrutura física da clínica: unidades, cadeiras e profissionais da agenda."
               actions={(
-                <button className="button primary small" type="button" onClick={() => { setEditingUnit(null); setUnitName(''); setConfigModal('unit'); }}>
+                <button className="button primary small" type="button" onClick={() => { setEditingUnit(null); setUnitName(''); setUnitCity(''); setConfigModal('unit'); }}>
                   <Plus size={14} /> Nova unidade
                 </button>
               )}
@@ -1168,7 +1302,7 @@ export function SettingsView() {
                     title="Nenhuma unidade nesta clínica"
                     description="Crie a primeira unidade física para alocar cadeiras na agenda."
                     action={(
-                      <button className="button primary small" type="button" onClick={() => { setEditingUnit(null); setUnitName(''); setConfigModal('unit'); }}>
+                      <button className="button primary small" type="button" onClick={() => { setEditingUnit(null); setUnitName(''); setUnitCity(''); setConfigModal('unit'); }}>
                         <Plus size={14} /> Nova unidade
                       </button>
                     )}
@@ -1204,6 +1338,7 @@ export function SettingsView() {
                           <strong>{unit.name}</strong>
                           <span>
                             {unit.chairs.length} {unit.chairs.length === 1 ? 'cadeira' : 'cadeiras'}
+                            {unit.city ? ` · ${unit.city}` : ''}
                             {selected ? '' : ' · clique para configurar'}
                           </span>
                         </button>
@@ -1220,7 +1355,12 @@ export function SettingsView() {
                             className="icon-button"
                             title="Editar unidade"
                             aria-label={`Editar unidade ${unit.name}`}
-                            onClick={() => { setEditingUnit({ id: unit.id, name: unit.name }); setUnitName(unit.name); setConfigModal('unit'); }}
+                            onClick={() => {
+                              setEditingUnit({ id: unit.id, name: unit.name, city: unit.city });
+                              setUnitName(unit.name);
+                              setUnitCity(unit.city ?? '');
+                              setConfigModal('unit');
+                            }}
                           >
                             <Pencil size={15} />
                           </button>
@@ -1313,38 +1453,7 @@ export function SettingsView() {
                 <OutboxDeadLetterPanel />
               </Disclosure>
               <Disclosure title="Profissionais da agenda" description="Quem aparece na grade desta clínica" defaultOpen={false}>
-              {professionals.length > 0 ? (
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Profissional</th>
-                        <th>CRO</th>
-                        <th>Agenda</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {professionals.map((professional) => (
-                        <tr key={professional.id}>
-                          <td>
-                            <div className="person-cell">
-                              <div className="avatar">{initials(professional.name)}</div>
-                              <div><strong>{professional.name}</strong></div>
-                            </div>
-                          </td>
-                          <td>{professional.croNumber ? `${professional.croNumber}/${professional.croState ?? ''}` : '—'}</td>
-                          <td>Própria</td>
-                          <td><StatusBadge tone="green">Ativo</StatusBadge></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <EmptyState title="Nenhum profissional listado" description="Profissionais aparecem aqui a partir do contexto da clínica." />
-              )}
-              <ProfessionalsPanel />
+                <ProfessionalsPanel />
               </Disclosure>
               <div className="settings-list">
                 <div className="settings-row">
@@ -1865,7 +1974,7 @@ export function SettingsView() {
                             className="icon-button"
                             title="Editar"
                             aria-label={`Editar ${text(item.provider)}`}
-                            onClick={() => openIntegrationConfig(text(item.provider))}
+                            onClick={() => openIntegrationConfig(item)}
                           >
                             <Pencil size={15} />
                           </button>
@@ -2023,22 +2132,67 @@ export function SettingsView() {
           )}
 
           {section === 'certificate' && (
-            <Panel title={activeLabel} description="O certificado fica protegido e não pode ser baixado depois de salvo.">
+            <Panel title={activeLabel} description="A1 da clínica e e-CPF por profissional. O arquivo fica protegido e não pode ser baixado depois de salvo.">
               <div className="settings-list">
                 <div className="settings-row">
                   <div>
-                    <strong>{certificate?.configured ? 'Certificado configurado' : 'Certificado não configurado'}</strong>
+                    <strong>{certificate?.configured ? 'Certificado A1 da clínica' : 'A1 da clínica não configurado'}</strong>
                     <span>Armazenamento: {text(certificate?.storage, 'local seguro')}</span>
                   </div>
-                  <StatusBadge tone={certificate?.configured ? 'green' : 'amber'}>
-                    {certificate?.configured ? 'Ativo' : 'Configurar'}
-                  </StatusBadge>
+                  <div className="row-actions">
+                    <StatusBadge tone={certificate?.configured ? 'green' : 'amber'}>
+                      {certificate?.configured ? 'Ativo' : 'Configurar'}
+                    </StatusBadge>
+                    {certificate?.configured ? (
+                      <button
+                        type="button"
+                        className="icon-button danger"
+                        title="Remover"
+                        aria-label="Remover certificado A1 da clínica"
+                        onClick={() => confirmRemoveCertificate()}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    ) : null}
+                    <button className="button small" type="button" onClick={() => openCertificateModal()}>
+                      {certificate?.configured ? 'Ver' : 'Configurar'}
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="modal-footer">
-                <button className="button primary" type="button" onClick={openCertificateModal}>
-                  {certificate?.configured ? 'Ver configuração segura' : 'Configurar certificado'}
-                </button>
+                {professionalCertificates.map((row) => (
+                  <div className="settings-row" key={String(row.professionalId)}>
+                    <div>
+                      <strong>{text(row.professionalName)}</strong>
+                      <span>
+                        {row.configured ? 'e-CPF vinculado' : 'Sem e-CPF'}
+                        {row.professionalCpf ? ` · CPF ${formatCpf(row.professionalCpf)}` : ' · cadastre o CPF do profissional para vincular'}
+                      </span>
+                    </div>
+                    <div className="row-actions">
+                      <StatusBadge tone={row.configured ? 'green' : 'gray'}>
+                        {row.configured ? 'Ativo' : 'Pendente'}
+                      </StatusBadge>
+                      {row.configured ? (
+                        <button
+                          type="button"
+                          className="icon-button danger"
+                          title="Remover"
+                          aria-label={`Remover e-CPF de ${text(row.professionalName)}`}
+                          onClick={() => confirmRemoveCertificate(String(row.professionalId), text(row.professionalName))}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      ) : null}
+                      <button
+                        className="button small"
+                        type="button"
+                        onClick={() => openCertificateModal(String(row.professionalId))}
+                      >
+                        {row.configured ? 'Ver e-CPF' : 'Vincular e-CPF'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </Panel>
           )}

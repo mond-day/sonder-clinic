@@ -29,6 +29,15 @@ export function netPaidAmount(payment: {
   return net.gt(0) ? net : money('0');
 }
 
+export function pendingReservedAmount(
+  payments: Array<{ amount: Prisma.Decimal; status: string }>,
+): Prisma.Decimal {
+  return payments.reduce((sum, item) => {
+    if (item.status !== 'PENDING') return sum;
+    return sum.add(item.amount);
+  }, money('0'));
+}
+
 /** Soma dos valores líquidos de pagamentos confirmados / parcialmente estornados. */
 export function confirmedNetPaid(
   payments: Array<{

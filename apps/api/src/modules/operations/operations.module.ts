@@ -11,5 +11,6 @@ import { TreatmentContractService } from '../documents/treatment-contract.servic
   imports: [AuthModule, SettingsModule],
   controllers: [OperationsController, PublicDocumentsController, PublicDocumentSignaturesController],
   providers: [OperationsService, TreatmentContractService, AuthGuard, PermissionsGuard],
+  exports: [OperationsService],
 })
 export class OperationsModule {}

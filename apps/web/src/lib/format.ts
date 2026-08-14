@@ -52,10 +52,58 @@ export const dateTime = (value: unknown) =>
     ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(String(value)))
     : '—';
 
-export const dateOnly = (value: unknown) =>
-  value
-    ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(new Date(String(value)))
-    : '—';
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/;
+const MONTHS_PT = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+] as const;
+
+/** Data civil `YYYY-MM-DD` → `DD/MM/AAAA`, sem deslocar fuso. */
+export function formatBrazilianDate(value: unknown, fallback = '—'): string {
+  if (value == null || value === '') return fallback;
+  const raw = String(value).trim();
+  const dayOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+  const match = ISO_DAY.exec(raw);
+  if (match && (dayOnly || !raw.includes('T'))) {
+    return `${match[3]}/${match[2]}/${match[1]}`;
+  }
+  const date = value instanceof Date ? value : new Date(raw);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(date);
+}
+
+export function formatBrazilianDateLong(value: unknown, fallback = '—'): string {
+  const raw = String(value ?? '').trim();
+  const match = ISO_DAY.exec(raw) ?? (value instanceof Date && !Number.isNaN(value.getTime())
+    ? ISO_DAY.exec(value.toISOString())
+    : null);
+  if (!match) return formatBrazilianDate(value, fallback);
+  const month = MONTHS_PT[Number(match[2]) - 1];
+  if (!month) return formatBrazilianDate(value, fallback);
+  return `${Number(match[3])} de ${month} de ${match[1]}`;
+}
+
+/** Normaliza CRO para `CRO-UF número`. Não inventa UF. */
+export function formatCro(input: {
+  number?: string | null;
+  state?: string | null;
+} | string | null | undefined): string {
+  if (input == null || input === '') return '';
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    const parsed = /(?:CRO[\s\-\/]*)?([A-Za-z]{2})[\s\-\/]+(\d+)/.exec(trimmed)
+      ?? /CRO[\s\-\/]*([A-Za-z]{2})(\d+)/i.exec(trimmed);
+    if (parsed) return `CRO-${parsed[1]!.toUpperCase()} ${parsed[2]}`;
+    return trimmed;
+  }
+  const digits = (input.number ?? '').replace(/\D/g, '');
+  const state = (input.state ?? '').replace(/[^A-Za-z]/g, '').toUpperCase();
+  if (!digits) return '';
+  if (!state) return `CRO ${digits}`;
+  return `CRO-${state} ${digits}`;
+}
+
+export const dateOnly = (value: unknown) => formatBrazilianDate(value, '—');
 
 export const timeOnly = (value: unknown) =>
   value
@@ -338,6 +386,7 @@ const presentationLabels: Record<string, string> = {
   CASH: 'Dinheiro',
   TRANSFER: 'Transferência',
   PIX: 'PIX',
+  BOLETO: 'Boleto',
   IMAGING: 'Imagem',
   PHOTO: 'Fotografia',
   OTHER: 'Outro',

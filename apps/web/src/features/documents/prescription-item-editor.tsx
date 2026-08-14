@@ -1,7 +1,7 @@
 'use client';
 
 import { Copy, Pencil, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { list, text, type RecordValue } from '@/lib/format';
 import type { PrescriptionItem } from './document-types';
@@ -51,18 +51,29 @@ function MedicationCatalogField({
   const [options, setOptions] = useState<CatalogMedication[]>([]);
   const [open, setOpen] = useState(false);
   const [freeText, setFreeText] = useState(false);
+  const rootRef = useRef<HTMLLabelElement>(null);
+  const selected = Boolean(value.trim());
 
   useEffect(() => { setQuery(value); }, [value]);
 
   useEffect(() => {
-    if (freeText) return;
+    if (freeText || !open) return;
     const handle = window.setTimeout(() => {
       api.get<CatalogMedication[]>(`/medication-catalog?q=${encodeURIComponent(query)}`)
         .then((data) => setOptions(list(data) as CatalogMedication[]))
         .catch(() => setOptions([]));
     }, 200);
     return () => window.clearTimeout(handle);
-  }, [query, freeText]);
+  }, [query, freeText, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
 
   if (freeText) {
     return (
@@ -83,17 +94,22 @@ function MedicationCatalogField({
   }
 
   return (
-    <label className="span-full" style={{ position: 'relative' }}>
+    <label className="span-full" style={{ position: 'relative' }} ref={rootRef}>
       Medicamento
       <input
         required
-        autoFocus
+        autoFocus={!selected}
         value={query}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          if (!selected) setOpen(true);
+        }}
         onChange={(event) => {
           setQuery(event.target.value);
           onChange(event.target.value);
           setOpen(true);
+        }}
+        onBlur={() => {
+          window.setTimeout(() => setOpen(false), 150);
         }}
         placeholder="Buscar medicamento…"
         autoComplete="off"
@@ -105,6 +121,7 @@ function MedicationCatalogField({
               key={item.id}
               type="button"
               role="option"
+              onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
                 onPick(item);
                 setQuery(item.name);
@@ -117,7 +134,12 @@ function MedicationCatalogField({
               </small>
             </button>
           ))}
-          <button type="button" role="option" onClick={() => { setFreeText(true); setOpen(false); }}>
+          <button
+            type="button"
+            role="option"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => { setFreeText(true); setOpen(false); }}
+          >
             + Usar texto livre
           </button>
         </div>

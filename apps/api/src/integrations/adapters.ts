@@ -3,24 +3,78 @@
  * Nunca retornam sucesso simulado quando a integração está desabilitada ou a chamada falha.
  */
 
-export type AdapterResult = {
-  success: boolean;
-  provider: string;
-  enabled: boolean;
-  message: string;
-  detail?: unknown;
-};
+import { envFlag, fetchJson, type AdapterResult } from './http';
+import { testAbacatePay } from './abacatepay';
+import { testChatwoot } from './chatwoot';
 
-function envFlag(name: string, fallback = 'true') {
-  return (process.env[name] ?? fallback).toLowerCase() === 'true';
+export type { AdapterResult } from './http';
+
+function asNamedList(body: unknown): Array<{ id: string; name: string }> {
+  const rows = Array.isArray(body)
+    ? body
+    : body && typeof body === 'object'
+      ? ((body as { items?: unknown; data?: unknown; value?: unknown }).items
+        ?? (body as { data?: unknown }).data
+        ?? (body as { value?: unknown }).value
+        ?? [])
+      : [];
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row) => {
+    if (!row || typeof row !== 'object') return [];
+    const item = row as Record<string, unknown>;
+    const id = String(item.id ?? item.scheduleCategoryId ?? item.categoryId ?? item.costCenterId ?? '');
+    const name = String(item.name ?? item.description ?? item.title ?? '');
+    if (!id || !name) return [];
+    return [{ id, name }];
+  });
 }
 
-async function fetchJson(url: string, init?: RequestInit) {
-  const response = await fetch(url, init);
-  const text = await response.text();
-  let body: unknown = text;
-  try { body = text ? JSON.parse(text) : null; } catch { /* keep text */ }
-  return { ok: response.ok, status: response.status, body };
+export async function fetchNiboCatalog(apiKey: string): Promise<{
+  categories: Array<{ id: string; name: string }>;
+  costCenters: Array<{ id: string; name: string }>;
+  source: 'live' | 'unavailable';
+  message?: string;
+}> {
+  const mock = envFlag('NIBO_MOCK', 'true');
+  if (mock) {
+    return {
+      categories: [],
+      costCenters: [],
+      source: 'unavailable',
+      message: 'Nibo em modo MOCK. Informe os IDs manualmente ou desative NIBO_MOCK para buscar categorias.',
+    };
+  }
+  const baseUrl = (process.env.NIBO_BASE_URL ?? 'https://api.nibo.com.br/empresas/v1').replace(/\/$/, '');
+  const headersList: Array<Record<string, string>> = [
+    { apitoken: apiKey, Accept: 'application/json' },
+    { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+  ];
+  async function tryPaths(paths: string[]): Promise<Array<{ id: string; name: string }>> {
+    for (const headers of headersList) {
+      for (const path of paths) {
+        try {
+          const result = await fetchJson(`${baseUrl}${path}`, { headers });
+          if (result.ok) {
+            const list = asNamedList(result.body);
+            if (list.length) return list;
+          }
+        } catch {
+          /* tenta o próximo caminho */
+        }
+      }
+    }
+    return [];
+  }
+  const categories = await tryPaths(['/schedulescategories', '/categories', '/financialcategories']);
+  const costCenters = await tryPaths(['/costcenters', '/costCenters']);
+  return {
+    categories,
+    costCenters,
+    source: categories.length || costCenters.length ? 'live' : 'unavailable',
+    message: categories.length || costCenters.length
+      ? undefined
+      : 'Não foi possível listar categorias do Nibo. Informe os IDs manualmente.',
+  };
 }
 
 export async function testEvolution(): Promise<AdapterResult> {
@@ -58,23 +112,23 @@ export async function testEvolution(): Promise<AdapterResult> {
   }
 }
 
-export async function testNibo(): Promise<AdapterResult> {
+export async function testNibo(apiKey?: string): Promise<AdapterResult> {
   const mock = envFlag('NIBO_MOCK', 'true');
   const baseUrl = process.env.NIBO_BASE_URL ?? 'https://api.nibo.com.br/empresas/v1';
-  const token = process.env.NIBO_API_TOKEN;
+  const token = apiKey?.trim() || process.env.NIBO_API_TOKEN;
   if (mock || !token) {
     return {
       success: false,
       provider: 'NIBO',
       enabled: false,
       message: mock
-        ? 'Nibo desabilitado (NIBO_MOCK=true). Nenhum sucesso foi simulado.'
-        : 'Nibo desabilitado: configure NIBO_API_TOKEN.',
+        ? 'Nibo em modo MOCK (NIBO_MOCK=true). Nenhum sucesso foi simulado.'
+        : 'Nibo desabilitado: configure a API Key da conexão ou NIBO_API_TOKEN.',
     };
   }
   try {
     const result = await fetchJson(`${baseUrl.replace(/\/$/, '')}/schedules`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      headers: { apitoken: token, Authorization: `Bearer ${token}`, Accept: 'application/json' },
     });
     return {
       success: result.ok,
@@ -117,68 +171,13 @@ export async function testGoogleCalendar(): Promise<AdapterResult> {
   };
 }
 
-export async function testChatwoot(): Promise<AdapterResult> {
-  const mock = envFlag('CHATWOOT_MOCK', 'true');
-  const baseUrl = process.env.CHATWOOT_BASE_URL;
-  const token = process.env.CHATWOOT_API_ACCESS_TOKEN;
-  const accountId = process.env.CHATWOOT_ACCOUNT_ID;
-  if (mock || !baseUrl || !token || !accountId) {
-    return {
-      success: false,
-      provider: 'CHATWOOT',
-      enabled: false,
-      message: mock
-        ? 'Chatwoot desabilitado (CHATWOOT_MOCK=true).'
-        : 'Chatwoot desabilitado: configure BASE_URL, TOKEN e ACCOUNT_ID.',
-    };
-  }
-  try {
-    const result = await fetchJson(`${baseUrl.replace(/\/$/, '')}/api/v1/accounts/${accountId}`, {
-      headers: { api_access_token: token },
-    });
-    return {
-      success: result.ok,
-      provider: 'CHATWOOT',
-      enabled: true,
-      message: result.ok ? 'Conexão Chatwoot confirmada.' : `Falha Chatwoot HTTP ${result.status}.`,
-      detail: result.body,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      provider: 'CHATWOOT',
-      enabled: true,
-      message: `Erro ao contatar Chatwoot: ${error instanceof Error ? error.message : 'desconhecido'}`,
-    };
-  }
-}
-
 export async function testProvider(provider: string): Promise<AdapterResult> {
   switch (provider) {
     case 'EVOLUTION': return testEvolution();
     case 'NIBO': return testNibo();
     case 'GOOGLE_CALENDAR': return testGoogleCalendar();
     case 'CHATWOOT': return testChatwoot();
-    case 'ABACATEPAY': {
-      const mock = envFlag('ABACATEPAY_MOCK', 'true');
-      const key = process.env.ABACATEPAY_API_KEY;
-      if (mock || !key) {
-        return {
-          success: false,
-          provider: 'ABACATEPAY',
-          enabled: false,
-          message: mock
-            ? 'AbacatePay desabilitado (ABACATEPAY_MOCK=true).'
-            : 'AbacatePay desabilitado: configure ABACATEPAY_API_KEY.',
-        };
-      }
-      return {
-        success: false,
-        provider: 'ABACATEPAY',
-        enabled: true,
-        message: 'Credencial presente; teste live de cobrança não executado sem endpoint de health dedicado.',
-      };
-    }
+    case 'ABACATEPAY': return testAbacatePay();
     default:
       return {
         success: false,

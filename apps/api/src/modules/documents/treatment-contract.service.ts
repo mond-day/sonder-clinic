@@ -174,10 +174,11 @@ export class TreatmentContractService {
 
     const unit = await prisma.unit.findFirst({
       where: { clinicId: clinic.id, status: 'ACTIVE' },
-      select: { name: true },
+      select: { name: true, city: true },
       orderBy: { name: 'asc' },
     });
     const clinicAddress = unit?.name ? `Unidade ${unit.name}` : 'endereço da clínica cadastrado no sistema';
+    const clinicCity = unit?.city?.trim() || null;
 
     const context = {
       clinic: {
@@ -260,7 +261,15 @@ export class TreatmentContractService {
       },
       patient,
       professional,
-      clinic,
+      clinic: {
+        tradeName: clinic.tradeName,
+        legalName: clinic.legalName,
+        taxId: clinic.taxId,
+        phone: clinic.phone,
+        email: clinic.email,
+        city: clinicCity,
+        address: clinicAddress,
+      },
       template: { id: template.id, name: template.name, type: template.type, version: template.version },
       generatedAt,
     });

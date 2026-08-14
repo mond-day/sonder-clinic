@@ -4,8 +4,12 @@ import {
   cpfDigits,
   currency,
   dateInputToIso,
+  dateOnly,
   daysUntilBirthday,
+  formatBrazilianDate,
+  formatBrazilianDateLong,
   formatCpf,
+  formatCro,
   formatPhone,
   formatPostalCode,
   initials,
@@ -95,5 +99,12 @@ describe('format helpers', () => {
     expect(toDateInputValue(new Date(2026, 7, 13))).toBe('2026-08-13');
     expect(dateInputToIso('2026-08-13')).toBe('2026-08-13T12:00:00');
     expect(dateInputToIso('invalid')).toBeUndefined();
+  });
+
+  it('formata datas civis ISO em pt-BR sem deslocar o dia', () => {
+    expect(formatBrazilianDate('2026-08-14')).toBe('14/08/2026');
+    expect(dateOnly('2026-08-14')).toBe('14/08/2026');
+    expect(formatBrazilianDateLong('2026-08-14')).toBe('14 de agosto de 2026');
+    expect(formatCro({ number: '12345', state: 'mt' })).toBe('CRO-MT 12345');
   });
 });

@@ -247,6 +247,10 @@ class PaymentDto {
   @IsString() method!: string;
   @IsOptional() @IsIn(['NIBO', 'ABACATEPAY']) provider?: 'NIBO' | 'ABACATEPAY';
 }
+class ChargeDto {
+  @IsString() @Matches(/^(?!0+(?:\.0+)?$)\d+(\.\d{1,2})?$/) amount!: string;
+  @IsIn(['PIX', 'BOLETO']) method!: 'PIX' | 'BOLETO';
+}
 class RefundDto {
   @IsString() @Matches(/^(?!0+(?:\.0+)?$)\d+(\.\d{1,2})?$/) amount!: string;
   @IsString() @MinLength(5) reason!: string;
@@ -656,6 +660,15 @@ export class OperationsController {
     if (!key) throw new ConflictException('Idempotency-Key é obrigatório.');
     return this.operations.registerPayment(req.auth.organizationId, id, { ...body, idempotencyKey: key });
   }
+  @Post('receivables/:id/charges') @RequirePermissions('financial.create')
+  createCharge(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Headers('idempotency-key') key: string, @Body() body: ChargeDto) {
+    if (!key) throw new ConflictException('Idempotency-Key é obrigatório.');
+    return this.operations.createReceivableCharge(req.auth.organizationId, id, { ...body, idempotencyKey: key });
+  }
+  @Post('payments/:id/sync') @RequirePermissions('financial.create')
+  syncPayment(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.operations.syncAbacatePayPayment(req.auth.organizationId, id);
+  }
   @Post('payments/:id/refund') @RequirePermissions('financial.refund')
   refund(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: RefundDto) { return this.operations.refund(req.auth.organizationId, id, req.auth.userId, body); }
 
@@ -871,6 +884,14 @@ export class OperationsController {
 @Controller('public/documents')
 export class PublicDocumentsController {
   constructor(private readonly operations: OperationsService) {}
+
+  @Get(':validationCode/qr')
+  async qr(@Param('validationCode') validationCode: string, @Res() res: Response) {
+    const file = await this.operations.publicDocumentQr(validationCode);
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(file.content);
+  }
 
   @Get(':validationCode')
   validate(@Param('validationCode') validationCode: string) {

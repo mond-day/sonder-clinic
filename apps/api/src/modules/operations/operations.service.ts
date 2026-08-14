@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
 import { z } from 'zod';
-import { buildClinicalDocumentPdf } from '../../common/pdf';
+import { buildClinicalDocumentPdf, buildValidationQrPng } from '../../common/pdf';
+import { formatBrazilianDate, formatCpfFull } from '../../common/dates';
 import { parseWithZod } from '../../common/zod-validation';
 import { CertificateService } from '../settings/certificate.service';
 import { TreatmentContractService } from '../documents/treatment-contract.service';
@@ -26,6 +27,7 @@ import {
   money,
   netPayablePaid,
   netPaidAmount,
+  pendingReservedAmount,
   positiveMoney,
   refundedTotal,
 } from './operations-finance.utils';
@@ -63,7 +65,9 @@ import {
   buildServerFrozenContent,
   DEFAULT_PATIENT_FOLDERS,
   defaultFolderNameForTemplateType,
+  formatCidCitation,
   hashDocumentContent,
+  legalPatientCpf,
   nextDocumentStatusAfterSign,
   normalizePrescriptionItems,
   parseSignatureRules,
@@ -157,6 +161,31 @@ export class OperationsService {
     private readonly certificates: CertificateService,
     private readonly contracts: TreatmentContractService,
   ) {}
+
+  private async clinicPlaceAndBrand(clinicId: string, organizationId: string) {
+    const clinic = await prisma.clinic.findFirst({
+      where: { id: clinicId, organizationId },
+      select: {
+        tradeName: true,
+        legalName: true,
+        taxId: true,
+        phone: true,
+        email: true,
+        settingsJson: true,
+        units: {
+          where: { status: 'ACTIVE' },
+          select: { city: true },
+          orderBy: { name: 'asc' },
+        },
+      },
+    });
+    const city = clinic?.units.map((unit) => unit.city?.trim()).find(Boolean) || null;
+    const branding = clinic?.settingsJson && typeof clinic.settingsJson === 'object' && !Array.isArray(clinic.settingsJson)
+      ? (clinic.settingsJson as { branding?: { primaryColor?: string } }).branding
+      : undefined;
+    const primaryColor = typeof branding?.primaryColor === 'string' ? branding.primaryColor : undefined;
+    return { clinic, city, primaryColor };
+  }
 
   procedures(organizationId: string, includeInactive = false) {
     return prisma.procedure.findMany({
@@ -1749,7 +1778,7 @@ export class OperationsService {
     });
     const clinic = await prisma.clinic.findFirst({
       where: { id: document.clinicId, organizationId },
-      select: { tradeName: true, legalName: true },
+      select: { tradeName: true, legalName: true, taxId: true, phone: true, email: true },
     });
     const content = (document.frozenContent ?? {}) as Record<string, unknown>;
     const identity = (content.identity ?? {}) as Record<string, unknown>;
@@ -1762,34 +1791,61 @@ export class OperationsService {
       content.corpo && !renderedText ? String(content.corpo) : '',
       content.indication ? `Indicação: ${String(content.indication)}` : '',
       Array.isArray(content.exams) ? `Exames: ${(content.exams as unknown[]).map(String).join(', ')}` : '',
-      content.cid ? `CID: ${String(content.cid)}` : '',
+      content.cid && !String(content.corpo ?? '').includes(String(content.cid))
+        ? formatCidCitation(content)
+        : '',
       ...Object.entries(content)
         .filter(([key]) => ![
           'titulo', 'prescricao', 'observacoes', 'corpo', 'paciente', 'data', 'identity', 'template',
-          'cidConsent', 'exams', 'indication', 'cid', 'renderedText', 'renderedHtml', 'payment',
-          'treatmentSnapshot',
+          'cidConsent', 'exams', 'indication', 'cid', 'cidDescription', 'renderedText', 'renderedHtml', 'payment',
+          'treatmentSnapshot', 'attendanceDate', 'mode', 'daysAway', 'startTime', 'endTime',
         ].includes(key))
         .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`),
     ].filter(Boolean);
     if (!bodyLines.length) {
       bodyLines.push(`Modelo: ${document.template.name}`);
-      bodyLines.push(`Gerado em: ${document.generatedAt.toISOString()}`);
+      bodyLines.push(`Gerado em: ${formatBrazilianDate(document.generatedAt)}`);
     }
     const patientName = typeof identity.patientName === 'string' ? identity.patientName : patient?.fullName;
-    const patientDocument = typeof identity.patientCpfMasked === 'string'
-      ? `CPF ${identity.patientCpfMasked}`
-      : (patient?.cpf ? `CPF ${patient.cpf.replace(/^(\d{3})\d{5}(\d{2})$/, '$1.***.***-$2')}` : undefined);
+    const patientCpf = legalPatientCpf(identity, patient?.cpf);
+    const professionalName = typeof identity.professionalName === 'string' ? identity.professionalName : undefined;
+    const professionalCro = typeof identity.professionalCro === 'string' ? identity.professionalCro : undefined;
+    const place = await this.clinicPlaceAndBrand(document.clinicId, organizationId);
+    const issuedPlace = typeof identity.issuedPlace === 'string' && identity.issuedPlace.trim()
+      ? identity.issuedPlace.trim()
+      : (typeof identity.clinicCity === 'string' ? identity.clinicCity : place.city);
     const pdf = await buildClinicalDocumentPdf({
-      clinicName: clinic?.tradeName ?? clinic?.legalName ?? 'Sonder Clinic',
+      clinicName: (typeof identity.clinicLegalName === 'string' && identity.clinicLegalName)
+        || (typeof identity.clinicName === 'string' && identity.clinicName)
+        || clinic?.legalName
+        || clinic?.tradeName
+        || 'Clínica',
+      clinicDetails: [
+        [typeof identity.clinicTaxId === 'string' ? `CNPJ ${identity.clinicTaxId}` : '', professionalCro].filter(Boolean).join(' · '),
+        typeof identity.clinicPhone === 'string' ? identity.clinicPhone : '',
+        typeof identity.clinicEmail === 'string' ? identity.clinicEmail : '',
+      ].filter(Boolean),
+      professionalName,
+      professionalDetails: ['Cirurgião-dentista', professionalCro].filter((value): value is string => Boolean(value)),
       title: document.template.name,
       patientName,
-      patientDocument,
+      patientDocument: patientCpf,
+      identityRows: [
+        ['Paciente', patientName ?? '—'],
+        ['CPF', patientCpf ?? '—'],
+        ['Data do atendimento', formatBrazilianDate(identity.generatedAt ?? document.generatedAt)],
+        ['Local', issuedPlace || '—'],
+      ],
       bodyLines,
+      signatures: [
+        { label: 'Assinatura do profissional', name: professionalName ?? 'Assinatura do profissional', detail: professionalCro },
+        { label: 'Ciência / assinatura do paciente', name: patientName ?? 'Assinatura do paciente' },
+      ],
       validationCode: document.validationCode,
-      footerLeft: document.template.type === 'CONTRACT'
-        ? 'Assinatura com certificado digital da clínica'
-        : 'Assinatura do profissional',
-      footerRight: 'Assinatura eletrônica do paciente\nPresencial ou link remoto',
+      issuedLine: issuedPlace
+        ? `${issuedPlace}, ${formatBrazilianDate(identity.generatedAt ?? document.generatedAt)}.`
+        : (typeof identity.issuedAt === 'string' ? `Emitido em ${identity.issuedAt}.` : undefined),
+      primaryColor: place.primaryColor,
     });
     return {
       filename: `${document.template.name.replaceAll(/\s+/g, '-').toLowerCase()}.pdf`,
@@ -1947,11 +2003,14 @@ export class OperationsService {
       }),
       prisma.clinic.findFirst({
         where: { id: input.clinicId, organizationId, status: 'ACTIVE' },
-        select: { id: true, tradeName: true, legalName: true },
+        select: {
+          id: true, tradeName: true, legalName: true, taxId: true, phone: true, email: true,
+          units: { where: { status: 'ACTIVE' }, select: { city: true }, orderBy: { name: 'asc' } },
+        },
       }),
       prisma.patient.findFirst({
         where: { id: input.patientId, organizationId, status: { not: 'ARCHIVED' } },
-        select: { id: true, fullName: true, cpf: true },
+        select: { id: true, fullName: true, cpf: true, street: true, number: true, district: true, city: true, state: true },
       }),
       input.professionalId
         ? prisma.professional.findFirst({
@@ -1996,7 +2055,10 @@ export class OperationsService {
       clinicalContent,
       patient,
       professional,
-      clinic,
+      clinic: {
+        ...clinic,
+        city: clinic.units.map((unit) => unit.city?.trim()).find(Boolean) || null,
+      },
       template: { id: template.id, name: template.name, type: template.type, version: template.version },
       generatedAt,
     });
@@ -2092,12 +2154,14 @@ export class OperationsService {
 
     let a1Evidence: Record<string, unknown> | undefined;
     if (method === 'A1') {
-      if (document.template.type === 'CONTRACT' && input.role === 'PROFESSIONAL') {
+      const clinicId = input.clinicId ?? document.clinicId;
+      const signsAsProfessional = input.role === 'PROFESSIONAL';
+      const professionalId = signsAsProfessional ? document.professionalId ?? undefined : undefined;
+      if (signsAsProfessional && !professionalId) {
         throw new BadRequestException(
-          'A assinatura do profissional com certificado próprio ainda não está disponível. Use um modelo em que a clínica seja a prestadora.',
+          'Este documento não tem profissional responsável. Não é possível assinar com e-CPF.',
         );
       }
-      const clinicId = input.clinicId ?? document.clinicId;
       const signed = await this.certificates.signWithA1(
         organizationId,
         clinicId,
@@ -2108,6 +2172,7 @@ export class OperationsService {
           role: input.role,
           at: new Date().toISOString(),
         }),
+        professionalId,
       );
       a1Evidence = {
         a1: true,
@@ -2400,6 +2465,24 @@ export class OperationsService {
     });
   }
 
+  async publicDocumentQr(validationCode: string) {
+    const document = await prisma.generatedDocument.findUnique({
+      where: { validationCode },
+      select: { validationCode: true },
+    });
+    const prescription = document
+      ? null
+      : await prisma.prescription.findFirst({
+        where: { validationCode },
+        select: { validationCode: true },
+      });
+    if (!document && !prescription) throw new NotFoundException('Documento não encontrado.');
+    const webUrl = (process.env.WEB_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const validationUrl = `${webUrl}/validar/documento?codigo=${encodeURIComponent(validationCode)}`;
+    const content = await buildValidationQrPng(validationUrl);
+    return { filename: `qr-${validationCode.slice(0, 8)}.png`, contentType: 'image/png', content };
+  }
+
   private async audit(
     actorId: string | undefined,
     action: string,
@@ -2508,6 +2591,11 @@ export class OperationsService {
   async registerPayment(organizationId: string, receivableId: string, input: {
     amount: string; method: string; idempotencyKey: string; provider?: 'NIBO' | 'ABACATEPAY';
   }) {
+    if (input.provider === 'ABACATEPAY') {
+      throw new BadRequestException(
+        'Para gerar PIX/boleto via AbacatePay use POST /receivables/:id/charges. Este endpoint só registra baixa já recebida.',
+      );
+    }
     const existing = await prisma.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
     if (existing) return existing;
     const amount = positiveMoney(input.amount);
@@ -2524,9 +2612,14 @@ export class OperationsService {
       if (receivable.status === 'CANCELLED') throw new ConflictException('Recebível cancelado.');
 
       const alreadyPaid = confirmedNetPaid(receivable.payments);
-      const remaining = receivable.netAmount.sub(alreadyPaid);
+      const reserved = pendingReservedAmount(receivable.payments);
+      const remaining = receivable.netAmount.sub(alreadyPaid).sub(reserved);
       if (amount.gt(remaining)) {
-        throw new ConflictException(`Pagamento excede o saldo restante (${remaining.toFixed(2)}).`);
+        throw new ConflictException(
+          reserved.gt(0)
+            ? `Pagamento excede o saldo restante (${remaining.toFixed(2)}), considerando cobrança pendente de ${reserved.toFixed(2)}.`
+            : `Pagamento excede o saldo restante (${remaining.toFixed(2)}).`,
+        );
       }
 
       const payment = await tx.payment.create({
@@ -2560,6 +2653,319 @@ export class OperationsService {
       });
       return payment;
     });
+  }
+
+  async createReceivableCharge(organizationId: string, receivableId: string, input: {
+    amount: string;
+    method: 'PIX' | 'BOLETO';
+    idempotencyKey: string;
+  }) {
+    const existing = await prisma.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+    if (existing) return existing;
+    const amount = positiveMoney(input.amount);
+
+    const receivable = await prisma.receivable.findFirst({
+      where: { id: receivableId, organizationId },
+      include: {
+        payments: { include: { refunds: true } },
+        treatment: { select: { id: true, professionalId: true, clinicId: true } },
+      },
+    });
+    if (!receivable) throw new NotFoundException('Recebível não encontrado.');
+    if (receivable.status === 'CANCELLED') throw new ConflictException('Recebível cancelado.');
+    const alreadyPaid = confirmedNetPaid(receivable.payments);
+    const reserved = pendingReservedAmount(receivable.payments);
+    const remaining = receivable.netAmount.sub(alreadyPaid).sub(reserved);
+    if (amount.gt(remaining)) {
+      throw new ConflictException(`Cobrança excede o saldo restante (${remaining.toFixed(2)}).`);
+    }
+
+    const {
+      isAbacatePayMock,
+      resolveAbacatePayConfig,
+      createAbacatePayCharge,
+    } = await import('../../integrations/abacatepay');
+    if (isAbacatePayMock()) {
+      throw new BadRequestException(
+        'AbacatePay em modo MOCK (ABACATEPAY_MOCK=true). Nenhuma cobrança foi criada.',
+      );
+    }
+
+    const connection = await prisma.integrationConnection.findFirst({
+      where: {
+        clinicId: receivable.clinicId,
+        provider: 'ABACATEPAY',
+        status: 'ACTIVE',
+        encryptedCredentials: { not: null },
+      },
+      select: { encryptedCredentials: true, configuration: true },
+    });
+    let credentials: Record<string, string> | undefined;
+    if (connection?.encryptedCredentials) {
+      const { decryptCredentialsPayload } = await import('../../integrations/credentials');
+      credentials = decryptCredentialsPayload(connection.encryptedCredentials);
+    }
+    const config = resolveAbacatePayConfig(credentials, connection?.configuration);
+    if (!config) {
+      throw new BadRequestException(
+        'AbacatePay não configurado: salve a API key na integração da clínica ou ABACATEPAY_API_KEY.',
+      );
+    }
+
+    const patient = await prisma.patient.findFirst({
+      where: { id: receivable.patientId, organizationId },
+      select: { fullName: true, cpf: true, email: true, primaryPhone: true },
+    });
+    if (input.method === 'BOLETO' && !patient?.cpf?.trim()) {
+      throw new BadRequestException('Boleto AbacatePay exige CPF cadastrado no paciente.');
+    }
+
+    const dueIso = receivable.dueDate.toISOString().slice(0, 10);
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const customer = patient
+      ? {
+          name: patient.fullName,
+          taxId: formatCpfFull(patient.cpf) || patient.cpf || '',
+          email: patient.email?.trim() || undefined,
+          cellphone: patient.primaryPhone?.trim() || undefined,
+        }
+      : undefined;
+
+    const charge = await createAbacatePayCharge(config, {
+      method: input.method,
+      amountCents: Number(amount.mul(100).toFixed(0)),
+      description: receivable.description.slice(0, 500),
+      externalId: input.idempotencyKey,
+      dueDate: input.method === 'BOLETO' && dueIso > todayIso ? dueIso : undefined,
+      customer: customer?.taxId ? customer : undefined,
+      metadata: { receivableId, organizationId },
+    });
+
+    return prisma.$transaction(async (tx) => {
+      await lockReceivableRow(tx, receivableId);
+      const latest = await tx.receivable.findFirst({
+        where: { id: receivableId, organizationId },
+        include: { payments: true },
+      });
+      if (!latest) throw new NotFoundException('Recebível não encontrado.');
+      const paidNow = confirmedNetPaid(latest.payments);
+      const reservedNow = pendingReservedAmount(latest.payments);
+      if (amount.gt(latest.netAmount.sub(paidNow).sub(reservedNow))) {
+        throw new ConflictException('Saldo insuficiente após criar a cobrança no provedor. A cobrança AbacatePay pode ter sido emitida.');
+      }
+      return tx.payment.create({
+        data: {
+          receivableId,
+          amount,
+          method: input.method,
+          provider: 'ABACATEPAY',
+          externalId: charge.id,
+          idempotencyKey: input.idempotencyKey,
+          status: 'PENDING',
+          providerData: json({
+            chargeId: charge.id,
+            method: charge.method,
+            status: charge.status,
+            brCode: charge.brCode,
+            brCodeBase64: charge.brCodeBase64,
+            barCode: charge.barCode,
+            url: charge.url,
+            expiresAt: charge.expiresAt,
+            receiptUrl: charge.receiptUrl,
+            devMode: charge.devMode,
+          }),
+        },
+      });
+    });
+  }
+
+  async syncAbacatePayPayment(organizationId: string, paymentId: string) {
+    const payment = await prisma.payment.findFirst({
+      where: { id: paymentId, receivable: { organizationId } },
+      include: {
+        receivable: {
+          include: { treatment: { select: { id: true, professionalId: true, clinicId: true } } },
+        },
+      },
+    });
+    if (!payment) throw new NotFoundException('Pagamento não encontrado.');
+    if (payment.provider !== 'ABACATEPAY' || !payment.externalId) {
+      throw new BadRequestException('Pagamento sem cobrança AbacatePay para consultar.');
+    }
+    if (payment.status !== 'PENDING') return payment;
+
+    const {
+      isAbacatePayMock,
+      resolveAbacatePayConfig,
+      checkAbacatePayCharge,
+      mapAbacatePayStatus,
+    } = await import('../../integrations/abacatepay');
+    if (isAbacatePayMock()) {
+      throw new BadRequestException('AbacatePay em modo MOCK. Status não foi consultado.');
+    }
+
+    const connection = await prisma.integrationConnection.findFirst({
+      where: {
+        clinicId: payment.receivable.clinicId,
+        provider: 'ABACATEPAY',
+        status: 'ACTIVE',
+        encryptedCredentials: { not: null },
+      },
+      select: { encryptedCredentials: true, configuration: true },
+    });
+    let credentials: Record<string, string> | undefined;
+    if (connection?.encryptedCredentials) {
+      const { decryptCredentialsPayload } = await import('../../integrations/credentials');
+      credentials = decryptCredentialsPayload(connection.encryptedCredentials);
+    }
+    const config = resolveAbacatePayConfig(credentials, connection?.configuration);
+    if (!config) {
+      throw new BadRequestException('AbacatePay não configurado para consultar o status.');
+    }
+
+    const remote = await checkAbacatePayCharge(config, payment.externalId);
+    const nextStatus = mapAbacatePayStatus(remote.status);
+    const previous = payment.providerData && typeof payment.providerData === 'object' && !Array.isArray(payment.providerData)
+      ? (payment.providerData as Record<string, unknown>)
+      : {};
+
+    return prisma.$transaction(async (tx) => {
+      await lockReceivableRow(tx, payment.receivableId);
+      const current = await tx.payment.findFirst({ where: { id: payment.id } });
+      if (!current || current.status !== 'PENDING') return current ?? payment;
+
+      const updated = await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: nextStatus,
+          paidAt: nextStatus === 'CONFIRMED' ? new Date() : null,
+          providerData: json({
+            ...previous,
+            chargeId: remote.id,
+            status: remote.status,
+            expiresAt: remote.expiresAt ?? previous.expiresAt,
+          }),
+        },
+      });
+
+      if (nextStatus === 'CONFIRMED') {
+        await recalculateReceivableStatus(tx, payment.receivableId, payment.receivable.netAmount);
+        await this.generateCommissionForPayment(tx, {
+          organizationId,
+          clinicId: payment.receivable.clinicId,
+          paymentId: payment.id,
+          amount: payment.amount,
+          occurredAt: updated.paidAt ?? new Date(),
+          professionalId: payment.receivable.treatment?.professionalId,
+          treatmentId: payment.receivable.treatmentId,
+        });
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'Payment',
+            aggregateId: payment.id,
+            eventType: 'payment.confirmed',
+            payload: { paymentId: payment.id, receivableId: payment.receivableId, provider: 'ABACATEPAY' },
+          },
+        });
+      }
+      return updated;
+    });
+  }
+
+  async handleAbacatePayWebhook(input: {
+    rawBody: Buffer;
+    signature?: string;
+    webhookSecret?: string;
+  }) {
+    const {
+      verifyAbacatePaySignature,
+      timingSafeSecretEqual,
+      isAbacatePayPaidEvent,
+      readAbacatePayWebhookChargeId,
+    } = await import('../../integrations/abacatepay');
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(input.rawBody.toString('utf8'));
+    } catch {
+      throw new BadRequestException('Webhook AbacatePay inválido.');
+    }
+    const row = payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {};
+    const data = row.data && typeof row.data === 'object' && !Array.isArray(row.data)
+      ? row.data as Record<string, unknown>
+      : row;
+    const event = typeof row.event === 'string' ? row.event : '';
+    const chargeId = readAbacatePayWebhookChargeId(payload);
+    if (!chargeId) {
+      return { success: true, ignored: true, message: 'Evento sem identificador de cobrança.' };
+    }
+
+    const payment = await prisma.payment.findFirst({
+      where: { provider: 'ABACATEPAY', externalId: chargeId },
+      include: { receivable: { select: { organizationId: true, clinicId: true } } },
+    });
+    if (!payment) {
+      return { success: true, ignored: true, message: 'Cobrança desconhecida.' };
+    }
+
+    const connection = await prisma.integrationConnection.findFirst({
+      where: {
+        clinicId: payment.receivable.clinicId,
+        provider: 'ABACATEPAY',
+        status: 'ACTIVE',
+        encryptedCredentials: { not: null },
+      },
+      select: { encryptedCredentials: true },
+    });
+    let storedSecret = '';
+    if (connection?.encryptedCredentials) {
+      const { decryptCredentialsPayload } = await import('../../integrations/credentials');
+      storedSecret = decryptCredentialsPayload(connection.encryptedCredentials).webhookSecret ?? '';
+    }
+    const hmacOk = verifyAbacatePaySignature(input.rawBody, input.signature);
+    const secretOk = storedSecret ? timingSafeSecretEqual(storedSecret, input.webhookSecret) : false;
+    if (storedSecret && !secretOk) {
+      throw new UnauthorizedException('Segredo de webhook AbacatePay inválido.');
+    }
+    if (input.signature && !hmacOk) {
+      throw new UnauthorizedException('Assinatura HMAC AbacatePay inválida.');
+    }
+    if (!storedSecret && !hmacOk) {
+      throw new UnauthorizedException('Webhook AbacatePay sem autenticação válida.');
+    }
+
+    const eventId = String(row.id ?? `${chargeId}:${event}`).slice(0, 190);
+    const payloadHash = createHash('sha256').update(input.rawBody).digest('hex');
+    try {
+      await prisma.webhookReceipt.create({
+        data: { provider: 'ABACATEPAY', eventId, payloadHash, status: 'PENDING' },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return { success: true, duplicate: true, message: 'Webhook já processado.' };
+      }
+      throw error;
+    }
+
+    try {
+      const status = typeof data.status === 'string' ? data.status : '';
+      if (isAbacatePayPaidEvent(event, status) && payment.status === 'PENDING') {
+        await this.syncAbacatePayPayment(payment.receivable.organizationId, payment.id);
+      }
+      await prisma.webhookReceipt.update({
+        where: { provider_eventId: { provider: 'ABACATEPAY', eventId } },
+        data: { status: 'SUCCEEDED', processedAt: new Date() },
+      });
+      return { success: true, event, chargeId };
+    } catch (error) {
+      await prisma.webhookReceipt.update({
+        where: { provider_eventId: { provider: 'ABACATEPAY', eventId } },
+        data: { status: 'FAILED', processedAt: new Date() },
+      });
+      throw error;
+    }
   }
 
   async refund(organizationId: string, paymentId: string, actorId: string, input: { amount: string; reason: string }) {
@@ -3177,8 +3583,14 @@ export class OperationsService {
       throw new BadRequestException(error instanceof Error ? error.message : 'Prescrição inválida.');
     }
     const [clinic, patient, professional] = await Promise.all([
-      prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId }, select: { id: true, tradeName: true, legalName: true } }),
-      prisma.patient.findFirst({ where: { id: input.patientId, organizationId }, select: { id: true, fullName: true, cpf: true } }),
+      prisma.clinic.findFirst({
+        where: { id: input.clinicId, organizationId },
+        select: {
+          id: true, tradeName: true, legalName: true, taxId: true, phone: true, email: true,
+          units: { where: { status: 'ACTIVE' }, select: { city: true }, orderBy: { name: 'asc' } },
+        },
+      }),
+      prisma.patient.findFirst({ where: { id: input.patientId, organizationId }, select: { id: true, fullName: true, cpf: true, street: true, number: true, district: true, city: true, state: true } }),
       prisma.professional.findFirst({
         where: { id: input.professionalId, user: { organizationId } },
         select: { id: true, name: true, croNumber: true, croState: true },
@@ -3201,7 +3613,10 @@ export class OperationsService {
       clinicalContent: { purpose: input.purpose.trim(), items },
       patient,
       professional,
-      clinic,
+      clinic: {
+        ...clinic,
+        city: clinic.units.map((unit) => unit.city?.trim()).find(Boolean) || null,
+      },
       template: { id: 'prescription', name: 'Receituário', type: 'PRESCRIPTION', version: 1 },
     }).identity;
 
@@ -3278,14 +3693,17 @@ export class OperationsService {
       throw new ConflictException('Status inválido para assinatura.');
     }
     const [patient, professional, clinic] = await Promise.all([
-      prisma.patient.findFirst({ where: { id: prescription.patientId, organizationId }, select: { fullName: true, cpf: true } }),
+      prisma.patient.findFirst({ where: { id: prescription.patientId, organizationId }, select: { fullName: true, cpf: true, street: true, number: true, district: true, city: true, state: true } }),
       prisma.professional.findFirst({
         where: { id: prescription.professionalId },
         select: { name: true, croNumber: true, croState: true },
       }),
       prisma.clinic.findFirst({
         where: { id: prescription.clinicId, organizationId },
-        select: { tradeName: true, legalName: true },
+        select: {
+          tradeName: true, legalName: true, taxId: true, phone: true, email: true,
+          units: { where: { status: 'ACTIVE' }, select: { city: true }, orderBy: { name: 'asc' } },
+        },
       }),
     ]);
     if (!patient || !professional || !clinic) throw new NotFoundException('Dados de identidade indisponíveis.');
@@ -3298,17 +3716,46 @@ export class OperationsService {
       },
       patient,
       professional,
-      clinic,
+      clinic: {
+        tradeName: clinic.tradeName,
+        legalName: clinic.legalName,
+        taxId: clinic.taxId,
+        phone: clinic.phone,
+        email: clinic.email,
+        city: clinic.units.map((unit) => unit.city?.trim()).find(Boolean) || null,
+      },
       template: { id: prescription.id, name: 'Receituário', type: 'PRESCRIPTION', version: 1 },
     });
     const contentHash = hashDocumentContent(frozen);
+    const signed = await this.certificates.signWithA1(
+      organizationId,
+      prescription.clinicId,
+      JSON.stringify({
+        prescriptionId: id,
+        contentHash,
+        signer: professional.name,
+        role: 'PROFESSIONAL',
+        at: new Date().toISOString(),
+      }),
+      prescription.professionalId,
+    );
+    const identity = (frozen.identity ?? {}) as Record<string, unknown>;
     const updated = await prisma.prescription.update({
       where: { id },
       data: {
         status: 'SIGNED',
         signedAt: new Date(),
         contentHash,
-        frozenIdentity: json(frozen.identity),
+        frozenIdentity: json({
+          ...identity,
+          a1: {
+            algorithm: signed.algorithm,
+            signature: signed.signature,
+            subject: signed.subject,
+            serialNumber: signed.serialNumber,
+            validTo: signed.validTo,
+          },
+        }),
         reviewedAt: prescription.reviewedAt ?? new Date(),
         reviewedById: prescription.reviewedById ?? actorId,
       },
@@ -3347,21 +3794,45 @@ export class OperationsService {
         return `${index + 1}. ${name} — ${qty} — ${dosage}`;
       }),
     ];
-    const clinic = await prisma.clinic.findFirst({
-      where: { id: prescription.clinicId, organizationId },
-      select: { tradeName: true, legalName: true },
-    });
+    const place = await this.clinicPlaceAndBrand(prescription.clinicId, organizationId);
+    const clinic = place.clinic;
+    const issuedPlace = typeof identity.issuedPlace === 'string' && identity.issuedPlace.trim()
+      ? identity.issuedPlace.trim()
+      : (typeof identity.clinicCity === 'string' ? identity.clinicCity : place.city);
     const pdf = await buildClinicalDocumentPdf({
-      clinicName: clinic?.tradeName ?? clinic?.legalName ?? 'Sonder Clinic',
-      title: 'Receituário odontológico',
+      clinicName: (typeof identity.clinicLegalName === 'string' && identity.clinicLegalName)
+        || (typeof identity.clinicName === 'string' && identity.clinicName)
+        || clinic?.legalName
+        || clinic?.tradeName
+        || 'Clínica',
+      clinicDetails: [
+        typeof identity.clinicTaxId === 'string' ? `CNPJ ${identity.clinicTaxId}` : (clinic?.taxId ? `CNPJ ${clinic.taxId}` : ''),
+        [clinic?.phone, clinic?.email].filter(Boolean).join(' · '),
+      ].filter(Boolean),
+      professionalName: typeof identity.professionalName === 'string' ? identity.professionalName : undefined,
+      professionalDetails: ['Cirurgião-dentista', typeof identity.professionalCro === 'string' ? identity.professionalCro : ''].filter(Boolean),
+      title: 'Prescrição odontológica',
       patientName: typeof identity.patientName === 'string' ? identity.patientName : undefined,
-      patientDocument: typeof identity.patientCpfMasked === 'string' ? `CPF ${identity.patientCpfMasked}` : undefined,
+      patientDocument: legalPatientCpf(identity),
+      identityRows: [
+        ['Paciente', typeof identity.patientName === 'string' ? identity.patientName : '—'],
+        ['CPF', legalPatientCpf(identity) ?? '—'],
+        ['Endereço', typeof identity.patientAddress === 'string' ? identity.patientAddress : '—'],
+        ['Data', formatBrazilianDate(prescription.createdAt)],
+      ],
       bodyLines,
+      signatures: [
+        {
+          label: 'Assinatura do profissional',
+          name: typeof identity.professionalName === 'string' ? identity.professionalName : 'Assinatura do profissional',
+          detail: typeof identity.professionalCro === 'string' ? identity.professionalCro : undefined,
+        },
+      ],
       validationCode: prescription.validationCode ?? undefined,
-      footerLeft: typeof identity.professionalName === 'string'
-        ? `${identity.professionalName}\n${identity.professionalCro ?? ''}`
-        : 'Assinatura do profissional',
-      footerRight: prescription.status === 'SIGNED' ? 'Assinado digitalmente' : 'Rascunho',
+      issuedLine: issuedPlace
+        ? `${issuedPlace}, ${formatBrazilianDate(prescription.createdAt)}.`
+        : `Emitido em ${formatBrazilianDate(prescription.createdAt)}.`,
+      primaryColor: place.primaryColor,
     });
     return {
       filename: `receita-${prescription.id.slice(0, 8)}.pdf`,

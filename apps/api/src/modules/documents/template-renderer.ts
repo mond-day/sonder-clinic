@@ -1,3 +1,5 @@
+import { formatBrazilianDate } from '../../common/dates';
+
 const BLOCK_RE = /\{\{#\s*([a-zA-Z0-9_.]+)\s*\}\}([\s\S]*?)\{\{\/\s*\1\s*\}\}/g;
 const PLACEHOLDER_RE = /\{\{\s*([a-zA-Z0-9_.?]+)\s*\}\}/g;
 const ALLOWED_TAGS = new Set(['p', 'br', 'strong', 'em', 'b', 'i', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'div', 'span']);
@@ -18,10 +20,12 @@ export function getPath(source: unknown, path: string): unknown {
 
 function stringifyValue(value: unknown): string {
   if (value == null) return '';
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return formatBrazilianDate(value);
+    return value;
   }
-  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Date) return formatBrazilianDate(value.toISOString().slice(0, 10)) || value.toISOString();
   return '';
 }
 

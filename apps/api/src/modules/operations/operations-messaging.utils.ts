@@ -1,9 +1,10 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { createDecipheriv } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
 import { z } from 'zod';
 import { assertSmtpConfigured, sendMail } from '../../common/mail';
 import { parseWithZod } from '../../common/zod-validation';
+import { decryptCredentialsPayload } from '../../integrations/credentials';
+import { isChatwootMock, resolveChatwootConfig, sendChatwootText } from '../../integrations/chatwoot';
 
 const json = (value: unknown) => value as Prisma.InputJsonValue;
 
@@ -79,37 +80,6 @@ export function resolveEvolutionConfig(
   );
   if (!baseUrl || !apiKey || !instance) return null;
   return { baseUrl, apiKey, instance };
-}
-
-function decryptCredentialsPayload(payload: string): Record<string, string> {
-  const keyValue = process.env.ENCRYPTION_MASTER_KEY;
-  if (!keyValue || !/^[a-f0-9]{64}$/i.test(keyValue)) {
-    throw new Error('ENCRYPTION_MASTER_KEY inválida.');
-  }
-  const [ivValue, tagValue, encryptedValue] = payload.split('.');
-  if (!ivValue || !tagValue || !encryptedValue) {
-    throw new Error('Credencial Evolution criptografada inválida.');
-  }
-  const decipher = createDecipheriv(
-    'aes-256-gcm',
-    Buffer.from(keyValue, 'hex'),
-    Buffer.from(ivValue, 'base64url'),
-  );
-  decipher.setAuthTag(Buffer.from(tagValue, 'base64url'));
-  const parsed: unknown = JSON.parse(
-    Buffer.concat([
-      decipher.update(Buffer.from(encryptedValue, 'base64url')),
-      decipher.final(),
-    ]).toString('utf8'),
-  );
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Credencial Evolution inválida.');
-  }
-  return Object.fromEntries(
-    Object.entries(parsed).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0,
-    ),
-  );
 }
 
 async function sendEvolutionWhatsApp(config: EvolutionConfig, number: string, text: string) {
@@ -249,10 +219,36 @@ async function assertConsentIfNeeded(input: {
   }
 }
 
+async function loadConnection(
+  clinicId: string,
+  provider: 'EVOLUTION' | 'CHATWOOT',
+) {
+  return prisma.integrationConnection.findFirst({
+    where: {
+      clinicId,
+      provider,
+      status: 'ACTIVE',
+      encryptedCredentials: { not: null },
+    },
+    select: { encryptedCredentials: true, configuration: true },
+  });
+}
+
+function channelTransport(configuration: unknown): 'CHATWOOT' | 'EVOLUTION' | null {
+  const settings =
+    configuration && typeof configuration === 'object' && !Array.isArray(configuration)
+      ? (configuration as Record<string, unknown>)
+      : {};
+  const provider = pickString(settings.provider, settings.transport).toUpperCase();
+  if (provider === 'CHATWOOT') return 'CHATWOOT';
+  if (provider === 'EVOLUTION') return 'EVOLUTION';
+  return null;
+}
+
 /**
  * Envio manual controlado.
  * EMAIL → SMTP real (falha se SMTP_HOST ausente).
- * WHATSAPP → Evolution real se EVOLUTION_MOCK=false + baseUrl/apiKey/instance (env, canal ou conexão).
+ * WHATSAPP → Evolution ou Chatwoot (mesmo delivery; canal escolhe o transporte).
  * SMS → stub honesto (FAILED).
  */
 export async function sendManualMessage(
@@ -352,38 +348,46 @@ export async function sendManualMessage(
       });
     }
 
-    // WHATSAPP / SMS
-    const evolutionMock = (process.env.EVOLUTION_MOCK ?? 'true').toLowerCase() === 'true';
+    // WHATSAPP / SMS — mesmo delivery; transporte Evolution ou Chatwoot.
     if (channel.type === 'WHATSAPP') {
-      let config = resolveEvolutionConfig(channel.configuration);
-      if (!config && channel.clinicId) {
-        const connection = await prisma.integrationConnection.findFirst({
-          where: {
-            clinicId: channel.clinicId,
-            provider: 'EVOLUTION',
-            status: 'ACTIVE',
-            encryptedCredentials: { not: null },
-          },
-          select: { encryptedCredentials: true, configuration: true },
-        });
-        if (connection?.encryptedCredentials) {
-          try {
-            const creds = decryptCredentialsPayload(connection.encryptedCredentials);
-            config = resolveEvolutionConfig(connection.configuration, creds);
-          } catch {
-            config = null;
+      const preferred = channelTransport(channel.configuration);
+      const evolutionMock = (process.env.EVOLUTION_MOCK ?? 'true').toLowerCase() === 'true';
+      let evolution = preferred === 'CHATWOOT' ? null : resolveEvolutionConfig(channel.configuration);
+      let chatwoot = preferred === 'EVOLUTION' ? null : resolveChatwootConfig(undefined, channel.configuration);
+
+      if (channel.clinicId) {
+        if (!evolution && preferred !== 'CHATWOOT') {
+          const connection = await loadConnection(channel.clinicId, 'EVOLUTION');
+          if (connection?.encryptedCredentials) {
+            try {
+              const creds = decryptCredentialsPayload(connection.encryptedCredentials);
+              evolution = resolveEvolutionConfig(connection.configuration, creds);
+            } catch {
+              evolution = null;
+            }
+          }
+        }
+        if ((!chatwoot || !chatwoot.inboxId) && preferred !== 'EVOLUTION') {
+          const connection = await loadConnection(channel.clinicId, 'CHATWOOT');
+          if (connection?.encryptedCredentials) {
+            try {
+              const creds = decryptCredentialsPayload(connection.encryptedCredentials);
+              const merged = {
+                ...(typeof connection.configuration === 'object' && connection.configuration
+                  ? (connection.configuration as Record<string, unknown>)
+                  : {}),
+                ...(typeof channel.configuration === 'object' && channel.configuration
+                  ? (channel.configuration as Record<string, unknown>)
+                  : {}),
+              };
+              chatwoot = resolveChatwootConfig(creds, merged);
+            } catch {
+              /* mantém o config do canal, se houver */
+            }
           }
         }
       }
-      if (evolutionMock || !config) {
-        const reason = evolutionMock
-          ? 'WhatsApp não enviado: EVOLUTION_MOCK=true (stub). Delivery marcada como FAILED.'
-          : 'WhatsApp não enviado: configure EVOLUTION_BASE_URL, EVOLUTION_API_KEY e EVOLUTION_INSTANCE (env, canal ou integração Evolution).';
-        return prisma.messageDelivery.update({
-          where: { id: delivery.id },
-          data: { status: 'FAILED', error: reason },
-        });
-      }
+
       const digits = recipient.replace(/\D/g, '');
       const withCountry = digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
       if (withCountry.length < 10) {
@@ -392,8 +396,55 @@ export async function sendManualMessage(
           data: { status: 'FAILED', error: 'Telefone inválido para WhatsApp.' },
         });
       }
+
+      const evolutionLive = Boolean(evolution) && !evolutionMock;
+      const useChatwoot = preferred === 'CHATWOOT'
+        || (preferred !== 'EVOLUTION' && !evolutionLive && Boolean(chatwoot));
+      if (useChatwoot) {
+        if (isChatwootMock() || !chatwoot) {
+          const reason = isChatwootMock()
+            ? 'WhatsApp não enviado: CHATWOOT_MOCK=true (stub). Delivery marcada como FAILED.'
+            : 'WhatsApp não enviado: configure Chatwoot (base URL, token, account id e inbox id).';
+          return prisma.messageDelivery.update({
+            where: { id: delivery.id },
+            data: { status: 'FAILED', error: reason },
+          });
+        }
+        try {
+          const sent = await sendChatwootText(chatwoot, {
+            phone: recipient,
+            name: vars.patientName || undefined,
+            text: rendered,
+          });
+          return prisma.messageDelivery.update({
+            where: { id: delivery.id },
+            data: {
+              status: 'SENT',
+              sentAt: new Date(),
+              error: null,
+              externalId: sent.conversationId,
+            },
+          });
+        } catch (sendError) {
+          const detail = sendError instanceof Error ? sendError.message : 'Falha Chatwoot.';
+          return prisma.messageDelivery.update({
+            where: { id: delivery.id },
+            data: { status: 'FAILED', error: detail },
+          });
+        }
+      }
+
+      if (evolutionMock || !evolution) {
+        const reason = evolutionMock
+          ? 'WhatsApp não enviado: EVOLUTION_MOCK=true (stub). Delivery marcada como FAILED.'
+          : 'WhatsApp não enviado: configure Evolution ou Chatwoot (env, canal ou integração).';
+        return prisma.messageDelivery.update({
+          where: { id: delivery.id },
+          data: { status: 'FAILED', error: reason },
+        });
+      }
       try {
-        await sendEvolutionWhatsApp(config, withCountry, rendered);
+        await sendEvolutionWhatsApp(evolution, withCountry, rendered);
         return prisma.messageDelivery.update({
           where: { id: delivery.id },
           data: { status: 'SENT', sentAt: new Date(), error: null },

@@ -4,6 +4,7 @@ import {
   assertDocumentMutable,
   buildServerFrozenContent,
   CLIENT_IDENTITY_KEYS,
+  formatCidCitation,
   hashDocumentContent,
   maskCpf,
   nextDocumentStatusAfterSign,
@@ -46,22 +47,43 @@ describe('operations-documents.utils', () => {
         },
         patient: { fullName: 'Mariana Souza', cpf: '12345678900' },
         professional: { name: 'Dra. Camila', croNumber: '12345', croState: 'MT' },
-        clinic: { tradeName: 'Center Clinic' },
+        clinic: { tradeName: 'Center Clinic', city: 'Cuiabá' },
         template: { id: 't1', name: 'Atestado', type: 'ATTESTATION', version: 2 },
         generatedAt: new Date('2026-08-07T12:00:00.000Z'),
       });
 
       expect(frozen.paciente).toBeUndefined();
       expect(frozen.cpf).toBeUndefined();
-      expect(frozen.corpo).toBe('Afastamento 2 dias');
+      expect(frozen.corpo).toBe('Afastamento 2 dias\n\nCID-10 K02.1.');
       expect(frozen.identity).toMatchObject({
         patientName: 'Mariana Souza',
+        patientCpf: '123.456.789-00',
         patientCpfMasked: '123.***.***-00',
+        issuedPlace: 'Cuiabá',
+        clinicCity: 'Cuiabá',
         professionalName: 'Dra. Camila',
-        professionalCro: 'CRO/MT 12345',
+        professionalCro: 'CRO-MT 12345',
         clinicName: 'Center Clinic',
       });
       expect(frozen.template).toMatchObject({ version: 2, type: 'ATTESTATION' });
+    });
+
+    it('inclui descrição do CID no corpo do atestado', () => {
+      const frozen = buildServerFrozenContent({
+        clinicalContent: {
+          corpo: 'Atesto afastamento.',
+          cid: 'K04.7',
+          cidDescription: 'Abscesso periapical sem fístula',
+        },
+        patient: { fullName: 'Ana' },
+        professional: { name: 'Dr. João' },
+        clinic: { tradeName: 'Clinic' },
+        template: { id: 't1', name: 'Atestado', type: 'ATTESTATION', version: 1 },
+        generatedAt: new Date('2026-08-07T12:00:00.000Z'),
+      });
+      expect(String(frozen.corpo)).toContain('CID-10 K04.7 — Abscesso periapical sem fístula');
+      expect(formatCidCitation({ cid: 'K04.7', cidDescription: 'Abscesso periapical sem fístula' }))
+        .toBe('CID-10 K04.7 — Abscesso periapical sem fístula.');
     });
 
     it('hash muda se identity do servidor mudar', () => {

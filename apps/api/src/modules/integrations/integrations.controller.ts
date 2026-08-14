@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, Res, UnauthorizedException, UseGuards, type RawBodyRequest } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import type { Response } from 'express';
-import { IsIn, IsObject, IsOptional, IsUUID } from 'class-validator';
+import type { Request, Response } from 'express';
+import { IsBoolean, IsIn, IsObject, IsOptional, IsUUID } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { IntegrationsService, type Provider, type SaveConnectionInput } from './integrations.service';
+import { OperationsService } from '../operations/operations.service';
 
 class SaveIntegrationDto {
   @IsUUID() clinicId!: string;
@@ -14,6 +15,7 @@ class SaveIntegrationDto {
   @IsOptional() @IsUUID() scopeId?: string;
   @IsObject() credentials!: Record<string, string>;
   @IsOptional() @IsObject() configuration?: Record<string, unknown>;
+  @IsOptional() @IsBoolean() keepExistingCredentials?: boolean;
 }
 
 class PatchIntegrationDto {
@@ -36,6 +38,12 @@ export class IntegrationsController {
   @RequirePermissions('integration.view')
   googleCalendarOauthStatus() {
     return this.integrations.googleCalendarOauthStatus();
+  }
+
+  @Get(':id/nibo/catalog')
+  @RequirePermissions('integration.view')
+  niboCatalog(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    return this.integrations.niboCatalog(request.auth.organizationId, id);
   }
 
   @Post(':id/oauth/start')
@@ -128,6 +136,33 @@ export class GoogleCalendarOauthController {
       resourceId,
       resourceState,
       messageNumber,
+    });
+  }
+}
+
+/**
+ * Webhook AbacatePay (transparent.completed) — sem AuthGuard.
+ * Cadastre no dashboard: POST {API}/integrations/abacatepay/webhook?webhookSecret=SEU_SEGREDO
+ */
+@ApiTags('integrations-webhooks')
+@Controller('integrations/abacatepay')
+export class AbacatePayWebhookController {
+  constructor(private readonly operations: OperationsService) {}
+
+  @Post('webhook')
+  handle(
+    @Req() req: RawBodyRequest<Request>,
+    @Query('webhookSecret') webhookSecret?: string,
+    @Headers('x-webhook-signature') signature?: string,
+  ) {
+    const raw = req.rawBody;
+    if (!raw?.length) {
+      throw new UnauthorizedException('Corpo do webhook ausente.');
+    }
+    return this.operations.handleAbacatePayWebhook({
+      rawBody: Buffer.isBuffer(raw) ? raw : Buffer.from(raw),
+      signature,
+      webhookSecret,
     });
   }
 }

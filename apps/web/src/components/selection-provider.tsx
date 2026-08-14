@@ -10,6 +10,7 @@ export type Clinic = {
   units: Array<{
     id: string;
     name: string;
+    city?: string | null;
     phone?: string | null;
     timezone?: string;
     chairs: Array<{ id: string; name: string; color?: string; isSchedulingEnabled?: boolean }>;

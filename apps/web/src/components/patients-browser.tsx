@@ -8,7 +8,6 @@ import { api, ApiError } from '@/lib/api';
 import {
   dateOnly,
   formatPhone,
-  initials,
   list,
   text,
   timeOnly,
@@ -16,6 +15,7 @@ import {
 } from '@/lib/format';
 import { ModuleActions } from './module-actions';
 import { Modal } from './modal';
+import { PersonAvatar } from './person-avatar';
 import { useSelection } from './selection-provider';
 import { EmptyState, PageHeader, Panel, StatusBadge } from './ui';
 
@@ -279,7 +279,7 @@ export function PatientsBrowser() {
                     <tr key={patientId}>
                       <td>
                         <div className="person-cell">
-                          <div className="avatar">{initials(patient.fullName)}</div>
+                          <PersonAvatar name={patient.fullName} photoUrl={text(patient.profilePhotoUrl, '') || null} />
                           <div>
                             <Link className="clickable-name" href={`/pacientes/${patientId}`}>{text(patient.fullName)}</Link>
                             <span>

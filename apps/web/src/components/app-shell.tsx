@@ -29,6 +29,7 @@ import { useSelection } from './selection-provider';
 import { useTheme } from './theme-provider';
 import { useWorkspace } from './workspace-provider';
 import { ClinicBrandMark, ClinicBrandText, useClinicBranding } from './clinic-brand';
+import { PersonAvatar } from './person-avatar';
 
 type NavBadge = 'returns' | 'tasks' | 'lab';
 
@@ -404,7 +405,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       else router.push(`/pacientes/${String(item.id)}`);
                     }}
                   >
-                    <span className="avatar">{initials(item.fullName)}</span>
+                    <PersonAvatar
+                      name={item.fullName}
+                      photoUrl={String(item._kind) === 'patient' ? (text(item.profilePhotoUrl, '') || null) : null}
+                    />
                     <div>
                       <strong>{text(item.fullName)}</strong>
                       <span>

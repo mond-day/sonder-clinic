@@ -53,12 +53,14 @@ class UpdateAgendaTagDto {
 class CreateUnitDto {
   @IsUUID() clinicId!: string;
   @IsString() @MinLength(2) name!: string;
+  @IsOptional() @IsString() city?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() timezone?: string;
 }
 
 class UpdateUnitDto {
   @IsOptional() @IsString() @MinLength(2) name?: string;
+  @IsOptional() @IsString() city?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() timezone?: string;
   @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: 'ACTIVE' | 'INACTIVE';
@@ -178,8 +180,18 @@ export class SettingsController {
 
   @Get('certificate')
   @RequirePermissions('certificate.manage_own')
-  certificate(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId: string) {
-    return this.certificates.status(req.auth.organizationId, clinicId);
+  certificate(
+    @Req() req: AuthenticatedRequest,
+    @Query('clinicId') clinicId: string,
+    @Query('professionalId') professionalId?: string,
+  ) {
+    return this.certificates.status(req.auth.organizationId, clinicId, professionalId);
+  }
+
+  @Get('certificates')
+  @RequirePermissions('certificate.manage_own')
+  listCertificates(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId: string) {
+    return this.certificates.listClinicCertificates(req.auth.organizationId, clinicId);
   }
 
   @Post('certificate')
@@ -192,14 +204,26 @@ export class SettingsController {
     @UploadedFile() file: CertificateUpload,
     @Body('clinicId') clinicId: string,
     @Body('password') password: string,
+    @Body('professionalId') professionalId?: string,
   ) {
-    return this.certificates.replace(req.auth.organizationId, clinicId, req.auth.userId, file, password);
+    return this.certificates.replace(
+      req.auth.organizationId,
+      clinicId,
+      req.auth.userId,
+      file,
+      password,
+      professionalId || undefined,
+    );
   }
 
   @Delete('certificate')
   @RequirePermissions('certificate.manage_own')
-  removeCertificate(@Req() req: AuthenticatedRequest, @Query('clinicId') clinicId: string) {
-    return this.certificates.remove(req.auth.organizationId, clinicId, req.auth.userId);
+  removeCertificate(
+    @Req() req: AuthenticatedRequest,
+    @Query('clinicId') clinicId: string,
+    @Query('professionalId') professionalId?: string,
+  ) {
+    return this.certificates.remove(req.auth.organizationId, clinicId, req.auth.userId, professionalId);
   }
 
   @Get('agenda-tags')

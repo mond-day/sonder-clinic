@@ -105,13 +105,39 @@ export class PatientsService {
       orderBy: paginated ? [{ id: 'asc' }] : [{ fullName: 'asc' }],
       take: paginated ? take + 1 : take,
     });
-    if (!paginated) return items;
+    if (!paginated) return this.withProfilePhotos(organizationId, items);
     const hasMore = items.length > take;
     const page = hasMore ? items.slice(0, take) : items;
     return {
-      items: page,
+      items: await this.withProfilePhotos(organizationId, page),
       nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
     };
+  }
+
+  private async withProfilePhotos<T extends { id: string }>(organizationId: string, items: T[]) {
+    if (!items.length) return items.map((item) => ({ ...item, profilePhotoMediaId: null, profilePhotoUrl: null }));
+    const photos = await prisma.patientMedia.findMany({
+      where: {
+        organizationId,
+        patientId: { in: items.map((item) => item.id) },
+        type: 'PROFILE_PHOTO',
+        archivedAt: null,
+      },
+      select: { id: true, patientId: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const firstByPatient = new Map<string, string>();
+    for (const photo of photos) {
+      if (!firstByPatient.has(photo.patientId)) firstByPatient.set(photo.patientId, photo.id);
+    }
+    return items.map((item) => {
+      const mediaId = firstByPatient.get(item.id) ?? null;
+      return {
+        ...item,
+        profilePhotoMediaId: mediaId,
+        profilePhotoUrl: mediaId ? `/patients/${item.id}/media/${mediaId}/download` : null,
+      };
+    });
   }
 
   async find(organizationId: string, id: string) {
@@ -528,7 +554,7 @@ export class PatientsService {
     }));
 
     return {
-      patients,
+      patients: await this.withProfilePhotos(organizationId, patients),
       appointments,
       treatments,
       labCases,

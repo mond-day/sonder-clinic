@@ -59,11 +59,19 @@ const credentialsSchema = z.record(z.string(), z.string().min(1)).refine(
   (value) => Object.keys(value).length > 0,
   'Informe ao menos uma credencial.',
 );
+const niboCredentialsSchema = z.object({
+  apiKey: z.string().min(1).optional(),
+  token: z.string().min(1).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.apiKey?.trim() && !value.token?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Informe a API Key do Nibo.', path: ['apiKey'] });
+  }
+});
 const providerCredentials = {
-  NIBO: z.object({ clientId: z.string().min(1), clientSecret: z.string().min(1), token: z.string().min(1), organizationId: z.string().min(1), accountId: z.string().min(1) }),
-  ABACATEPAY: z.object({ apiKey: z.string().min(1), webhookSecret: z.string().min(1) }),
+  NIBO: niboCredentialsSchema,
+  ABACATEPAY: z.object({ apiKey: z.string().min(1), webhookSecret: z.string().min(1).optional() }),
   EVOLUTION: z.object({ apiKey: z.string().min(1), instanceName: z.string().min(1) }),
-  CHATWOOT: z.object({ apiToken: z.string().min(1), webhookSecret: z.string().min(1) }),
+  CHATWOOT: z.object({ apiToken: z.string().min(1), webhookSecret: z.string().min(1).optional() }),
   GOOGLE_CALENDAR: z.object({ clientId: z.string().min(1), clientSecret: z.string().min(1) }),
   OPENAI: z.object({ apiKey: z.string().min(1) }),
 } as const;
@@ -76,6 +84,7 @@ export type SaveConnectionInput = {
   scopeId?: string;
   credentials: Record<string, string>;
   configuration?: Record<string, unknown>;
+  keepExistingCredentials?: boolean;
 };
 
 @Injectable()
@@ -146,10 +155,49 @@ export class IntegrationsService {
         provider,
         connectionId: id,
         enabled: false,
-        message: `${provider} em modo MOCK (*_MOCK=true). Credenciais da conexão foram carregadas, mas nenhum sucesso foi simulado.`,
+        message: provider === 'NIBO'
+          ? 'Nibo em modo MOCK (NIBO_MOCK=true). Nenhum sucesso foi simulado. Desative o MOCK para testar de verdade.'
+          : `${provider} em modo MOCK (*_MOCK=true). Credenciais da conexão foram carregadas, mas nenhum sucesso foi simulado.`,
         mode: 'mock',
         credentialsConfigured: Object.keys(credentials).length > 0,
       };
+    }
+    if (provider === 'CHATWOOT') {
+      const { testChatwoot, resolveChatwootConfig } = await import('../../integrations/chatwoot');
+      const result = await testChatwoot(resolveChatwootConfig(credentials, connection.configuration));
+      await prisma.integrationConnection.update({
+        where: { id },
+        data: {
+          lastSyncAt: result.success ? new Date() : connection.lastSyncAt,
+          status: result.success ? 'ACTIVE' : connection.status === 'DISABLED' ? 'DISABLED' : 'ERROR',
+        },
+      });
+      return { ...result, connectionId: id, mode: 'live', credentialsConfigured: true };
+    }
+    if (provider === 'ABACATEPAY') {
+      const { testAbacatePay, resolveAbacatePayConfig } = await import('../../integrations/abacatepay');
+      const result = await testAbacatePay(resolveAbacatePayConfig(credentials, connection.configuration));
+      await prisma.integrationConnection.update({
+        where: { id },
+        data: {
+          lastSyncAt: result.success ? new Date() : connection.lastSyncAt,
+          status: result.success ? 'ACTIVE' : connection.status === 'DISABLED' ? 'DISABLED' : 'ERROR',
+        },
+      });
+      return { ...result, connectionId: id, mode: 'live', credentialsConfigured: true };
+    }
+    if (provider === 'NIBO') {
+      const { testNibo } = await import('../../integrations/adapters');
+      const apiKey = credentials.apiKey || credentials.token;
+      const result = await testNibo(apiKey);
+      await prisma.integrationConnection.update({
+        where: { id },
+        data: {
+          lastSyncAt: result.success ? new Date() : connection.lastSyncAt,
+          status: result.success ? 'ACTIVE' : connection.status === 'DISABLED' ? 'DISABLED' : 'ERROR',
+        },
+      });
+      return { ...result, connectionId: id, mode: 'live', credentialsConfigured: true };
     }
     const { testProvider } = await import('../../integrations/adapters');
     const result = await testProvider(provider);
@@ -167,6 +215,33 @@ export class IntegrationsService {
       credentialsConfigured: true,
       note: 'Teste usa adapter do provedor; credenciais persistidas foram descriptografadas para validar presença, não reenviadas ao cliente.',
     };
+  }
+
+  async niboCatalog(organizationId: string, id: string) {
+    const connection = await prisma.integrationConnection.findFirst({
+      where: { id, clinic: { organizationId }, provider: 'NIBO' },
+    });
+    if (!connection) throw new NotFoundException('Conexão Nibo não encontrada.');
+    if (!connection.encryptedCredentials) {
+      return {
+        categories: [],
+        costCenters: [],
+        source: 'unavailable' as const,
+        message: 'Salve a API Key do Nibo antes de buscar categorias.',
+      };
+    }
+    const credentials = this.decryptForAdapter(connection.encryptedCredentials);
+    const apiKey = credentials.apiKey || credentials.token;
+    if (!apiKey) {
+      return {
+        categories: [],
+        costCenters: [],
+        source: 'unavailable' as const,
+        message: 'API Key do Nibo ausente nesta conexão.',
+      };
+    }
+    const { fetchNiboCatalog } = await import('../../integrations/adapters');
+    return fetchNiboCatalog(apiKey);
   }
 
   /**
@@ -811,26 +886,42 @@ export class IntegrationsService {
     const clinic = await prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId } });
     if (!clinic) throw new NotFoundException('Clínica não encontrada.');
     const provider = input.provider;
-    const schema = providerCredentials[provider] as z.ZodType<Record<string, string>>;
-    let credentials = parseWithZod(schema, input.credentials);
     const scopeType = input.scopeType ?? process.env.INTEGRATION_SCOPE_DEFAULT ?? 'CLINIC';
     const scopeId = input.scopeId ?? input.clinicId;
+    const existingCredsRow = await prisma.integrationConnection.findUnique({
+      where: {
+        clinicId_provider_scopeType_scopeId: {
+          clinicId: input.clinicId, provider, scopeType, scopeId,
+        },
+      },
+      select: { encryptedCredentials: true },
+    });
+    const previous = existingCredsRow?.encryptedCredentials
+      ? this.decryptForAdapter(existingCredsRow.encryptedCredentials)
+      : {};
+    const incoming = Object.fromEntries(
+      Object.entries(input.credentials ?? {}).filter(([, value]) => {
+        const trimmed = String(value ?? '').trim();
+        return trimmed.length > 0 && trimmed !== '••••••••';
+      }),
+    );
+    if (provider === 'NIBO' && incoming.token && !incoming.apiKey) {
+      incoming.apiKey = incoming.token;
+      delete incoming.token;
+    }
+    const merged: Record<string, string> = input.keepExistingCredentials
+      ? { ...previous, ...incoming }
+      : incoming;
+    if (provider === 'NIBO' && merged.token && !merged.apiKey) {
+      merged.apiKey = merged.token;
+    }
+    const schema = providerCredentials[provider] as z.ZodType<Record<string, string>>;
+    let credentials = parseWithZod(schema, merged);
 
     if (provider === 'GOOGLE_CALENDAR') {
-      const existing = await prisma.integrationConnection.findUnique({
-        where: {
-          clinicId_provider_scopeType_scopeId: {
-            clinicId: input.clinicId, provider, scopeType, scopeId,
-          },
-        },
-        select: { encryptedCredentials: true },
-      });
-      if (existing?.encryptedCredentials) {
-        const previous = this.decryptForAdapter(existing.encryptedCredentials);
-        const tokens = tokensFromCredentials(previous);
-        if (tokens) {
-          credentials = mergeTokenCredentials(credentials, tokens);
-        }
+      const tokens = tokensFromCredentials(previous);
+      if (tokens) {
+        credentials = mergeTokenCredentials(credentials, tokens);
       }
     }
 
@@ -1045,7 +1136,7 @@ export class IntegrationsService {
   private hasCredentials(provider: Provider): boolean {
     const required: Record<Provider, string[]> = {
       NIBO: ['NIBO_API_TOKEN', 'NIBO_BASE_URL'],
-      ABACATEPAY: ['ABACATEPAY_API_KEY', 'ABACATEPAY_BASE_URL'],
+      ABACATEPAY: ['ABACATEPAY_API_KEY'],
       EVOLUTION: ['EVOLUTION_API_KEY', 'EVOLUTION_BASE_URL'],
       CHATWOOT: ['CHATWOOT_API_ACCESS_TOKEN', 'CHATWOOT_BASE_URL', 'CHATWOOT_ACCOUNT_ID'],
     };

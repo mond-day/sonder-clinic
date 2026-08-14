@@ -10,6 +10,12 @@ export type ClinicBranding = {
 
 export const DEFAULT_BRAND_NAME = 'Sonder Clinic';
 export const DEFAULT_BRAND_MARK = 'S';
+export const BRANDING_UPDATED_EVENT = 'sonder:branding-updated';
+
+export function notifyBrandingUpdated(clinicId?: string) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(BRANDING_UPDATED_EVENT, { detail: { clinicId } }));
+}
 
 export function apiOrigin(): string {
   return API_URL.replace(/\/api\/v1\/?$/, '');
@@ -27,11 +33,16 @@ export function resolveMediaUrl(url?: string | null): string | undefined {
 }
 
 export function brandDisplayName(branding?: ClinicBranding | null, fallback = DEFAULT_BRAND_NAME): string {
-  const name = branding?.name?.trim();
-  if (!name) return fallback;
+  return branding?.name?.trim() || fallback;
+}
+
+export function brandSubtitle(
+  branding?: ClinicBranding | null,
+  fallback = 'Gestão odontológica',
+): string {
   const subtitle = branding?.subtitle?.trim();
-  if (/^sonder$/i.test(name) && /^clinic$/i.test(subtitle ?? '')) return fallback;
-  return name;
+  if (subtitle) return subtitle;
+  return fallback;
 }
 
 export function brandInitial(name: string): string {

@@ -191,8 +191,8 @@ export class AuthService {
     return { smtpConfigured: smtpConfigured() };
   }
 
-  publicBranding() {
-    return {
+  async publicBranding() {
+    const envFallback = {
       name: process.env.BRAND_NAME ?? 'Sonder',
       subtitle: process.env.BRAND_SUBTITLE ?? 'Clinic',
       primaryColor: process.env.BRAND_PRIMARY_COLOR ?? '#176B5B',
@@ -200,6 +200,31 @@ export class AuthService {
       faviconUrl: process.env.BRAND_FAVICON_URL,
       source: 'environment' as const,
     };
+    const clinics = await prisma.clinic.findMany({
+      where: { status: 'ACTIVE' },
+      select: { settingsJson: true },
+      take: 25,
+    });
+    for (const clinic of clinics) {
+      const stored = (clinic.settingsJson as { branding?: {
+        name?: string;
+        subtitle?: string;
+        primaryColor?: string;
+        logoUrl?: string;
+        faviconUrl?: string;
+      } } | null)?.branding;
+      if (stored?.name?.trim()) {
+        return {
+          name: stored.name.trim(),
+          subtitle: stored.subtitle ?? envFallback.subtitle,
+          primaryColor: stored.primaryColor ?? envFallback.primaryColor,
+          logoUrl: stored.logoUrl ?? envFallback.logoUrl,
+          faviconUrl: stored.faviconUrl ?? envFallback.faviconUrl,
+          source: 'tenant' as const,
+        };
+      }
+    }
+    return envFallback;
   }
 
   private async findPendingInvitation(token: string) {

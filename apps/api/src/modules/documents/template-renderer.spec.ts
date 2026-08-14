@@ -26,6 +26,11 @@ describe('template-renderer', () => {
     expect(text).toContain('- Canal R$ 20,00');
   });
 
+  it('formata datas ISO no corpo do modelo', () => {
+    expect(renderTemplate('A contar de {{attendanceDate}}.', { attendanceDate: '2026-08-14' }))
+      .toBe('A contar de 14/08/2026.');
+  });
+
   it('oculta blocos vazios', () => {
     const text = renderTemplate('A{{#guardian.name}} / {{guardian.name}}{{/guardian.name}}B', {
       guardian: { name: '' },

@@ -2,6 +2,7 @@ import { createDecipheriv } from 'node:crypto';
 import { prisma } from '@sonder/database';
 import { isWithinAllowedHours, nextAllowedWindowStart } from './allowed-hours';
 import { readEvolutionConfiguration, sendEvolutionText } from './evolution';
+import { isChatwootMock, readChatwootConfiguration, sendChatwootText } from './chatwoot';
 import {
   decryptIntegrationCredentials,
   deleteCalendarEvent,
@@ -146,7 +147,7 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
     return;
   }
 
-  const connection = await prisma.integrationConnection.findFirst({
+  const evolutionConnection = await prisma.integrationConnection.findFirst({
     where: {
       clinicId: reminder.appointment.clinicId,
       provider: 'EVOLUTION',
@@ -154,43 +155,108 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
       encryptedCredentials: { not: null },
     },
   });
-  if (!connection?.encryptedCredentials) {
-    await skipReminder(event, 'Evolution não configurado ou conexão desativada.');
-    return;
-  }
-  if (process.env.EVOLUTION_MOCK === 'true') {
-    await skipReminder(event, 'Evolution está em modo mock; nenhum WhatsApp foi enviado.');
-    return;
-  }
+  const chatwootConnection = await prisma.integrationConnection.findFirst({
+    where: {
+      clinicId: reminder.appointment.clinicId,
+      provider: 'CHATWOOT',
+      status: 'ACTIVE',
+      encryptedCredentials: { not: null },
+    },
+  });
 
-  let credentials: Record<string, string>;
-  try {
-    credentials = decryptCredentials(connection.encryptedCredentials);
-  } catch (error) {
-    await skipReminder(
-      event,
-      error instanceof Error ? error.message : 'Falha ao ler credenciais Evolution.',
-    );
-    return;
-  }
-  const evolution = readEvolutionConfiguration(credentials, connection.configuration);
-  if (!evolution) {
-    await skipReminder(
-      event,
-      'Evolution incompleto: informe API key, base URL e nome da instância.',
-    );
+  const evolutionLive = Boolean(
+    evolutionConnection?.encryptedCredentials && process.env.EVOLUTION_MOCK !== 'true',
+  );
+  const chatwootLive = Boolean(
+    chatwootConnection?.encryptedCredentials && !isChatwootMock(),
+  );
+
+  if (!evolutionLive && !chatwootLive) {
+    const reason = !evolutionConnection?.encryptedCredentials && !chatwootConnection?.encryptedCredentials
+      ? 'WhatsApp não configurado (Evolution ou Chatwoot) ou conexão desativada.'
+      : process.env.EVOLUTION_MOCK === 'true' && isChatwootMock()
+        ? 'Evolution e Chatwoot estão em modo mock; nenhum WhatsApp foi enviado.'
+        : 'WhatsApp live indisponível: desative o MOCK e configure credenciais Evolution ou Chatwoot.';
+    await skipReminder(event, reason);
     return;
   }
 
   const number = normalizeWhatsAppNumber(reminder.appointment.patient.primaryPhone);
-  await sendEvolutionText(evolution, number, reminderMessage(reminder));
+  const text = reminderMessage(reminder);
+
+  if (evolutionLive && evolutionConnection?.encryptedCredentials) {
+    let credentials: Record<string, string>;
+    try {
+      credentials = decryptCredentials(evolutionConnection.encryptedCredentials);
+    } catch (error) {
+      await skipReminder(
+        event,
+        error instanceof Error ? error.message : 'Falha ao ler credenciais Evolution.',
+      );
+      return;
+    }
+    const evolution = readEvolutionConfiguration(credentials, evolutionConnection.configuration);
+    if (!evolution) {
+      if (!chatwootLive) {
+        await skipReminder(event, 'Evolution incompleto: informe API key, base URL e nome da instância.');
+        return;
+      }
+    } else {
+      await sendEvolutionText(evolution, number, text);
+      await prisma.$transaction([
+        prisma.appointmentReminder.update({
+          where: { id: reminder.id },
+          data: { status: 'SENT', statusReason: null },
+        }),
+        prisma.integrationConnection.update({
+          where: { id: evolutionConnection.id },
+          data: { lastSyncAt: new Date() },
+        }),
+        prisma.outboxEvent.update({
+          where: { id: event.id },
+          data: {
+            processedAt: new Date(),
+            attempts: { increment: 1 },
+            lastError: null,
+          },
+        }),
+      ]);
+      return;
+    }
+  }
+
+  if (!chatwootConnection?.encryptedCredentials) {
+    await skipReminder(event, 'Chatwoot não configurado ou conexão desativada.');
+    return;
+  }
+  let chatwootCredentials: Record<string, string>;
+  try {
+    chatwootCredentials = decryptCredentials(chatwootConnection.encryptedCredentials);
+  } catch (error) {
+    await skipReminder(
+      event,
+      error instanceof Error ? error.message : 'Falha ao ler credenciais Chatwoot.',
+    );
+    return;
+  }
+  const chatwoot = readChatwootConfiguration(chatwootCredentials, chatwootConnection.configuration);
+  if (!chatwoot) {
+    await skipReminder(event, 'Chatwoot incompleto: informe base URL, token e account id.');
+    return;
+  }
+  await sendChatwootText(
+    chatwoot,
+    number,
+    text,
+    reminder.appointment.patient.preferredName ?? reminder.appointment.patient.fullName,
+  );
   await prisma.$transaction([
     prisma.appointmentReminder.update({
       where: { id: reminder.id },
       data: { status: 'SENT', statusReason: null },
     }),
     prisma.integrationConnection.update({
-      where: { id: connection.id },
+      where: { id: chatwootConnection.id },
       data: { lastSyncAt: new Date() },
     }),
     prisma.outboxEvent.update({

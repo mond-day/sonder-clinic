@@ -86,7 +86,7 @@ export function ExamRequestEditor({
     setClinicalQuestion('');
     setUrgency('ROUTINE');
     setItems([]);
-    setPickerOpen(false);
+    setPickerOpen(true);
     setExamSearch('');
     setFolderId('');
     setNotes('');
@@ -102,7 +102,7 @@ export function ExamRequestEditor({
       : [...FALLBACK_EXAM_PRESETS.filter((item) => item !== 'Outro')];
     const q = examSearch.trim().toLowerCase();
     const filtered = q ? names.filter((name) => name.toLowerCase().includes(q)) : names;
-    return [...filtered, 'Outro / texto livre'];
+    return [...filtered, 'Outro exame'];
   }, [examCatalog, examSearch]);
 
   function updateItem(index: number, patch: Partial<ExamItem>) {
@@ -251,7 +251,7 @@ export function ExamRequestEditor({
               className="button small"
               onClick={() => setPickerOpen((current) => !current)}
             >
-              + Adicionar exame
+              {pickerOpen ? 'Ocultar catálogo' : '+ Adicionar exame'}
             </button>
           </header>
           {items.length === 0 ? (

@@ -66,11 +66,13 @@ const updateAgendaTagSchema = agendaTagSchema.omit({ clinicId: true }).partial()
 const unitSchema = z.object({
   clinicId: z.string().uuid(),
   name: z.string().trim().min(2).max(80),
+  city: z.string().trim().max(120).optional(),
   phone: z.string().trim().max(40).optional(),
   timezone: z.string().trim().min(3).max(64).optional(),
 });
 const updateUnitSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
+  city: z.string().trim().max(120).nullable().optional(),
   phone: z.string().trim().max(40).nullable().optional(),
   timezone: z.string().trim().min(3).max(64).optional(),
   status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
@@ -186,6 +188,7 @@ export class SettingsService {
             select: {
               id: true,
               name: true,
+              city: true,
               phone: true,
               timezone: true,
               chairs: {
@@ -510,7 +513,7 @@ export class SettingsService {
   async createUnit(
     organizationId: string,
     actorId: string,
-    input: { clinicId: string; name: string; phone?: string; timezone?: string },
+    input: { clinicId: string; name: string; city?: string; phone?: string; timezone?: string },
   ) {
     const data = parseWithZod(unitSchema, input);
     await this.assertClinic(organizationId, data.clinicId);
@@ -519,6 +522,7 @@ export class SettingsService {
         data: {
           clinicId: data.clinicId,
           name: data.name,
+          city: data.city,
           phone: data.phone,
           timezone: data.timezone ?? 'America/Cuiaba',
         },
@@ -543,7 +547,7 @@ export class SettingsService {
     organizationId: string,
     actorId: string,
     id: string,
-    input: { name?: string; phone?: string | null; timezone?: string; status?: 'ACTIVE' | 'INACTIVE' },
+    input: { name?: string; city?: string | null; phone?: string | null; timezone?: string; status?: 'ACTIVE' | 'INACTIVE' },
   ) {
     const data = parseWithZod(updateUnitSchema, input);
     const existing = await prisma.unit.findFirst({
@@ -556,6 +560,7 @@ export class SettingsService {
         where: { id },
         data: {
           name: data.name,
+          city: data.city === undefined ? undefined : data.city,
           phone: data.phone === undefined ? undefined : data.phone,
           timezone: data.timezone,
           status: data.status,

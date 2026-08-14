@@ -5,6 +5,8 @@ import { api } from '@/lib/api';
 import {
   brandDisplayName,
   brandInitial,
+  brandSubtitle,
+  BRANDING_UPDATED_EVENT,
   DEFAULT_BRAND_NAME,
   resolveMediaUrl,
   type ClinicBranding,
@@ -18,15 +20,29 @@ export function useClinicBranding(clinicId?: string, authenticated = true) {
     const path = authenticated && clinicId
       ? `/settings/branding?clinicId=${encodeURIComponent(clinicId)}`
       : '/auth/branding';
-    api.get<ClinicBranding>(path)
-      .then((next) => {
-        if (!cancelled) setBranding(next);
-      })
-      .catch(() => {
-        if (!cancelled) setBranding(null);
-      });
+
+    function load() {
+      api.get<ClinicBranding>(path)
+        .then((next) => {
+          if (!cancelled) setBranding(next);
+        })
+        .catch(() => {
+          if (!cancelled) setBranding(null);
+        });
+    }
+
+    load();
+
+    function onUpdated(event: Event) {
+      const detail = (event as CustomEvent<{ clinicId?: string }>).detail;
+      if (detail?.clinicId && clinicId && detail.clinicId !== clinicId) return;
+      load();
+    }
+
+    window.addEventListener(BRANDING_UPDATED_EVENT, onUpdated);
     return () => {
       cancelled = true;
+      window.removeEventListener(BRANDING_UPDATED_EVENT, onUpdated);
     };
   }, [authenticated, clinicId]);
 
@@ -64,9 +80,7 @@ export function ClinicBrandText({
   fallbackSubtitle?: string;
 }) {
   const name = brandDisplayName(branding, fallbackName);
-  const subtitle = branding?.subtitle?.trim() && branding.source === 'tenant'
-    ? branding.subtitle.trim()
-    : fallbackSubtitle;
+  const subtitle = brandSubtitle(branding, fallbackSubtitle);
   return (
     <div className="brand-text">
       <strong>{name}</strong>

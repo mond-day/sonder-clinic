@@ -12,6 +12,7 @@ import {
   netPaidAmount,
   netPayablePaid,
   outstandingAmount,
+  pendingReservedAmount,
   positiveMoney,
   refundedTotal,
 } from './operations-finance.utils';
@@ -50,6 +51,14 @@ describe('operations-finance.utils (P0 financeiro)', () => {
       { amount: money('30'), status: 'REFUNDED', refunds: [{ amount: money('30') }] },
     ]);
     expect(paid.toString()).toBe('130');
+  });
+
+  it('pendingReservedAmount soma apenas PENDING', () => {
+    expect(pendingReservedAmount([
+      { amount: money('100'), status: 'PENDING' },
+      { amount: money('50'), status: 'CONFIRMED' },
+      { amount: money('20'), status: 'FAILED' },
+    ]).toString()).toBe('100');
   });
 
   it('outstandingAmount nunca é negativo', () => {

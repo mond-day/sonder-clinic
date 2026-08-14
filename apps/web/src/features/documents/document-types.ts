@@ -43,9 +43,16 @@ export type DocumentTemplate = {
 export type DocumentIdentity = {
   patientName?: string | null;
   patientCpfMasked?: string | null;
+  patientCpf?: string | null;
   professionalName?: string | null;
   professionalCro?: string | null;
   clinicName?: string | null;
+  clinicLegalName?: string | null;
+  clinicTaxId?: string | null;
+  clinicPhone?: string | null;
+  clinicEmail?: string | null;
+  clinicAddress?: string | null;
+  issuedPlace?: string | null;
   generatedAt?: string | null;
 };
 
@@ -69,6 +76,7 @@ export type GeneratedDocument = {
     signerName?: string;
     method?: string;
     signedAt?: string;
+    evidence?: { dataUrl?: string } | Record<string, unknown>;
   }>;
   signatureRequests?: Array<{
     id: string;

@@ -2,8 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Modal } from '@/components/modal';
+import { SearchableSelect } from '@/components/searchable-select';
 import type { Professional } from '@/components/selection-provider';
-import { presentationLabel, text } from '@/lib/format';
+import { formatBrazilianDate, formatBrazilianDateLong, presentationLabel, text } from '@/lib/format';
+import { dentalCidOptions, formatDentalCidLine, resolveDentalCid } from './dental-cid';
 import { certificateSchema } from './document-schemas';
 import type { DocumentFolder, DocumentTemplate } from './document-types';
 
@@ -70,7 +72,7 @@ export function CertificateEditor({
     setIncludeCid(false);
     setCid('');
     setCidAuthorized(false);
-    setNotes('O paciente deverá permanecer afastado de suas atividades pelo período informado para recuperação adequada.');
+    setNotes('');
     setFolderId('');
     setFormError('');
   }, [open, options, professionals]);
@@ -103,13 +105,15 @@ export function CertificateEditor({
       return;
     }
 
+    const dateLabel = formatBrazilianDate(parsed.data.attendanceDate);
+    const dateLong = formatBrazilianDateLong(parsed.data.attendanceDate);
     let corpo = '';
     if (parsed.data.mode === 'days') {
-      corpo = `Atesto, para os devidos fins, que o paciente necessita permanecer afastado de suas atividades pelo período de ${parsed.data.days} dia(s), a contar de ${parsed.data.attendanceDate}.`;
+      corpo = `Atesto, a pedido do interessado, que o paciente esteve sob cuidados odontológicos nesta data e necessita afastar-se de suas atividades por ${parsed.data.days} dia(s), a contar de ${dateLong}.`;
     } else if (parsed.data.mode === 'hours') {
-      corpo = `Declaro que o paciente compareceu para atendimento odontológico das ${parsed.data.startTime} às ${parsed.data.endTime} em ${parsed.data.attendanceDate}.`;
+      corpo = `Declaro que o paciente compareceu para atendimento odontológico das ${parsed.data.startTime} às ${parsed.data.endTime} em ${dateLabel}.`;
     } else {
-      corpo = `Declaro, para os devidos fins, que o paciente compareceu à clínica em ${parsed.data.attendanceDate} para atendimento odontológico.`;
+      corpo = `Declaro que o paciente compareceu à clínica em ${dateLabel} para atendimento odontológico.`;
     }
     if (parsed.data.notes) corpo = `${corpo}\n\n${parsed.data.notes}`;
 
@@ -124,7 +128,15 @@ export function CertificateEditor({
     };
 
     if (includeCid && parsed.data.cid?.trim()) {
-      clinicalContent.cid = parsed.data.cid.trim();
+      const cidCode = parsed.data.cid.trim();
+      const resolved = resolveDentalCid(cidCode);
+      const citation = formatDentalCidLine(cidCode, resolved?.description);
+      if (citation && !corpo.includes(cidCode)) {
+        corpo = `${corpo}\n\n${citation}`;
+        clinicalContent.corpo = corpo;
+      }
+      clinicalContent.cid = cidCode;
+      if (resolved?.description) clinicalContent.cidDescription = resolved.description;
       clinicalContent.cidConsent = {
         authorized: true,
         authorizedAt: new Date().toISOString(),
@@ -204,33 +216,52 @@ export function CertificateEditor({
             </label>
           </>
         ) : null}
-        <label className="check-field span-2">
-          <input
-            type="checkbox"
-            checked={includeCid}
-            onChange={(event) => {
-              const next = event.target.checked;
-              setIncludeCid(next);
-              if (!next) {
-                setCid('');
-                setCidAuthorized(false);
-              }
-            }}
-          />
+        <label className="switch-row span-2">
+          <span className="switch">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={includeCid}
+              onChange={(event) => {
+                const next = event.target.checked;
+                setIncludeCid(next);
+                if (!next) {
+                  setCid('');
+                  setCidAuthorized(false);
+                }
+              }}
+              aria-label="Incluir CID"
+            />
+            <span className="switch-track" aria-hidden />
+          </span>
           Incluir CID
         </label>
         {includeCid ? (
           <>
-            <label>
-              CID
-              <input value={cid} onChange={(event) => setCid(event.target.value)} placeholder="Ex.: K04.7" required={includeCid} />
-            </label>
-            <label className="check-field">
-              <input
-                type="checkbox"
-                checked={cidAuthorized}
-                onChange={(event) => setCidAuthorized(event.target.checked)}
+            <div className="span-2">
+              <SearchableSelect
+                name="cid"
+                label="CID"
+                value={cid}
+                onChange={setCid}
+                options={dentalCidOptions()}
+                placeholder="Ex.: K04.7"
+                searchPlaceholder="Buscar código ou descrição…"
+                emptyMessage="Nenhum CID encontrado."
+                required={includeCid}
               />
+            </div>
+            <label className="switch-row">
+              <span className="switch">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={cidAuthorized}
+                  onChange={(event) => setCidAuthorized(event.target.checked)}
+                  aria-label="Autorização do paciente coletada"
+                />
+                <span className="switch-track" aria-hidden />
+              </span>
               Autorização do paciente coletada
             </label>
           </>

@@ -1,6 +1,6 @@
 # Release e versionamento
 
-Versão atual do monorepo: **1.2.2** (semver `MAJOR.MINOR.PATCH`).
+Versão atual do monorepo: **1.2.3** (semver `MAJOR.MINOR.PATCH`).
 
 ## Imagens publicadas
 
@@ -12,9 +12,9 @@ Registry: `ghcr.io/mond-day` (Docker GHCR — **não** npm GitHub Packages)
 | Web Next.js | `ghcr.io/mond-day/sonder-clinic-web` |
 | Worker | `ghcr.io/mond-day/sonder-clinic-worker` |
 
-Tags geradas em release (`v1.2.2`):
+Tags geradas em release (`v1.2.3`):
 
-- `1.2.2`
+- `1.2.3`
 - `1.2`
 - `latest`
 - `sha-<gitsha>` (sempre)
@@ -24,14 +24,14 @@ Push em `main` sem tag gera imagem com versão `0.0.0-sha.<sha>` + tag `sha-<sha
 ## Como publicar uma release
 
 1. Feche residuais de código e atualize docs de status/prod.
-2. Atualize a versão nos `package.json` do root, apps e packages (`1.2.1` → `1.2.2`).
+2. Atualize a versão nos `package.json` do root, apps e packages (`1.2.2` → `1.2.3`).
 3. Commit das mudanças.
 4. Crie e envie a tag anotada:
 
 ```bash
-git tag -a v1.2.2 -m "Release 1.2.2"
+git tag -a v1.2.3 -m "Release 1.2.3"
 git push origin main
-git push origin v1.2.2
+git push origin v1.2.3
 ```
 
 5. O workflow `.github/workflows/release-images.yml` constrói as três imagens multi-stage e publica no GHCR.

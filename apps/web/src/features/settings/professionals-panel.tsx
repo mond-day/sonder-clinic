@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Pencil, Plus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import { initials, list, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { formatCpf, initials, list, maskCpfInput, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
 import { useSelection } from '@/components/selection-provider';
@@ -11,6 +11,7 @@ import { useSelection } from '@/components/selection-provider';
 type ProfessionalRow = RecordValue & {
   id: string;
   name: string;
+  cpf?: string | null;
   croNumber?: string | null;
   croState?: string | null;
   professionalType?: string | null;
@@ -36,6 +37,7 @@ export function ProfessionalsPanel() {
   const [modal, setModal] = useState<'create' | 'edit' | null>(null);
   const [editing, setEditing] = useState<ProfessionalRow | null>(null);
   const [scopeClinicIds, setScopeClinicIds] = useState<string[]>([]);
+  const [cpfDraft, setCpfDraft] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -64,11 +66,13 @@ export function ProfessionalsPanel() {
   function openCreate() {
     setEditing(null);
     setScopeClinicIds(clinicId ? [clinicId] : []);
+    setCpfDraft('');
     setModal('create');
   }
 
   function openEdit(row: ProfessionalRow) {
     setEditing(row);
+    setCpfDraft(maskCpfInput(row.cpf));
     setScopeClinicIds(
       list(row.clinicLinks).map((link) => {
         const clinic = link.clinic && typeof link.clinic === 'object' ? link.clinic as RecordValue : null;
@@ -87,6 +91,7 @@ export function ProfessionalsPanel() {
       const payload = {
         userId: String(data.get('userId') || editing?.user?.id || ''),
         name: String(data.get('name') || '').trim() || undefined,
+        cpf: String(data.get('cpf') || '').replace(/\D/g, '') || undefined,
         croNumber: String(data.get('croNumber') || '').trim() || undefined,
         croState: String(data.get('croState') || '').trim().toUpperCase() || undefined,
         professionalType: String(data.get('professionalType') || 'DENTIST'),
@@ -96,6 +101,7 @@ export function ProfessionalsPanel() {
       if (editing) {
         await api.patch(`/professionals/${editing.id}`, {
           name: payload.name,
+          cpf: payload.cpf ?? null,
           croNumber: payload.croNumber ?? null,
           croState: payload.croState ?? null,
           professionalType: payload.professionalType,
@@ -120,14 +126,8 @@ export function ProfessionalsPanel() {
   }
 
   return (
-    <div className="form-section" style={{ padding: '0 14px 14px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <div>
-          <h3 style={{ margin: 0 }}>Profissionais</h3>
-          <p className="muted-note" style={{ margin: '6px 0 0' }}>
-            Vincule usuário, CRO, tipo e escopo de clínicas. A agenda usa este cadastro.
-          </p>
-        </div>
+    <div className="disclosure-panel">
+      <header style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginBottom: 12 }}>
         <button className="button small primary" type="button" onClick={openCreate}>
           <Plus size={14} /> Novo profissional
         </button>
@@ -143,6 +143,7 @@ export function ProfessionalsPanel() {
               <tr>
                 <th>Profissional</th>
                 <th>Usuário</th>
+                <th>CPF</th>
                 <th>CRO</th>
                 <th>Tipo</th>
                 <th>Clínicas</th>
@@ -160,6 +161,7 @@ export function ProfessionalsPanel() {
                     </div>
                   </td>
                   <td>{text(row.user?.email, '—')}</td>
+                  <td>{row.cpf ? formatCpf(row.cpf) : '—'}</td>
                   <td>{row.croNumber ? `${text(row.croNumber)}/${text(row.croState, '—')}` : '—'}</td>
                   <td>{PROFESSIONAL_TYPES.find((item) => item.value === row.professionalType)?.label ?? presentationLabel(row.professionalType)}</td>
                   <td>
@@ -174,15 +176,17 @@ export function ProfessionalsPanel() {
                     </StatusBadge>
                   </td>
                   <td className="row-actions">
-                    <button
-                      type="button"
-                      className="icon-button"
-                      title="Editar profissional"
-                      aria-label={`Editar ${text(row.name)}`}
-                      onClick={() => openEdit(row)}
-                    >
-                      <Pencil size={14} />
-                    </button>
+                    <div>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title="Editar profissional"
+                        aria-label={`Editar ${text(row.name)}`}
+                        onClick={() => openEdit(row)}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -194,7 +198,7 @@ export function ProfessionalsPanel() {
       <Modal
         open={modal !== null}
         title={editing ? 'Editar profissional' : 'Novo profissional'}
-        description="Profissional vinculado a um usuário da organização."
+        description="Profissional vinculado a um usuário da organização. O e-CPF é vinculado em Configurações → Certificados."
         onClose={() => setModal(null)}
         size="medium"
         confirmOnClose
@@ -215,6 +219,15 @@ export function ProfessionalsPanel() {
             <p className="muted-note span-2">Usuário: {text(editing.user?.email, text(editing.user?.name))}</p>
           )}
           <label>Nome profissional<input name="name" defaultValue={text(editing?.name, '')} placeholder="Como aparece na agenda" /></label>
+          <label>CPF
+            <input
+              name="cpf"
+              value={cpfDraft}
+              onChange={(event) => setCpfDraft(maskCpfInput(event.target.value))}
+              inputMode="numeric"
+              placeholder="000.000.000-00"
+            />
+          </label>
           <label>Tipo
             <select name="professionalType" defaultValue={String(editing?.professionalType ?? 'DENTIST')}>
               {PROFESSIONAL_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
@@ -228,27 +241,35 @@ export function ProfessionalsPanel() {
               <option value="INACTIVE">Inativo</option>
             </select>
           </label>
-          <fieldset className="span-2">
+          <fieldset className="span-2 clinic-scope-fieldset">
             <legend>Escopo de clínicas</legend>
-            <div className="checkbox-grid">
+            <div className="clinic-scope-list">
               {clinics.map((clinic) => (
-                <label key={clinic.id} className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={scopeClinicIds.includes(clinic.id)}
-                    onChange={(event) => {
-                      setScopeClinicIds((current) => (
-                        event.target.checked
-                          ? [...current, clinic.id]
-                          : current.filter((id) => id !== clinic.id)
-                      ));
-                    }}
-                  />
+                <label key={clinic.id} className="switch-row">
                   <span>{clinic.tradeName}</span>
+                  <span className="switch">
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={scopeClinicIds.includes(clinic.id)}
+                      onChange={(event) => {
+                        setScopeClinicIds((current) => (
+                          event.target.checked
+                            ? [...current, clinic.id]
+                            : current.filter((id) => id !== clinic.id)
+                        ));
+                      }}
+                      aria-label={clinic.tradeName}
+                    />
+                    <span className="switch-track" aria-hidden />
+                  </span>
                 </label>
               ))}
             </div>
           </fieldset>
+          <p className="muted-note span-2">
+            Para assinar documentos digitais, vincule o e-CPF em Configurações → Certificados. O CPF cadastrado precisa coincidir com o do certificado.
+          </p>
           {error ? <p className="form-error span-2" role="alert">{error}</p> : null}
           <button className="button primary" disabled={busy} type="submit">
             {busy ? 'Salvando…' : 'Salvar profissional'}

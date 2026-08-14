@@ -316,6 +316,7 @@ model Unit {
   id           String        @id @default(uuid()) @db.Uuid
   clinicId     String        @db.Uuid
   name         String
+  city         String?
   phone        String?
   timezone     String        @default("America/Cuiaba")
   status       EntityStatus  @default(ACTIVE)
@@ -1622,6 +1623,7 @@ model Payment {
   idempotencyKey String               @unique
   status         PaymentStatus        @default(PENDING)
   fee            Decimal              @default(0) @db.Decimal(12, 2)
+  providerData   Json?
   createdAt      DateTime             @default(now())
   receivable     Receivable           @relation(fields: [receivableId], references: [id])
   refunds        Refund[]

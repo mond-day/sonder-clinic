@@ -44,7 +44,13 @@ const PAYMENT_METHODS = [
   { value: 'DEBIT_CARD', label: 'Cartão de débito' },
   { value: 'CASH', label: 'Dinheiro' },
   { value: 'TRANSFER', label: 'Transferência' },
+  { value: 'BOLETO', label: 'Boleto' },
   { value: 'OTHER', label: 'Outro' },
+] as const;
+
+const CHARGE_METHODS = [
+  { value: 'PIX', label: 'PIX' },
+  { value: 'BOLETO', label: 'Boleto' },
 ] as const;
 
 export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
@@ -89,6 +95,8 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
     paymentMethod: '',
   });
   const [receiveForm, setReceiveForm] = useState({ amount: '', method: 'PIX' });
+  const [receiveMode, setReceiveMode] = useState<'receive' | 'charge'>('receive');
+  const [chargePayment, setChargePayment] = useState<RecordValue | null>(null);
   const [recurrenceForm, setRecurrenceForm] = useState({
     kind: 'PAYABLE',
     description: '',
@@ -261,15 +269,46 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
     setReceivableBusy(true);
     setError('');
     try {
+      if (receiveMode === 'charge') {
+        const payment = await api.post<RecordValue>(
+          `/receivables/${String(receiveTarget.id)}/charges`,
+          { amount, method: method === 'BOLETO' ? 'BOLETO' : 'PIX' },
+          { 'Idempotency-Key': crypto.randomUUID() },
+        );
+        setChargePayment(payment);
+        load();
+        return;
+      }
       await api.post(
         `/receivables/${String(receiveTarget.id)}/payments`,
         { amount, method },
         { 'Idempotency-Key': crypto.randomUUID() },
       );
       setReceiveTarget(null);
+      setChargePayment(null);
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Não foi possível registrar o recebimento.');
+      setError(cause instanceof ApiError ? cause.message : receiveMode === 'charge'
+        ? 'Não foi possível gerar a cobrança.'
+        : 'Não foi possível registrar o recebimento.');
+    } finally {
+      setReceivableBusy(false);
+    }
+  };
+
+  const syncChargePayment = async (paymentId: string) => {
+    setReceivableBusy(true);
+    setError('');
+    try {
+      const updated = await api.post<RecordValue>(`/payments/${paymentId}/sync`, {});
+      setChargePayment(updated);
+      if (updated.status === 'CONFIRMED') {
+        setReceiveTarget(null);
+        setChargePayment(null);
+      }
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível consultar o status da cobrança.');
     } finally {
       setReceivableBusy(false);
     }
@@ -365,6 +404,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
       DEBIT_CARD: 'Cartão de débito',
       CASH: 'Dinheiro',
       TRANSFER: 'Transferência',
+      BOLETO: 'Boleto',
       OTHER: 'Outro',
     };
     return labels[key] ?? presentationLabel(value);
@@ -491,6 +531,43 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   <div className="info-item"><small>Forma de Pagamento</small><strong>{paymentMethodLabel(selectedReceivable.paymentMethod)}</strong></div>
                   <div className="info-item"><small>Situação clínica</small><strong>{presentationLabel(nested(selectedReceivable, 'treatment').status)}</strong></div>
                 </div>
+                {Array.isArray(selectedReceivable.payments) && selectedReceivable.payments.length > 0 ? (
+                  <div className="span-2" style={{ marginTop: 16 }}>
+                    <small>Pagamentos e cobranças</small>
+                    <div className="settings-list" style={{ marginTop: 8 }}>
+                      {(selectedReceivable.payments as RecordValue[]).map((payment) => {
+                        const data = nested(payment, 'providerData');
+                        return (
+                          <div className="settings-row" key={String(payment.id)}>
+                            <div>
+                              <strong>{paymentMethodLabel(payment.method)} · {currency(payment.amount)}</strong>
+                              <span>{presentationLabel(payment.status)}{payment.provider ? ` · ${String(payment.provider)}` : ''}</span>
+                              {text(data.brCodeBase64) ? (
+                                <div style={{ marginTop: 8 }}>
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={text(data.brCodeBase64)} alt="QR Code PIX" style={{ width: 140, height: 140 }} />
+                                </div>
+                              ) : null}
+                              {data.brCode ? <span className="field-hint">PIX: {text(data.brCode)}</span> : null}
+                              {data.barCode ? <span className="field-hint">Boleto: {text(data.barCode)}</span> : null}
+                              {data.url ? <a className="field-hint" href={text(data.url)} target="_blank" rel="noreferrer">Abrir boleto</a> : null}
+                            </div>
+                            {canFinanceCreate && payment.status === 'PENDING' && payment.provider === 'ABACATEPAY' ? (
+                              <button
+                                type="button"
+                                className="button small"
+                                disabled={receivableBusy}
+                                onClick={() => void syncChargePayment(String(payment.id))}
+                              >
+                                Atualizar status
+                              </button>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="modal-footer">
                   {canFinanceCreate && !['PAID', 'CANCELLED'].includes(String(selectedReceivable.status)) ? (
                     <button
@@ -498,6 +575,8 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                       className="button primary"
                       onClick={() => {
                         setReceiveTarget(selectedReceivable);
+                        setReceiveMode('receive');
+                        setChargePayment(null);
                         setReceiveForm({
                           amount: formatMoneyInputFromValue(selectedReceivable.outstandingAmount ?? selectedReceivable.netAmount),
                           method: 'PIX',
@@ -547,12 +626,21 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
           </Modal>
           <Modal
             open={Boolean(receiveTarget)}
-            title="Registrar recebimento"
+            title={receiveMode === 'charge' ? 'Gerar cobrança PIX/Boleto' : 'Registrar recebimento'}
             description={receiveTarget ? `${text(receiveTarget.description)} · saldo ${currency(receiveTarget.outstandingAmount ?? receiveTarget.netAmount)}` : undefined}
-            onClose={() => setReceiveTarget(null)}
+            onClose={() => { setReceiveTarget(null); setChargePayment(null); }}
             confirmOnClose
           >
             {receiveTarget ? (
+              chargePayment ? (
+                <ChargeDetails
+                  payment={chargePayment}
+                  busy={receivableBusy}
+                  error={error}
+                  onSync={() => void syncChargePayment(String(chargePayment.id))}
+                  onClose={() => { setReceiveTarget(null); setChargePayment(null); }}
+                />
+              ) : (
               <form className="mutation-form" onSubmit={(event) => void registerReceivablePayment(event)} key={String(receiveTarget.id)}>
                 <div className="info-grid span-2">
                   <div className="info-item"><small>Título</small><strong>{text(receiveTarget.description)}</strong></div>
@@ -560,6 +648,26 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   <div className="info-item"><small>Valor</small><strong>{currency(receiveTarget.netAmount)}</strong></div>
                   <div className="info-item"><small>Saldo</small><strong>{currency(receiveTarget.outstandingAmount ?? receiveTarget.netAmount)}</strong></div>
                 </div>
+                <label className="span-2">Operação
+                  <select
+                    value={receiveMode}
+                    onChange={(event) => {
+                      const next = event.target.value === 'charge' ? 'charge' : 'receive';
+                      setReceiveMode(next);
+                      if (next === 'charge' && !['PIX', 'BOLETO'].includes(receiveForm.method)) {
+                        setReceiveForm((prev) => ({ ...prev, method: 'PIX' }));
+                      }
+                    }}
+                  >
+                    <option value="receive">Registrar recebimento (já pago)</option>
+                    <option value="charge">Gerar cobrança PIX/Boleto (AbacatePay)</option>
+                  </select>
+                  <span className="field-hint">
+                    {receiveMode === 'charge'
+                      ? 'Cria PIX ou boleto no AbacatePay e mantém o título em aberto até o pagamento ser confirmado.'
+                      : 'Baixa imediata para dinheiro, cartão ou PIX já recebido na clínica.'}
+                  </span>
+                </label>
                 <label>Valor recebido
                   <UncontrolledMoneyInput
                     name="amount"
@@ -569,15 +677,22 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                 </label>
                 <label>Forma de pagamento
                   <select name="method" defaultValue={receiveForm.method} required>
-                    {PAYMENT_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}
+                    {(receiveMode === 'charge' ? CHARGE_METHODS : PAYMENT_METHODS).map((method) => (
+                      <option key={method.value} value={method.value}>{method.label}</option>
+                    ))}
                   </select>
                 </label>
                 {error ? <p className="form-error span-2" role="alert">{error}</p> : null}
                 <div className="modal-footer span-2">
-                  <button type="button" className="button" onClick={() => setReceiveTarget(null)}>Cancelar</button>
-                  <button className="button primary" disabled={receivableBusy}>{receivableBusy ? 'Registrando…' : 'Registrar recebimento'}</button>
+                  <button type="button" className="button" onClick={() => { setReceiveTarget(null); setChargePayment(null); }}>Cancelar</button>
+                  <button className="button primary" disabled={receivableBusy}>
+                    {receivableBusy
+                      ? (receiveMode === 'charge' ? 'Gerando…' : 'Registrando…')
+                      : (receiveMode === 'charge' ? 'Gerar cobrança' : 'Registrar recebimento')}
+                  </button>
                 </div>
               </form>
+              )
             ) : null}
           </Modal>
           <Panel
@@ -686,7 +801,22 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   <tbody>
                     {filteredReceivables.map((item) => (
                       <tr key={String(item.id)} onClick={() => setSelectedReceivable(item)} style={{ cursor: 'pointer' }}>
-                        <td>{text(item.description)}</td>
+                        <td>
+                          <div>{text(item.description)}</div>
+                          {(() => {
+                            const pix = list(item.payments as RecordValue[]).map((payment) => nested(payment, 'providerData')).find((data) => text(data.brCodeBase64) || text(data.brCode) || text(data.url));
+                            if (!pix) return null;
+                            return (
+                              <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+                                {text(pix.brCodeBase64) ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={text(pix.brCodeBase64)} alt="QR PIX" style={{ width: 56, height: 56 }} />
+                                ) : null}
+                                <span className="field-hint">{text(pix.brCode) ? 'PIX copia e cola disponível' : text(pix.url) ? 'Boleto disponível' : ''}</span>
+                              </div>
+                            );
+                          })()}
+                        </td>
                         <td>{dateOnly(item.dueDate)}</td>
                         <td>{currency(item.netAmount)}</td>
                         <td>{currency(item.outstandingAmount ?? item.netAmount)}</td>
@@ -702,6 +832,8 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                                 event.stopPropagation();
                                 setError('');
                                 setReceiveTarget(item);
+                                setReceiveMode('receive');
+                                setChargePayment(null);
                                 setReceiveForm({
                                   amount: formatMoneyInputFromValue(item.outstandingAmount ?? item.netAmount),
                                   method: 'PIX',
@@ -1300,5 +1432,75 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
         </Panel>
       )}
     </>
+  );
+}
+
+function ChargeDetails({
+  payment,
+  busy,
+  error,
+  onSync,
+  onClose,
+}: {
+  payment: RecordValue;
+  busy: boolean;
+  error: string;
+  onSync: () => void;
+  onClose: () => void;
+}) {
+  const data = nested(payment, 'providerData');
+  const brCode = text(data.brCode);
+  const qr = text(data.brCodeBase64);
+  const barCode = text(data.barCode);
+  const url = text(data.url);
+  return (
+    <div className="mutation-form">
+      <div className="info-grid span-2">
+        <div className="info-item"><small>Status</small><strong>{presentationLabel(payment.status)}</strong></div>
+        <div className="info-item"><small>Método</small><strong>{presentationLabel(payment.method)}</strong></div>
+        <div className="info-item"><small>Valor</small><strong>{currency(payment.amount)}</strong></div>
+        <div className="info-item"><small>Cobrança</small><strong>{text(data.chargeId, text(payment.externalId, '—'))}</strong></div>
+      </div>
+      {qr ? (
+        <div className="span-2" style={{ textAlign: 'center' }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={qr} alt="QR Code PIX" style={{ width: 220, height: 220, margin: '0 auto' }} />
+        </div>
+      ) : null}
+      {brCode ? (
+        <label className="span-2">PIX copia e cola
+          <textarea readOnly value={brCode} rows={3} />
+          <button
+            type="button"
+            className="button small"
+            onClick={() => void navigator.clipboard.writeText(brCode)}
+          >
+            Copiar código PIX
+          </button>
+        </label>
+      ) : null}
+      {barCode ? (
+        <label className="span-2">Linha digitável
+          <input readOnly value={barCode} />
+        </label>
+      ) : null}
+      {url ? (
+        <p className="span-2">
+          <a href={url} target="_blank" rel="noreferrer">Abrir boleto para impressão</a>
+        </p>
+      ) : null}
+      <p className="field-hint span-2">
+        Pagamentos confirmados automaticamente pelo webhook transparent.completed. Use “Atualizar status” se o webhook atrasar.
+      </p>
+      {error ? <p className="form-error span-2" role="alert">{error}</p> : null}
+      <div className="modal-footer span-2">
+        <button type="button" className="button" onClick={onClose}>Fechar</button>
+        {payment.status === 'PENDING' ? (
+          <button type="button" className="button primary" disabled={busy} onClick={onSync}>
+            {busy ? 'Consultando…' : 'Atualizar status'}
+          </button>
+        ) : null}
+      </div>
+    </div>
   );
 }

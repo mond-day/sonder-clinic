@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { formatBrazilianDate, formatCpfFull, formatCro } from '../../common/dates';
 
 export type DocumentStatus =
   | 'DRAFT'
@@ -88,6 +89,14 @@ export function stripClientIdentity(content: Record<string, unknown>): Record<st
   return next;
 }
 
+export function legalPatientCpf(identity: Record<string, unknown>, fallbackCpf?: string | null): string | undefined {
+  if (typeof identity.patientCpf === 'string' && identity.patientCpf.replace(/\D/g, '').length >= 11) {
+    return identity.patientCpf;
+  }
+  const formatted = formatCpfFull(fallbackCpf);
+  return formatted || undefined;
+}
+
 export function maskCpf(cpf?: string | null): string | null {
   if (!cpf) return null;
   const digits = cpf.replace(/\D/g, '');
@@ -97,25 +106,50 @@ export function maskCpf(cpf?: string | null): string | null {
 
 export function buildServerFrozenContent(input: {
   clinicalContent: Record<string, unknown>;
-  patient: { fullName: string; cpf?: string | null };
+  patient: { fullName: string; cpf?: string | null; street?: string | null; number?: string | null; district?: string | null; city?: string | null; state?: string | null };
   professional?: { name: string; croNumber?: string | null; croState?: string | null } | null;
-  clinic: { tradeName?: string | null; legalName?: string | null };
+  clinic: {
+    tradeName?: string | null;
+    legalName?: string | null;
+    taxId?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    city?: string | null;
+    address?: string | null;
+  };
   template: { id: string; name: string; type: string; version: number };
   generatedAt?: Date;
 }): Record<string, unknown> {
-  const clinical = stripClientIdentity(input.clinicalContent);
-  const cro = input.professional?.croNumber
-    ? `CRO/${input.professional.croState ?? '??'} ${input.professional.croNumber}`
-    : null;
+  const clinical = withCidInBody(stripClientIdentity(input.clinicalContent));
+  const cro = formatCro({
+    number: input.professional?.croNumber,
+    state: input.professional?.croState,
+  }) || null;
+  const patientAddress = [
+    [input.patient.street, input.patient.number].filter(Boolean).join(', '),
+    input.patient.district,
+    [input.patient.city, input.patient.state].filter(Boolean).join('/'),
+  ].filter((part) => part && String(part).trim()).join(' — ') || null;
+  const issuedAt = input.generatedAt ?? new Date();
   return {
     ...clinical,
     identity: {
       patientName: input.patient.fullName,
+      patientCpf: formatCpfFull(input.patient.cpf) || null,
       patientCpfMasked: maskCpf(input.patient.cpf),
+      patientAddress,
       professionalName: input.professional?.name ?? null,
       professionalCro: cro,
       clinicName: input.clinic.tradeName ?? input.clinic.legalName ?? null,
-      generatedAt: (input.generatedAt ?? new Date()).toISOString(),
+      clinicLegalName: input.clinic.legalName ?? null,
+      clinicTaxId: input.clinic.taxId ?? null,
+      clinicPhone: input.clinic.phone ?? null,
+      clinicEmail: input.clinic.email ?? null,
+      clinicAddress: input.clinic.address ?? null,
+      clinicCity: input.clinic.city ?? null,
+      issuedPlace: input.clinic.city ?? null,
+      generatedAt: issuedAt.toISOString(),
+      issuedAt: formatBrazilianDate(issuedAt.toISOString()),
     },
     template: {
       id: input.template.id,
@@ -184,6 +218,22 @@ export function assertDocumentMutable(status: DocumentStatus, archivedAt?: Date 
 
 export function assertTemplateEditable(status: DocumentTemplateStatus): void {
   if (status !== 'DRAFT') throw new Error('Somente rascunhos de modelo podem ser editados diretamente.');
+}
+
+export function formatCidCitation(content: Record<string, unknown>): string {
+  const code = String(content.cid ?? content.cidCode ?? '').trim();
+  if (!code) return '';
+  const description = String(content.cidDescription ?? '').trim();
+  return description ? `CID-10 ${code} — ${description}.` : `CID-10 ${code}.`;
+}
+
+export function withCidInBody(clinical: Record<string, unknown>): Record<string, unknown> {
+  const citation = formatCidCitation(clinical);
+  if (!citation) return clinical;
+  const corpo = String(clinical.corpo ?? '');
+  const code = String(clinical.cid ?? clinical.cidCode ?? '').trim();
+  if (code && corpo.includes(code)) return clinical;
+  return { ...clinical, corpo: corpo ? `${corpo}\n\n${citation}` : citation };
 }
 
 export function assertCidConsent(input: {

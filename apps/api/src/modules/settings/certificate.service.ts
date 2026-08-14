@@ -9,8 +9,27 @@ import forge from 'node-forge';
 const MAX_CERTIFICATE_BYTES = 5 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['.pfx', '.p12']);
 const CERTIFICATE_KIND = 'certificate-a1';
+const CERTIFICATE_KIND_PROFESSIONAL = 'certificate-a1-professional';
 const LEGACY_CERTIFICATE_ROOT = resolve(process.env.CERTIFICATE_LOCAL_PATH ?? '.data/certificates');
 const json = (value: unknown) => value as Prisma.InputJsonValue;
+
+export const PROFESSIONAL_ECPF_REQUIRED_MESSAGE =
+  'Vincule o e-CPF deste profissional em Configurações → Certificados';
+export const PROFESSIONAL_CPF_MISMATCH_MESSAGE =
+  'O CPF extraído do certificado não confere com o CPF do profissional. Use o e-CPF (A1) deste profissional.';
+
+export function assertProfessionalSigningCpf(
+  professionalCpf: string | null | undefined,
+  certificateCpf: string | null | undefined,
+) {
+  const expected = cpfDigits(professionalCpf);
+  if (expected.length !== 11) {
+    throw new BadRequestException('Cadastre o CPF do profissional antes de assinar com e-CPF.');
+  }
+  if (cpfDigits(certificateCpf) !== expected) {
+    throw new BadRequestException(PROFESSIONAL_CPF_MISMATCH_MESSAGE);
+  }
+}
 
 export type CertificateUpload = {
   originalname: string;
@@ -24,7 +43,23 @@ export type CertificateMetadata = {
   serialNumber: string;
   validFrom: string;
   validTo: string;
+  cpfDigits: string | null;
 };
+
+/** Extrai CPF (11 dígitos) do DN do PKCS#12 — sem validar ICP-Brasil. */
+export function extractCpfDigitsFromSubject(subject: string): string | null {
+  const cn = subject.match(/(?:^|,\s*)CN\s*=\s*([^,]+)/i)?.[1] ?? '';
+  const afterColon = cn.split(':').pop()?.replace(/\D/g, '') ?? '';
+  if (afterColon.length === 11) return afterColon;
+  const serial = subject.match(/(?:^|,\s*)(?:SERIALNUMBER|SN)\s*=\s*([^,]+)/i)?.[1]?.replace(/\D/g, '') ?? '';
+  if (serial.length === 11) return serial;
+  const eleven = subject.match(/(?:^|\D)(\d{11})(?:\D|$)/);
+  return eleven?.[1] ?? null;
+}
+
+function cpfDigits(value?: string | null) {
+  return String(value ?? '').replace(/\D/g, '');
+}
 
 @Injectable()
 export class CertificateService {
@@ -48,15 +83,16 @@ export class CertificateService {
         serialNumber: certificate.serialNumber,
         validFrom: certificate.validity.notBefore.toISOString(),
         validTo: certificate.validity.notAfter.toISOString(),
+        cpfDigits: extractCpfDigitsFromSubject(name(certificate.subject.attributes)),
       };
     } catch {
       throw new BadRequestException('Arquivo PKCS#12 inválido ou senha incorreta.');
     }
   }
 
-  async status(organizationId: string, clinicId: string) {
+  async status(organizationId: string, clinicId: string, professionalId?: string) {
     await this.assertClinic(organizationId, clinicId);
-    const file = await this.findActive(organizationId, clinicId);
+    const file = await this.findActive(organizationId, clinicId, professionalId);
     const metadata = (file?.metadata ?? {}) as Record<string, unknown>;
     return {
       configured: Boolean(file),
@@ -77,10 +113,46 @@ export class CertificateService {
       validFrom: metadata.validFrom,
       validTo: metadata.validTo,
       uploadedAt: file?.createdAt,
+      professionalId: professionalId ?? null,
+      kind: professionalId ? 'professional' : 'clinic',
+      cpfDigits: typeof metadata.cpfDigits === 'string' ? metadata.cpfDigits : null,
     };
   }
 
-  async replace(organizationId: string, clinicId: string, actorId: string, file: CertificateUpload, password: string) {
+  async listClinicCertificates(organizationId: string, clinicId: string) {
+    await this.assertClinic(organizationId, clinicId);
+    const clinic = await this.status(organizationId, clinicId);
+    const professionals = await prisma.professional.findMany({
+      where: {
+        user: { organizationId },
+        clinicLinks: { some: { clinicId, active: true } },
+      },
+      select: { id: true, name: true, cpf: true },
+      orderBy: { name: 'asc' },
+    });
+    const rows = await Promise.all(professionals.map(async (professional) => {
+      const cert = await this.status(organizationId, clinicId, professional.id);
+      return {
+        professionalId: professional.id,
+        professionalName: professional.name,
+        professionalCpf: professional.cpf,
+        configured: cert.configured,
+        subject: cert.subject,
+        validTo: cert.validTo,
+        cpfDigits: cert.cpfDigits,
+      };
+    }));
+    return { clinic, professionals: rows };
+  }
+
+  async replace(
+    organizationId: string,
+    clinicId: string,
+    actorId: string,
+    file: CertificateUpload,
+    password: string,
+    professionalId?: string,
+  ) {
     await this.assertClinic(organizationId, clinicId);
     if (!this.storage.enabled) {
       throw new BadRequestException(
@@ -94,6 +166,24 @@ export class CertificateService {
     if (!file.size || file.size > MAX_CERTIFICATE_BYTES) throw new BadRequestException('O certificado deve ter no máximo 5 MB.');
     const metadata = this.validatePkcs12(file.buffer, password);
 
+    let professionalCpf: string | null = null;
+    if (professionalId) {
+      const professional = await prisma.professional.findFirst({
+        where: { id: professionalId, user: { organizationId } },
+        select: { id: true, cpf: true, name: true },
+      });
+      if (!professional) throw new NotFoundException('Profissional não encontrado.');
+      professionalCpf = cpfDigits(professional.cpf);
+      if (professionalCpf.length !== 11) {
+        throw new BadRequestException('Cadastre o CPF do profissional antes de vincular o certificado e-CPF.');
+      }
+      if (!metadata.cpfDigits || metadata.cpfDigits !== professionalCpf) {
+        throw new BadRequestException(PROFESSIONAL_CPF_MISMATCH_MESSAGE);
+      }
+    }
+
+    const kind = professionalId ? CERTIFICATE_KIND_PROFESSIONAL : CERTIFICATE_KIND;
+
     let stored;
     try {
       stored = await this.storage.putObject({
@@ -104,8 +194,9 @@ export class CertificateService {
         body: file.buffer,
         keyPrefix: 'certificates',
         metadata: {
-          kind: CERTIFICATE_KIND,
+          kind,
           clinicId,
+          ...(professionalId ? { professionalId } : {}),
         },
       });
     } catch (error) {
@@ -116,7 +207,7 @@ export class CertificateService {
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
     try {
       const result = await prisma.$transaction(async (tx) => {
-        const previous = await this.findActiveMany(tx, organizationId, clinicId);
+        const previous = await this.findActiveMany(tx, organizationId, clinicId, professionalId);
         await tx.fileObject.updateMany({
           where: { id: { in: previous.map((item) => item.id) } },
           data: { status: 'REJECTED' },
@@ -137,7 +228,8 @@ export class CertificateService {
             createdById: actorId,
             metadata: json({
               clinicId,
-              kind: CERTIFICATE_KIND,
+              kind,
+              ...(professionalId ? { professionalId } : {}),
               storageDriver: stored.driver,
               ...metadata,
             }),
@@ -158,7 +250,7 @@ export class CertificateService {
         return { created, previous };
       });
       await Promise.all(result.previous.map((item) => this.safeDelete(item.bucket, item.objectKey)));
-      return this.status(organizationId, clinicId);
+      return this.status(organizationId, clinicId, professionalId);
     } catch (error) {
       await this.safeDelete(stored.bucket, stored.objectKey);
       throw error;
@@ -167,15 +259,40 @@ export class CertificateService {
 
   /**
    * Assina um payload com a chave privada do PKCS#12 armazenado.
+   * Assinatura de profissional usa somente o e-CPF vinculado — nunca o A1 da clínica.
    * Sem certificado válido/expirado → erro explícito (nunca simula sucesso).
    */
-  async signWithA1(organizationId: string, clinicId: string, payload: string) {
+  async signWithA1(organizationId: string, clinicId: string, payload: string, professionalId?: string) {
     await this.assertClinic(organizationId, clinicId);
-    const file = await this.findActive(organizationId, clinicId);
+    let expectedProfessionalCpf: string | null = null;
+    if (professionalId) {
+      const professional = await prisma.professional.findFirst({
+        where: { id: professionalId, user: { organizationId } },
+        select: { id: true, cpf: true },
+      });
+      if (!professional) throw new NotFoundException('Profissional não encontrado.');
+      expectedProfessionalCpf = cpfDigits(professional.cpf);
+      if (expectedProfessionalCpf.length !== 11) {
+        throw new BadRequestException('Cadastre o CPF do profissional antes de assinar com e-CPF.');
+      }
+    }
+    const file = professionalId
+      ? await this.findActive(organizationId, clinicId, professionalId)
+      : await this.findActive(organizationId, clinicId);
     if (!file) {
-      throw new BadRequestException('Certificado A1 não configurado para esta clínica.');
+      throw new BadRequestException(
+        professionalId
+          ? PROFESSIONAL_ECPF_REQUIRED_MESSAGE
+          : 'Certificado A1 não configurado para esta clínica.',
+      );
     }
     const metadata = (file.metadata ?? {}) as Record<string, unknown>;
+    if (professionalId) {
+      const kind = metadata.kind;
+      if (kind && kind !== CERTIFICATE_KIND_PROFESSIONAL) {
+        throw new BadRequestException(PROFESSIONAL_ECPF_REQUIRED_MESSAGE);
+      }
+    }
     const validTo = metadata.validTo ? new Date(String(metadata.validTo)) : null;
     if (validTo && Number.isFinite(validTo.getTime()) && validTo.getTime() < Date.now()) {
       throw new BadRequestException('Certificado A1 expirado. Faça o upload de um certificado válido.');
@@ -216,13 +333,22 @@ export class CertificateService {
       if (!privateKey || !certificate) {
         throw new Error('Chave ou certificado ausente no PKCS#12');
       }
+      const subjectName = certificate.subject.attributes
+        .map((item) => `${item.shortName ?? item.name ?? 'OID'}=${item.value}`)
+        .join(', ');
+      if (expectedProfessionalCpf) {
+        assertProfessionalSigningCpf(
+          expectedProfessionalCpf,
+          extractCpfDigitsFromSubject(subjectName) ?? (typeof metadata.cpfDigits === 'string' ? metadata.cpfDigits : null),
+        );
+      }
       const md = forge.md.sha256.create();
       md.update(payload, 'utf8');
       const signature = forge.util.encode64((privateKey as forge.pki.rsa.PrivateKey).sign(md));
       return {
         algorithm: 'SHA256withRSA',
         signature,
-        subject: String(metadata.subject ?? ''),
+        subject: String(metadata.subject ?? subjectName),
         serialNumber: String(metadata.serialNumber ?? certificate.serialNumber),
         validTo: metadata.validTo ? String(metadata.validTo) : certificate.validity.notAfter.toISOString(),
       };
@@ -232,9 +358,9 @@ export class CertificateService {
     }
   }
 
-  async remove(organizationId: string, clinicId: string, actorId: string) {
+  async remove(organizationId: string, clinicId: string, actorId: string, professionalId?: string) {
     await this.assertClinic(organizationId, clinicId);
-    const files = await this.findActiveMany(prisma, organizationId, clinicId);
+    const files = await this.findActiveMany(prisma, organizationId, clinicId, professionalId);
     if (!files.length) throw new NotFoundException('Certificado não encontrado.');
     await prisma.$transaction([
       prisma.fileObject.updateMany({
@@ -247,17 +373,17 @@ export class CertificateService {
           action: 'certificate.removed',
           entity: 'FileObject',
           clinicId,
-          changes: { removed: true },
+          changes: { unlinked: true, keptStorage: true, fileIds: files.map((item) => item.id) },
           correlationId: randomUUID(),
         },
       }),
     ]);
-    await Promise.all(files.map((item) => this.safeDelete(item.bucket, item.objectKey)));
+    // Desvincula para novas assinaturas; mantém o PKCS#12 para evidência histórica.
     return { success: true };
   }
 
-  private async findActive(organizationId: string, clinicId: string) {
-    const rows = await this.findActiveMany(prisma, organizationId, clinicId);
+  private async findActive(organizationId: string, clinicId: string, professionalId?: string) {
+    const rows = await this.findActiveMany(prisma, organizationId, clinicId, professionalId);
     return rows[0] ?? null;
   }
 
@@ -265,23 +391,36 @@ export class CertificateService {
     client: { fileObject: { findMany: typeof prisma.fileObject.findMany } },
     organizationId: string,
     clinicId: string,
+    professionalId?: string,
   ) {
+    const kind = professionalId ? CERTIFICATE_KIND_PROFESSIONAL : CERTIFICATE_KIND;
     return client.fileObject.findMany({
       where: {
         organizationId,
         status: 'AVAILABLE',
-        OR: [
-          {
-            AND: [
-              { metadata: { path: ['clinicId'], equals: clinicId } },
-              { metadata: { path: ['kind'], equals: CERTIFICATE_KIND } },
-            ],
-          },
-          {
-            bucket: 'certificates',
-            metadata: { path: ['clinicId'], equals: clinicId },
-          },
-        ],
+        OR: professionalId
+          ? [
+            {
+              AND: [
+                { metadata: { path: ['clinicId'], equals: clinicId } },
+                { metadata: { path: ['kind'], equals: kind } },
+                { metadata: { path: ['professionalId'], equals: professionalId } },
+              ],
+            },
+          ]
+          : [
+            {
+              AND: [
+                { metadata: { path: ['clinicId'], equals: clinicId } },
+                { metadata: { path: ['kind'], equals: CERTIFICATE_KIND } },
+              ],
+            },
+            {
+              bucket: 'certificates',
+              metadata: { path: ['clinicId'], equals: clinicId },
+              NOT: { metadata: { path: ['kind'], equals: CERTIFICATE_KIND_PROFESSIONAL } },
+            },
+          ],
       },
       select: { id: true, bucket: true, objectKey: true, metadata: true, createdAt: true },
       orderBy: { createdAt: 'desc' },

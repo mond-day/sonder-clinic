@@ -70,7 +70,6 @@ export function PrescriptionEditor({
   const [items, setItems] = useState<DraftPrescriptionItem[]>([]);
   const [notes, setNotes] = useState('');
   const [formError, setFormError] = useState('');
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [savingProtocol, setSavingProtocol] = useState(false);
   const [protocolName, setProtocolName] = useState('');
@@ -84,7 +83,6 @@ export function PrescriptionEditor({
     setItems([]);
     setNotes('');
     setFormError('');
-    setPickerOpen(false);
     setFocusKey(null);
     setSavingProtocol(false);
     setProtocolName('');
@@ -106,7 +104,6 @@ export function PrescriptionEditor({
     const next = blankPrescriptionItem(kind);
     setItems((current) => [...current, next]);
     setFocusKey(next.key);
-    setPickerOpen(false);
   }
 
   function cleanItems(): PrescriptionItem[] {
@@ -242,19 +239,20 @@ export function PrescriptionEditor({
           <button
             type="button"
             className="button soft small"
-            onClick={() => setPickerOpen((current) => !current)}
+            onClick={() => addKind('medication')}
           >
-            ＋ Adicionar à prescrição
+            ＋ Adicionar medicamento
           </button>
         </div>
 
-        {pickerOpen ? (
-          <div className="span-2 exam-picker-grid" role="listbox" aria-label="Tipo de item da prescrição">
-            <button type="button" className="button" onClick={() => addKind('medication')}>Medicamento</button>
-            <button type="button" className="button" onClick={() => addKind('exam')}>Exame</button>
-            <button type="button" className="button" onClick={() => addKind('free_text')}>Texto livre</button>
-          </div>
-        ) : null}
+        <div className="span-2 rx-extra-kinds">
+          <button type="button" className="button ghost small" onClick={() => addKind('exam')}>
+            Incluir exame nesta receita
+          </button>
+          <button type="button" className="button ghost small" onClick={() => addKind('free_text')}>
+            Incluir orientação
+          </button>
+        </div>
 
         <div className="span-2">
           {items.length === 0 ? (

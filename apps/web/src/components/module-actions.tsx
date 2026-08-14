@@ -15,8 +15,10 @@ import {
   phoneDigits,
 } from '@/lib/format';
 import { lookupViaCep } from '@/lib/via-cep';
+import { notifyBrandingUpdated } from '@/lib/branding';
 import type { Clinic, Professional } from './selection-provider';
 import { SearchableSelect } from './searchable-select';
+import { MultiSelect } from './multi-select';
 import { Disclosure, StatusBadge } from './ui';
 import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-inputs';
 
@@ -105,22 +107,89 @@ const legalSchema = z.object({
 });
 const integrationProviders = ['NIBO', 'ABACATEPAY', 'EVOLUTION', 'CHATWOOT', 'GOOGLE_CALENDAR', 'OPENAI'] as const;
 type IntegrationProvider = (typeof integrationProviders)[number];
-const integrationFields: Record<IntegrationProvider, Array<{ key: string; label: string; secret?: boolean; type?: string }>> = {
-  NIBO: [{ key: 'clientId', label: 'ID do cliente' }, { key: 'clientSecret', label: 'Segredo do cliente', secret: true }, { key: 'token', label: 'Token', secret: true }, { key: 'organizationId', label: 'Organização' }, { key: 'accountId', label: 'Conta' }],
-  ABACATEPAY: [{ key: 'apiKey', label: 'Chave de acesso', secret: true }, { key: 'webhookSecret', label: 'Segredo de confirmação', secret: true }, { key: 'environment', label: 'Ambiente' }],
-  EVOLUTION: [{ key: 'baseUrl', label: 'Endereço do serviço', type: 'url' }, { key: 'apiKey', label: 'Chave de acesso', secret: true }, { key: 'instanceName', label: 'Nome da instância' }, { key: 'webhookUrl', label: 'URL de retorno', type: 'url' }],
-  CHATWOOT: [{ key: 'baseUrl', label: 'Endereço do serviço', type: 'url' }, { key: 'accountId', label: 'ID da conta' }, { key: 'inboxId', label: 'ID da caixa de entrada' }, { key: 'apiToken', label: 'Token de acesso', secret: true }, { key: 'webhookSecret', label: 'Segredo de confirmação', secret: true }],
-  GOOGLE_CALENDAR: [{ key: 'clientId', label: 'ID do cliente' }, { key: 'clientSecret', label: 'Segredo do cliente', secret: true }],
-  OPENAI: [{ key: 'provider', label: 'Provedor' }, { key: 'apiKey', label: 'Chave de acesso', secret: true }, { key: 'model', label: 'Modelo' }],
+const CREDENTIAL_PLACEHOLDER = '••••••••';
+const integrationProviderLabels: Record<IntegrationProvider, string> = {
+  NIBO: 'Nibo',
+  ABACATEPAY: 'AbacatePay',
+  EVOLUTION: 'Evolution (WhatsApp)',
+  CHATWOOT: 'Chatwoot',
+  GOOGLE_CALENDAR: 'Google Agenda',
+  OPENAI: 'OpenAI',
+};
+const OPENAI_MODELS = [
+  { value: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+  { value: 'gpt-4.1', label: 'gpt-4.1' },
+  { value: 'gpt-4.1-nano', label: 'gpt-4.1-nano' },
+  { value: 'gpt-4o-mini', label: 'gpt-4o-mini (padrão)' },
+  { value: 'gpt-4o', label: 'gpt-4o' },
+  { value: 'o4-mini', label: 'o4-mini' },
+] as const;
+const integrationFields: Record<IntegrationProvider, Array<{
+  key: string;
+  label: string;
+  secret?: boolean;
+  type?: string;
+  hint?: string;
+  required?: boolean;
+  options?: ReadonlyArray<{ value: string; label: string }>;
+}>> = {
+  NIBO: [
+    { key: 'apiKey', label: 'API Key', secret: true, hint: 'Única credencial exigida pelo Nibo.' },
+  ],
+  ABACATEPAY: [
+    { key: 'apiKey', label: 'Chave de acesso', secret: true, hint: 'Bearer token da AbacatePay (API v2).' },
+    { key: 'webhookSecret', label: 'Segredo de webhook', secret: true, required: false, hint: 'Opcional. Cadastre POST {API}/integrations/abacatepay/webhook?webhookSecret=SEU_SEGREDO no dashboard. “Atualizar status” continua disponível como fallback.' },
+    { key: 'baseUrl', label: 'URL da API', type: 'url', required: false, hint: 'Padrão: https://api.abacatepay.com/v2' },
+  ],
+  EVOLUTION: [
+    { key: 'baseUrl', label: 'Endereço do serviço', type: 'url' },
+    { key: 'apiKey', label: 'Chave de acesso', secret: true },
+    { key: 'instanceName', label: 'Nome da instância' },
+    { key: 'webhookUrl', label: 'URL de retorno', type: 'url', required: false },
+  ],
+  CHATWOOT: [
+    { key: 'baseUrl', label: 'Endereço do serviço', type: 'url', hint: 'Ex.: https://app.chatwoot.com' },
+    { key: 'accountId', label: 'ID da conta', hint: 'account_id numérico da Application API.' },
+    { key: 'inboxId', label: 'ID da caixa de entrada', required: false, hint: 'Necessário para envio (inbox WhatsApp ou API).' },
+    { key: 'apiToken', label: 'Token de acesso', secret: true, hint: 'api_access_token do perfil.' },
+    { key: 'webhookSecret', label: 'Segredo de confirmação', secret: true, required: false },
+  ],
+  GOOGLE_CALENDAR: [
+    { key: 'clientId', label: 'ID do cliente' },
+    { key: 'clientSecret', label: 'Segredo do cliente', secret: true },
+  ],
+  OPENAI: [
+    { key: 'apiKey', label: 'Chave de acesso', secret: true },
+    { key: 'model', label: 'Modelo', required: false, type: 'select', hint: 'Opcional. Vazio usa o padrão do sistema.', options: OPENAI_MODELS },
+  ],
 };
 const providerCredentialKeys: Record<IntegrationProvider, string[]> = {
-  NIBO: ['clientId', 'clientSecret', 'token', 'organizationId', 'accountId'],
+  NIBO: ['apiKey'],
   ABACATEPAY: ['apiKey', 'webhookSecret'],
   EVOLUTION: ['apiKey', 'instanceName'],
   CHATWOOT: ['apiToken', 'webhookSecret'],
   GOOGLE_CALENDAR: ['clientId', 'clientSecret'],
   OPENAI: ['apiKey'],
 };
+
+function niboIdList(config: Record<string, unknown> | undefined, arrayKey: string, singularKey: string): string[] {
+  const raw = config?.[arrayKey];
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  const one = config?.[singularKey];
+  if (typeof one === 'string' && one.trim()) return [one.trim()];
+  return [];
+}
+
+function niboOptions(
+  rows: Array<{ id: string; name: string }>,
+  selectedIds: string[],
+) {
+  const map = new Map(rows.map((row) => [row.id, row.name]));
+  for (const id of selectedIds) {
+    if (id && !map.has(id)) map.set(id, id);
+  }
+  return [...map.entries()].map(([value, label]) => ({ value, label }));
+}
 
 function fields(form: HTMLFormElement) {
   return new FormData(form);
@@ -146,7 +215,7 @@ function MutationPanel({ title, description, children, message, error }: {
   return <section className="panel mutation-panel"><header className="panel-header"><div><h2>{title}</h2><p>{description}</p></div></header>{children}{message && <p className="form-success" role="status">{message}</p>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
-export function ModuleActions({ module, clinicId, clinics, professionals, patients, selectedPatientId, defaultPatientId, onPatientChange, onSaved, configurationKind, initialIntegrationProvider }: {
+export function ModuleActions({ module, clinicId, clinics, professionals, patients, selectedPatientId, defaultPatientId, onPatientChange, onSaved, configurationKind, initialIntegrationProvider, initialIntegration }: {
   module: ModuleKey;
   clinicId: string;
   clinics: Clinic[];
@@ -158,6 +227,11 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   onSaved(): void;
   configurationKind?: 'branding' | 'legal' | 'integration';
   initialIntegrationProvider?: string;
+  initialIntegration?: {
+    id?: string;
+    credentialsConfigured?: boolean;
+    configuration?: Record<string, unknown>;
+  };
 }) {
   const clinic = clinics.find((item) => item.id === clinicId);
   const [message, setMessage] = useState('');
@@ -168,7 +242,16 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [patientToEdit, setPatientToEdit] = useState(selectedPatientId);
   const [resourceRevision, setResourceRevision] = useState(0);
   const [integrationProvider, setIntegrationProvider] = useState<IntegrationProvider>('NIBO');
-  const [brandingUrls, setBrandingUrls] = useState<{ logoUrl?: string; faviconUrl?: string }>({});
+  const [brandingUrls, setBrandingUrls] = useState<{ logoUrl?: string; faviconUrl?: string; name?: string; subtitle?: string; primaryColor?: string }>({});
+  const [niboCatalog, setNiboCatalog] = useState<{
+    categories: Array<{ id: string; name: string }>;
+    costCenters: Array<{ id: string; name: string }>;
+    source?: string;
+    message?: string;
+  } | null>(null);
+  const [niboCategoryIds, setNiboCategoryIds] = useState<string[]>([]);
+  const [niboCostCenterIds, setNiboCostCenterIds] = useState<string[]>([]);
+  const [niboTesting, setNiboTesting] = useState(false);
   const [patientIsMinor, setPatientIsMinor] = useState(false);
   const [guardianDisclosureOpen, setGuardianDisclosureOpen] = useState(false);
   const [birthDate, setBirthDate] = useState('');
@@ -270,12 +353,77 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
     if (module === 'integracoes' && (!configurationKind || configurationKind === 'branding')) {
       api.get<Item>(`/settings/branding?clinicId=${clinicId}`)
         .then((branding) => setBrandingUrls({
+          name: branding.name ? String(branding.name) : undefined,
+          subtitle: branding.subtitle ? String(branding.subtitle) : undefined,
+          primaryColor: branding.primaryColor ? String(branding.primaryColor) : undefined,
           logoUrl: branding.logoUrl ? String(branding.logoUrl) : undefined,
           faviconUrl: branding.faviconUrl ? String(branding.faviconUrl) : undefined,
         }))
         .catch(() => setBrandingUrls({}));
     }
   }, [module, clinicId, resourceRevision, configurationKind]);
+
+  useEffect(() => {
+    const cfg = initialIntegration?.configuration ?? {};
+    setNiboCategoryIds(niboIdList(cfg, 'receivableCategoryIds', 'receivableCategoryId'));
+    setNiboCostCenterIds(niboIdList(cfg, 'costCenterIds', 'costCenterId'));
+  }, [initialIntegration?.id]);
+
+  useEffect(() => {
+    if (configurationKind !== 'integration' || integrationProvider !== 'NIBO') {
+      setNiboCatalog(null);
+    }
+  }, [configurationKind, integrationProvider]);
+
+  async function testNiboConnection() {
+    if (!initialIntegration?.id) {
+      setMessage('');
+      setError('Salve a API Key do Nibo antes de testar a conexão.');
+      return;
+    }
+    setNiboTesting(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await api.post<{ success?: boolean; message?: string }>(
+        `/integrations/${initialIntegration.id}/test-connection`,
+        {},
+      );
+      if (!result.success) {
+        setNiboCatalog({
+          categories: [],
+          costCenters: [],
+          source: 'unavailable',
+          message: result.message ?? 'Falha ao testar a conexão Nibo.',
+        });
+        setError(result.message ?? 'Falha ao testar a conexão Nibo.');
+        return;
+      }
+      setMessage(result.message ?? 'Conexão Nibo confirmada.');
+      const payload = await api.get<{
+        categories?: Array<{ id: string; name: string }>;
+        costCenters?: Array<{ id: string; name: string }>;
+        source?: string;
+        message?: string;
+      }>(`/integrations/${initialIntegration.id}/nibo/catalog`);
+      const categories = payload.categories ?? [];
+      const costCenters = payload.costCenters ?? [];
+      setNiboCatalog({
+        categories,
+        costCenters,
+        source: payload.source,
+        message: payload.message,
+      });
+      if (!categories.length && !costCenters.length) {
+        setError(payload.message ?? 'Conexão ok, mas não foi possível listar categorias e centros de custo.');
+      }
+    } catch (cause) {
+      setNiboCatalog({ categories: [], costCenters: [], source: 'unavailable' });
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível testar a conexão Nibo.');
+    } finally {
+      setNiboTesting(false);
+    }
+  }
 
   async function run(task: () => Promise<unknown>, success: string, form?: HTMLFormElement) {
     setBusy(true); setError(''); setMessage('');
@@ -762,7 +910,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   if (module === 'integracoes') {
     return <MutationPanel title="Configurações seguras" description="Credenciais são salvas de forma segura e não podem ser visualizadas novamente em texto aberto." message={message} error={error}>
       {(!configurationKind || configurationKind === 'branding') && (
-      <form className="mutation-form compact" encType="multipart/form-data" onSubmit={(event) => {
+      <form className="mutation-form compact" key={`branding-${brandingUrls.name ?? ''}-${brandingUrls.subtitle ?? ''}-${brandingUrls.primaryColor ?? ''}`} encType="multipart/form-data" onSubmit={(event) => {
         event.preventDefault();
         const form = event.currentTarget;
         const data = fields(form);
@@ -795,11 +943,12 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             faviconUrl,
           });
           await api.put('/settings/branding', { clinicId, ...parsed });
+          notifyBrandingUpdated(clinicId);
         }, 'Branding salvo.', form);
       }}>
-        <label>Nome<input name="name" defaultValue={clinic?.tradeName} required /></label>
-        <label>Subtítulo<input name="subtitle" defaultValue="Clinic" /></label>
-        <label>Cor principal<input name="primaryColor" type="color" defaultValue="#176b5b" /></label>
+        <label>Nome<input name="name" defaultValue={brandingUrls.name ?? ''} required /></label>
+        <label>Subtítulo<input name="subtitle" defaultValue={brandingUrls.subtitle ?? ''} /></label>
+        <label>Cor principal<input name="primaryColor" type="color" defaultValue={brandingUrls.primaryColor ?? '#176b5b'} /></label>
         <label>Logo
           <input type="file" accept="image/*" name="logoFile" />
           <input type="hidden" name="logoUrl" defaultValue={brandingUrls.logoUrl ?? ''} />
@@ -829,20 +978,131 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
       <form className="mutation-form compact" autoComplete="off" onSubmit={(event) => {
         event.preventDefault(); const data = fields(event.currentTarget);
         const credentials: Record<string, string> = {};
-        const configuration: Record<string, string> = {};
+        const configuration: Record<string, unknown> = {};
+        const keepExisting = Boolean(initialIntegration?.credentialsConfigured);
         integrationFields[integrationProvider].forEach((field) => {
           const value = String(data.get(field.key) ?? '').trim();
-          if (providerCredentialKeys[integrationProvider].includes(field.key)) credentials[field.key] = value;
-          else configuration[field.key] = value;
+          if (providerCredentialKeys[integrationProvider].includes(field.key)) {
+            if (value && value !== CREDENTIAL_PLACEHOLDER) credentials[field.key] = value;
+          } else if (value) {
+            configuration[field.key] = value;
+          }
         });
-        void run(() => api.post('/integrations', { clinicId, provider: integrationProvider, credentials, configuration }), 'Credenciais salvas com segurança.', event.currentTarget);
+        if (integrationProvider === 'NIBO') {
+          const categoryNameById = new Map((niboCatalog?.categories ?? []).map((row) => [row.id, row.name]));
+          const costCenterNameById = new Map((niboCatalog?.costCenters ?? []).map((row) => [row.id, row.name]));
+          configuration.receivableCategoryIds = niboCategoryIds;
+          configuration.costCenterIds = niboCostCenterIds;
+          if (niboCategoryIds[0]) {
+            configuration.receivableCategoryId = niboCategoryIds[0];
+            configuration.receivableCategoryName = categoryNameById.get(niboCategoryIds[0]) ?? '';
+          }
+          if (niboCostCenterIds[0]) {
+            configuration.costCenterId = niboCostCenterIds[0];
+            configuration.costCenterName = costCenterNameById.get(niboCostCenterIds[0]) ?? '';
+          }
+        }
+        void run(() => api.post('/integrations', {
+          clinicId,
+          provider: integrationProvider,
+          credentials,
+          configuration,
+          keepExistingCredentials: keepExisting,
+        }), 'Credenciais salvas com segurança.', event.currentTarget);
       }}>
-        <SearchableSelect name="provider" label="Provedor" value={integrationProvider} onChange={(value) => setIntegrationProvider(value as IntegrationProvider)} options={integrationProviders.map((provider) => ({ value: provider, label: provider === 'GOOGLE_CALENDAR' ? 'Google Agenda' : provider }))} />
-        {integrationFields[integrationProvider].map((field) => (
-          <label key={field.key}>{field.label}<input name={field.key} type={field.secret ? 'password' : field.type ?? 'text'} autoComplete={field.secret ? 'new-password' : 'off'} required /></label>
-        ))}
-        <p className="muted-note span-2">Campos do provedor selecionado. As credenciais ficam protegidas após salvar; troque o provedor acima para ver o formulário correspondente.</p>
-        <button className="button primary" disabled={busy}>Salvar integração</button>
+        <SearchableSelect
+          name="provider"
+          label="Provedor"
+          value={integrationProvider}
+          onChange={(value) => setIntegrationProvider(value as IntegrationProvider)}
+          options={integrationProviders.map((provider) => ({ value: provider, label: integrationProviderLabels[provider] }))}
+        />
+        {integrationFields[integrationProvider].map((field) => {
+          const existingConfig = initialIntegration?.configuration ?? {};
+          const configuredSecret = Boolean(field.secret && initialIntegration?.credentialsConfigured);
+          const required = field.required !== false && !configuredSecret;
+          const defaultValue = field.secret
+            ? (configuredSecret ? CREDENTIAL_PLACEHOLDER : '')
+            : String(existingConfig[field.key] ?? '');
+          if (field.type === 'select' || field.options) {
+            return (
+              <label key={field.key} className={field.hint ? 'span-2' : undefined}>
+                {field.label}
+                <select name={field.key} defaultValue={defaultValue}>
+                  <option value="">Padrão do sistema</option>
+                  {(field.options ?? []).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                {field.hint ? <span className="field-hint">{field.hint}</span> : null}
+              </label>
+            );
+          }
+          return (
+            <label key={field.key} className={field.hint ? 'span-2' : undefined}>
+              {field.label}
+              <input
+                name={field.key}
+                type={field.secret ? 'password' : field.type ?? 'text'}
+                autoComplete={field.secret ? 'new-password' : 'off'}
+                required={required}
+                placeholder={configuredSecret ? 'Mantém a credencial já salva' : undefined}
+                defaultValue={defaultValue}
+              />
+              {field.hint ? <span className="field-hint">{field.hint}</span> : null}
+              {configuredSecret ? <span className="field-hint">Deixe em branco para manter a credencial protegida já salva.</span> : null}
+            </label>
+          );
+        })}
+        {integrationProvider === 'NIBO' ? (
+          <>
+            <div className="span-2">
+              <MultiSelect
+                name="receivableCategoryIds"
+                label="Categorias de recebíveis no Nibo"
+                options={niboOptions(niboCatalog?.categories ?? [], niboCategoryIds)}
+                values={niboCategoryIds}
+                onChange={setNiboCategoryIds}
+                disabled={!niboCatalog?.categories.length}
+                placeholder={niboCatalog?.categories.length ? 'Selecionar categorias…' : 'Teste a conexão para carregar categorias'}
+              />
+              <span className="field-hint">
+                {niboCatalog?.message
+                  || 'Mapeie as categorias financeiras usadas nos títulos a receber sincronizados.'}
+              </span>
+            </div>
+            <div className="span-2">
+              <MultiSelect
+                name="costCenterIds"
+                label="Centros de custo no Nibo"
+                options={niboOptions(niboCatalog?.costCenters ?? [], niboCostCenterIds)}
+                values={niboCostCenterIds}
+                onChange={setNiboCostCenterIds}
+                disabled={!niboCatalog?.costCenters.length}
+                placeholder={niboCatalog?.costCenters.length ? 'Selecionar centros de custo…' : 'Teste a conexão para carregar centros de custo'}
+              />
+              <span className="field-hint">Usado para classificar pagamentos e recebimentos no Nibo.</span>
+            </div>
+          </>
+        ) : null}
+        <p className="muted-note span-2">
+          Formulário específico de {integrationProviderLabels[integrationProvider]}. Credenciais não voltam a ser exibidas depois de salvas.
+        </p>
+        <div className="form-actions span-2">
+          {integrationProvider === 'NIBO' ? (
+            <button
+              className="button"
+              type="button"
+              disabled={busy || niboTesting}
+              onClick={() => void testNiboConnection()}
+            >
+              {niboTesting ? 'Testando…' : 'Testar conexão'}
+            </button>
+          ) : null}
+          <button className="button primary" disabled={busy || niboTesting}>
+            {busy ? 'Salvando…' : 'Salvar integração'}
+          </button>
+        </div>
       </form>
       )}
     </MutationPanel>;
