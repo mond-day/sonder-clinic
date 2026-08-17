@@ -35,6 +35,10 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: "4000"
+      TZ: ${TZ:-America/Cuiaba}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       DATABASE_URL: ${DATABASE_URL:?Defina DATABASE_URL}
       REDIS_URL: ${REDIS_URL:?Defina REDIS_URL}
       S3_ENDPOINT: ${S3_ENDPOINT:?Defina S3_ENDPOINT}
@@ -81,6 +85,10 @@ services:
     image: ${WORKER_IMAGE:-ghcr.io/mond-day/sonder-clinic-worker:1.0.0}
     environment:
       NODE_ENV: production
+      TZ: ${TZ:-America/Cuiaba}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       DATABASE_URL: ${DATABASE_URL:?Defina DATABASE_URL}
       REDIS_URL: ${REDIS_URL:?Defina REDIS_URL}
       S3_ENDPOINT: ${S3_ENDPOINT:?Defina S3_ENDPOINT}

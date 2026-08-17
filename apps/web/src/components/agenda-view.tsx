@@ -494,7 +494,7 @@ export function AgendaView() {
     if (personal && !options?.allowPersonalWarning) {
       return {
         blocked: false,
-        personalMessage: personal.message || 'Há um evento pessoal do Google neste horário. Você pode continuar mesmo assim.',
+        personalMessage: personal.message || 'Há um evento do Google neste horário. Você pode continuar mesmo assim.',
       };
     }
     return { blocked: false };
@@ -639,7 +639,7 @@ export function AgendaView() {
         ))}
       </select>
       {personalCalendarAvailable ? (
-        <label className="check-field compact filter-toggle" title="Exibe eventos pessoais do Google Agenda conectado">
+        <label className="check-field compact filter-toggle" title="Exibe eventos do Google Agenda da clínica e dos profissionais conectados">
           <input
             type="checkbox"
             checked={showPersonalCalendar}
@@ -1246,8 +1246,12 @@ export function AgendaView() {
                           };
 
                           if (isPersonal) {
-                            const summary = text(item.summary, 'Evento pessoal');
-                            const label = `${timeOnly(item.startAt)} · Pessoal · ${summary}`;
+                            const ownerLabel = text(
+                              item.calendarOwnerName,
+                              text(item.calendarOwner) === 'clinic' ? 'Clínica' : 'Profissional',
+                            );
+                            const summary = text(item.summary, 'Evento do Google');
+                            const label = `${timeOnly(item.startAt)} · ${ownerLabel} · ${summary}`;
                             return (
                               <div
                                 key={`personal-${String(item.id)}`}
@@ -1256,9 +1260,9 @@ export function AgendaView() {
                                 aria-label={label}
                                 style={style}
                               >
-                                <small>{isCompact ? `${timeOnly(item.startAt)} · Pessoal` : `${timeOnly(item.startAt)} · Google`}</small>
+                                <small>{`${timeOnly(item.startAt)} · ${ownerLabel}`}</small>
                                 <strong className={isCompact ? 'event-secondary' : undefined}>{summary}</strong>
-                                <span className="event-extra">Agenda pessoal</span>
+                                <span className="event-extra">{ownerLabel}</span>
                               </div>
                             );
                           }
@@ -1348,7 +1352,7 @@ export function AgendaView() {
           {showPersonalCalendar ? (
             <span>
               <i className="legend-swatch personal" />
-              Agenda pessoal (Google)
+              Google Agenda
             </span>
           ) : null}
         </div>

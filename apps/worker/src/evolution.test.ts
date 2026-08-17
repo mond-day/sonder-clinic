@@ -28,10 +28,13 @@ describe('Evolution adapter', () => {
       baseUrl: 'https://env-evo',
       apiKey: 'env-secret',
       instance: 'env-instance',
+      delayMs: 1500,
+      minIntervalMs: 4000,
     });
   });
 
-  it('envia texto pelo endpoint v2 sem expor a chave no corpo', async () => {
+  it('envia texto pelo endpoint v2 com delay e sem expor a chave no corpo', async () => {
+    vi.stubEnv('EVOLUTION_MIN_INTERVAL_MS', '0');
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -40,6 +43,8 @@ describe('Evolution adapter', () => {
         baseUrl: 'https://evolution.local/',
         apiKey: 'secret',
         instance: 'sonder clinic',
+        delayMs: 1500,
+        minIntervalMs: 0,
       },
       '5565999999999',
       'Lembrete',
@@ -50,7 +55,7 @@ describe('Evolution adapter', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ apikey: 'secret' }),
-        body: JSON.stringify({ number: '5565999999999', text: 'Lembrete' }),
+        body: JSON.stringify({ number: '5565999999999', text: 'Lembrete', delay: 1500 }),
       }),
     );
   });

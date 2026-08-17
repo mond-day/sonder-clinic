@@ -1,7 +1,7 @@
 {
   "name": "sonder-clinic",
   "private": true,
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "ERP Odontológico Interno — Sonder Clinic",
   "packageManager": "pnpm@9.15.0",
   "engines": {

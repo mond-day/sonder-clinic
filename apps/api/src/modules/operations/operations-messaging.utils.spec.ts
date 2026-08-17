@@ -32,6 +32,8 @@ describe('resolveEvolutionConfig', () => {
       baseUrl: 'https://evo.local',
       apiKey: 'k',
       instance: 'clinic',
+      delayMs: 1500,
+      minIntervalMs: 4000,
     });
   });
 
@@ -43,6 +45,8 @@ describe('resolveEvolutionConfig', () => {
       baseUrl: 'https://from-env',
       apiKey: 'env-key',
       instance: 'env-instance',
+      delayMs: 1500,
+      minIntervalMs: 4000,
     });
   });
 });

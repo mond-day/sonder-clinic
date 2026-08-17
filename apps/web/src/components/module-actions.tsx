@@ -146,6 +146,20 @@ const integrationFields: Record<IntegrationProvider, Array<{
     { key: 'apiKey', label: 'Chave de acesso', secret: true },
     { key: 'instanceName', label: 'Nome da instância' },
     { key: 'webhookUrl', label: 'URL de retorno', type: 'url', required: false },
+    {
+      key: 'delayMs',
+      label: 'Pausa de digitação (milissegundos)',
+      type: 'number',
+      required: false,
+      hint: 'Mostra “digitando…” antes de enviar. Padrão 1500. Ajuda o WhatsApp a não tratar o envio como automático.',
+    },
+    {
+      key: 'minIntervalMs',
+      label: 'Intervalo mínimo entre mensagens (milissegundos)',
+      type: 'number',
+      required: false,
+      hint: 'Espaça os envios da mesma instância. Padrão 4000. Reduz risco de bloqueio em lembretes em lote.',
+    },
   ],
   CHATWOOT: [
     { key: 'baseUrl', label: 'Endereço do serviço', type: 'url', hint: 'Ex.: https://app.chatwoot.com' },
@@ -231,6 +245,8 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
     id?: string;
     credentialsConfigured?: boolean;
     configuration?: Record<string, unknown>;
+    scopeType?: string;
+    scopeId?: string;
   };
 }) {
   const clinic = clinics.find((item) => item.id === clinicId);
@@ -252,6 +268,12 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [niboCategoryIds, setNiboCategoryIds] = useState<string[]>([]);
   const [niboCostCenterIds, setNiboCostCenterIds] = useState<string[]>([]);
   const [niboTesting, setNiboTesting] = useState(false);
+  const [googleScopeType, setGoogleScopeType] = useState<'CLINIC' | 'PROFESSIONAL'>(
+    initialIntegration?.scopeType === 'PROFESSIONAL' ? 'PROFESSIONAL' : 'CLINIC',
+  );
+  const [googleScopeProfessionalId, setGoogleScopeProfessionalId] = useState(
+    initialIntegration?.scopeType === 'PROFESSIONAL' ? String(initialIntegration.scopeId ?? '') : '',
+  );
   const [patientIsMinor, setPatientIsMinor] = useState(false);
   const [guardianDisclosureOpen, setGuardianDisclosureOpen] = useState(false);
   const [birthDate, setBirthDate] = useState('');
@@ -765,7 +787,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             }
             const personal = (check.warnings ?? []).find((item) => item.type === 'personal_calendar');
             if (personal && !acknowledgePersonalWarning) {
-              setPersonalWarning(personal.message || 'Há um evento pessoal do Google neste horário. Você pode agendar mesmo assim.');
+              setPersonalWarning(personal.message || 'Há um evento do Google neste horário. Você pode agendar mesmo assim.');
               setAcknowledgePersonalWarning(true);
               return;
             }
@@ -1002,9 +1024,18 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             configuration.costCenterName = costCenterNameById.get(niboCostCenterIds[0]) ?? '';
           }
         }
+        if (integrationProvider === 'GOOGLE_CALENDAR' && googleScopeType === 'PROFESSIONAL' && !googleScopeProfessionalId) {
+          setMessage('');
+          setError('Selecione o profissional para vincular a agenda.');
+          return;
+        }
         void run(() => api.post('/integrations', {
           clinicId,
           provider: integrationProvider,
+          ...(integrationProvider === 'GOOGLE_CALENDAR' ? {
+            scopeType: googleScopeType,
+            scopeId: googleScopeType === 'PROFESSIONAL' ? googleScopeProfessionalId : clinicId,
+          } : {}),
           credentials,
           configuration,
           keepExistingCredentials: keepExisting,
@@ -1054,6 +1085,45 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             </label>
           );
         })}
+        {integrationProvider === 'GOOGLE_CALENDAR' ? (
+          <div className="span-2 check-stack">
+            <p className="muted-note" style={{ margin: 0 }}>Vínculo da agenda</p>
+            <div className="form-actions" style={{ justifyContent: 'flex-start' }}>
+              <button
+                type="button"
+                className={googleScopeType === 'CLINIC' ? 'button primary' : 'button'}
+                disabled={Boolean(initialIntegration?.id)}
+                onClick={() => setGoogleScopeType('CLINIC')}
+              >
+                Vincular à clínica
+              </button>
+              <button
+                type="button"
+                className={googleScopeType === 'PROFESSIONAL' ? 'button primary' : 'button'}
+                disabled={Boolean(initialIntegration?.id)}
+                onClick={() => setGoogleScopeType('PROFESSIONAL')}
+              >
+                Vincular ao profissional
+              </button>
+            </div>
+            {initialIntegration?.id ? (
+              <span className="field-hint">O vínculo não pode ser alterado depois de salvo.</span>
+            ) : (
+              <span className="field-hint">A agenda da clínica vale para a equipe. A do profissional é só a dele.</span>
+            )}
+            {googleScopeType === 'PROFESSIONAL' ? (
+              <SearchableSelect
+                name="googleProfessionalId"
+                label="Profissional"
+                required
+                disabled={Boolean(initialIntegration?.id)}
+                value={googleScopeProfessionalId}
+                onChange={setGoogleScopeProfessionalId}
+                options={professionals.map((item) => ({ value: item.id, label: item.name }))}
+              />
+            ) : null}
+          </div>
+        ) : null}
         {integrationProvider === 'NIBO' ? (
           <>
             <div className="span-2">

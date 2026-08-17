@@ -2,7 +2,14 @@ export type EvolutionConfiguration = {
   baseUrl: string;
   apiKey: string;
   instance: string;
+  delayMs: number;
+  minIntervalMs: number;
 };
+
+const DEFAULT_DELAY_MS = 1500;
+const DEFAULT_MIN_INTERVAL_MS = 4000;
+const sendChainByInstance = new Map<string, Promise<void>>();
+const lastSentAtByInstance = new Map<string, number>();
 
 const firstString = (source: Record<string, unknown>, keys: string[]): string | undefined => {
   for (const key of keys) {
@@ -11,6 +18,45 @@ const firstString = (source: Record<string, unknown>, keys: string[]): string | 
   }
   return undefined;
 };
+
+function readBoundedInt(value: unknown, fallback: number, min: number, max: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+export function evolutionSendPacing(source: Record<string, unknown> = {}): {
+  delayMs: number;
+  minIntervalMs: number;
+} {
+  return {
+    delayMs: readBoundedInt(
+      source.delayMs ?? source.delay ?? process.env.EVOLUTION_SEND_DELAY_MS,
+      DEFAULT_DELAY_MS,
+      0,
+      15_000,
+    ),
+    minIntervalMs: readBoundedInt(
+      source.minIntervalMs ?? source.minInterval ?? process.env.EVOLUTION_MIN_INTERVAL_MS,
+      DEFAULT_MIN_INTERVAL_MS,
+      0,
+      60_000,
+    ),
+  };
+}
+
+export async function waitEvolutionSendSlot(instance: string, minIntervalMs: number) {
+  if (minIntervalMs <= 0) return;
+  const previous = sendChainByInstance.get(instance) ?? Promise.resolve();
+  const turn = previous.catch(() => undefined).then(async () => {
+    const elapsed = Date.now() - (lastSentAtByInstance.get(instance) ?? 0);
+    const wait = minIntervalMs - elapsed;
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    lastSentAtByInstance.set(instance, Date.now());
+  });
+  sendChainByInstance.set(instance, turn.then(() => undefined));
+  await turn;
+}
 
 export function readEvolutionConfiguration(
   credentials: Record<string, string>,
@@ -45,7 +91,8 @@ export function readEvolutionConfiguration(
     firstString(env, ['EVOLUTION_INSTANCE', 'INSTANCE_NAME', 'instance']);
 
   if (!baseUrl || !apiKey || !instance) return null;
-  return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, instance };
+  const pacing = evolutionSendPacing({ ...settings, ...credentials });
+  return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, instance, ...pacing };
 }
 
 export async function sendEvolutionText(
@@ -53,6 +100,7 @@ export async function sendEvolutionText(
   number: string,
   text: string,
 ): Promise<void> {
+  await waitEvolutionSendSlot(config.instance, config.minIntervalMs);
   const baseUrl = config.baseUrl.replace(/\/+$/, '');
   const response = await fetch(
     `${baseUrl}/message/sendText/${encodeURIComponent(config.instance)}`,
@@ -62,7 +110,11 @@ export async function sendEvolutionText(
         'content-type': 'application/json',
         apikey: config.apiKey,
       },
-      body: JSON.stringify({ number, text }),
+      body: JSON.stringify({
+        number,
+        text,
+        delay: config.delayMs,
+      }),
       signal: AbortSignal.timeout(15_000),
     },
   );

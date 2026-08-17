@@ -32,13 +32,60 @@ const sendManualSchema = z.object({
   variables: z.record(z.string(), z.string()).optional(),
 });
 
-export type EvolutionConfig = { baseUrl: string; apiKey: string; instance: string };
+export type EvolutionConfig = {
+  baseUrl: string;
+  apiKey: string;
+  instance: string;
+  delayMs: number;
+  minIntervalMs: number;
+};
+
+const DEFAULT_DELAY_MS = 1500;
+const DEFAULT_MIN_INTERVAL_MS = 4000;
+const sendChainByInstance = new Map<string, Promise<void>>();
+const lastSentAtByInstance = new Map<string, number>();
 
 function pickString(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return '';
+}
+
+function readBoundedInt(value: unknown, fallback: number, min: number, max: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+function evolutionSendPacing(source: Record<string, unknown>) {
+  return {
+    delayMs: readBoundedInt(
+      source.delayMs ?? source.delay ?? process.env.EVOLUTION_SEND_DELAY_MS,
+      DEFAULT_DELAY_MS,
+      0,
+      15_000,
+    ),
+    minIntervalMs: readBoundedInt(
+      source.minIntervalMs ?? source.minInterval ?? process.env.EVOLUTION_MIN_INTERVAL_MS,
+      DEFAULT_MIN_INTERVAL_MS,
+      0,
+      60_000,
+    ),
+  };
+}
+
+async function waitEvolutionSendSlot(instance: string, minIntervalMs: number) {
+  if (minIntervalMs <= 0) return;
+  const previous = sendChainByInstance.get(instance) ?? Promise.resolve();
+  const turn = previous.catch(() => undefined).then(async () => {
+    const elapsed = Date.now() - (lastSentAtByInstance.get(instance) ?? 0);
+    const wait = minIntervalMs - elapsed;
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    lastSentAtByInstance.set(instance, Date.now());
+  });
+  sendChainByInstance.set(instance, turn.then(() => undefined));
+  await turn;
 }
 
 /** Resolve Evolution a partir de env + configuration (+ credentials opcionais). */
@@ -79,10 +126,11 @@ export function resolveEvolutionConfig(
     settings.EVOLUTION_INSTANCE,
   );
   if (!baseUrl || !apiKey || !instance) return null;
-  return { baseUrl, apiKey, instance };
+  return { baseUrl, apiKey, instance, ...evolutionSendPacing({ ...settings, ...creds }) };
 }
 
 async function sendEvolutionWhatsApp(config: EvolutionConfig, number: string, text: string) {
+  await waitEvolutionSendSlot(config.instance, config.minIntervalMs);
   const response = await fetch(
     `${config.baseUrl}/message/sendText/${encodeURIComponent(config.instance)}`,
     {
@@ -91,7 +139,7 @@ async function sendEvolutionWhatsApp(config: EvolutionConfig, number: string, te
         'content-type': 'application/json',
         apikey: config.apiKey,
       },
-      body: JSON.stringify({ number, text }),
+      body: JSON.stringify({ number, text, delay: config.delayMs }),
       signal: AbortSignal.timeout(15_000),
     },
   );

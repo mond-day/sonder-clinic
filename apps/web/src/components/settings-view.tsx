@@ -902,6 +902,8 @@ export function SettingsView() {
             configuration: editingIntegration.configuration && typeof editingIntegration.configuration === 'object'
               ? editingIntegration.configuration as Record<string, unknown>
               : {},
+            scopeType: editingIntegration.scopeType ? String(editingIntegration.scopeType) : undefined,
+            scopeId: editingIntegration.scopeId ? String(editingIntegration.scopeId) : undefined,
           } : undefined}
           onSaved={() => { load(); closeConfigModal(); }}
         />
@@ -909,9 +911,16 @@ export function SettingsView() {
       <Modal open={Boolean(viewingIntegration)} title="Resumo da integração" description="Visão somente leitura da conexão selecionada." onClose={() => setViewingIntegration(null)} size="small">
         {viewingIntegration ? (
           <div className="info-grid">
-            <div className="info-item"><small>Provedor</small><strong>{text(viewingIntegration.provider)}</strong></div>
+            <div className="info-item"><small>Provedor</small><strong>{text(viewingIntegration.provider) === 'GOOGLE_CALENDAR' ? 'Google Agenda' : text(viewingIntegration.provider)}</strong></div>
             <div className="info-item"><small>Status</small><strong>{presentationLabel(viewingIntegration.status)}</strong></div>
-            <div className="info-item"><small>Escopo</small><strong>{text(viewingIntegration.scopeType ?? viewingIntegration.source, '—')}</strong></div>
+            <div className="info-item"><small>Vínculo</small><strong>{
+              text(viewingIntegration.scopeLabel)
+              || (text(viewingIntegration.scopeType) === 'PROFESSIONAL'
+                ? text(professionals.find((item) => item.id === viewingIntegration.scopeId)?.name, 'Profissional')
+                : text(viewingIntegration.scopeType) === 'CLINIC' || text(viewingIntegration.provider) === 'GOOGLE_CALENDAR'
+                  ? 'Clínica'
+                  : text(viewingIntegration.source, '—'))
+            }</strong></div>
             <div className="info-item"><small>Modo</small><strong>{text(viewingIntegration.mode, 'salvo')}</strong></div>
             <div className="info-item"><small>Credenciais</small><strong>{viewingIntegration.credentials && typeof viewingIntegration.credentials === 'object' && (viewingIntegration.credentials as RecordValue).configured ? 'Configuradas' : 'Não configuradas'}</strong></div>
             <div className="info-item"><small>Última sincronização</small><strong>{viewingIntegration.lastSyncAt ? dateOnly(viewingIntegration.lastSyncAt) : '—'}</strong></div>
@@ -1921,15 +1930,21 @@ export function SettingsView() {
                   {integrations.map((item, index) => {
                     const rowId = text(item.id, `${text(item.provider)}-${index}`);
                     const hasId = Boolean(item.id);
+                    const isGoogle = text(item.provider) === 'GOOGLE_CALENDAR';
+                    const googleScopeLabel = text(item.scopeLabel)
+                      || (text(item.scopeType) === 'PROFESSIONAL'
+                        ? text(professionals.find((professional) => professional.id === item.scopeId)?.name, 'Profissional')
+                        : 'Clínica');
                     return (
                       <div className="settings-row" key={rowId}>
                         <div>
-                          <strong>{text(item.provider) === 'GOOGLE_CALENDAR' ? 'Google Agenda' : text(item.provider)}</strong>
+                          <strong>{isGoogle ? 'Google Agenda' : text(item.provider)}</strong>
+                          {isGoogle ? <span>{googleScopeLabel}</span> : null}
                           <span>
                             {presentationLabel(item.status)}
                             {item.lastSyncAt ? ` · última sincronização ${dateOnly(item.lastSyncAt)}` : ''}
                           </span>
-                          {text(item.provider) === 'GOOGLE_CALENDAR' ? (
+                          {isGoogle ? (
             <Disclosure title="Detalhes técnicos" description="Informações para suporte" defaultOpen={false}>
                               {(() => {
                                 const cfg = item.configuration && typeof item.configuration === 'object'

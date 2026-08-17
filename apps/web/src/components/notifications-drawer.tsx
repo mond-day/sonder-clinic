@@ -14,6 +14,14 @@ import {
   X,
 } from 'lucide-react';
 import { useWorkspace, type Notification, type NotificationCategory } from './workspace-provider';
+import {
+  desktopNotificationsSupported,
+  getDesktopNotificationPermission,
+  getDesktopNotificationPreference,
+  requestDesktopNotificationPermission,
+  setDesktopNotificationPreference,
+  type DesktopNotificationPreference,
+} from '@/lib/desktop-notifications';
 
 const tabs: Array<{ label: string; key: 'ALL' | NotificationCategory }> = [
   { label: 'Todos', key: 'ALL' },
@@ -55,6 +63,8 @@ export function NotificationsDrawer({ open, onClose }: { open: boolean; onClose(
   const router = useRouter();
   const { notifications, refresh, markRead, markAllRead } = useWorkspace();
   const [tab, setTab] = useState<'ALL' | NotificationCategory>('ALL');
+  const [desktopPref, setDesktopPref] = useState<DesktopNotificationPreference>('off');
+  const [desktopPermission, setDesktopPermission] = useState<NotificationPermission | 'unsupported'>('unsupported');
   const drawerRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -93,6 +103,47 @@ export function NotificationsDrawer({ open, onClose }: { open: boolean; onClose(
       previous?.focus();
     };
   }, [open, onClose, refresh]);
+
+  useEffect(() => {
+    if (!open) return;
+    setDesktopPref(getDesktopNotificationPreference());
+    setDesktopPermission(getDesktopNotificationPermission());
+  }, [open]);
+
+  async function toggleDesktopAlerts(next: boolean) {
+    if (!desktopNotificationsSupported()) return;
+    if (!next) {
+      setDesktopNotificationPreference('off');
+      setDesktopPref('off');
+      return;
+    }
+    let permission = getDesktopNotificationPermission();
+    if (permission === 'denied') {
+      setDesktopNotificationPreference('off');
+      setDesktopPref('off');
+      setDesktopPermission(permission);
+      return;
+    }
+    if (permission === 'default') {
+      permission = await requestDesktopNotificationPermission();
+      setDesktopPermission(permission);
+      if (permission !== 'granted') {
+        setDesktopNotificationPreference('off');
+        setDesktopPref('off');
+        return;
+      }
+    }
+    setDesktopNotificationPreference('on');
+    setDesktopPref('on');
+  }
+
+  const desktopUnsupported = desktopPermission === 'unsupported';
+  const desktopDenied = desktopPermission === 'denied';
+  const desktopHint = desktopUnsupported
+    ? 'Seu navegador não permite alertas na área de trabalho.'
+    : desktopDenied
+      ? 'Libere os alertas nas configurações do navegador para usar este recurso.'
+      : 'Receba um aviso no computador quando o sistema estiver aberto em segundo plano.';
 
   const visible = tab === 'ALL'
     ? notifications.items
@@ -146,6 +197,23 @@ export function NotificationsDrawer({ open, onClose }: { open: boolean; onClose(
               <X size={17} />
             </button>
           </div>
+        </div>
+        <div className="drawer-desktop-alerts">
+          <label className="switch-row">
+            <span>Alertas no computador</span>
+            <span className="switch">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={desktopPref === 'on'}
+                disabled={desktopUnsupported}
+                onChange={(event) => void toggleDesktopAlerts(event.target.checked)}
+                aria-label="Alertas no computador"
+              />
+              <span className="switch-track" aria-hidden />
+            </span>
+          </label>
+          <p>{desktopHint}</p>
         </div>
         <div className="drawer-tabs" role="tablist" aria-label="Categorias de alerta">
           {tabs.map(({ label, key }) => {

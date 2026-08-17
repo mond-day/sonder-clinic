@@ -3,7 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
-import { startObservability } from '@sonder/observability';
+import { startObservability, hydrateDockerSecrets, nestLoggerLevels } from '@sonder/observability';
 import { AppModule } from './app.module';
 import { assertProductionEnvironment, isSwaggerEnabled } from './common/production-env';
 import { PublicApiModule } from './modules/public-api/public-api.module';
@@ -16,9 +16,13 @@ if (!(BigInt.prototype as unknown as { toJSON?: () => number }).toJSON) {
 }
 
 async function bootstrap(): Promise<void> {
+  hydrateDockerSecrets();
   assertProductionEnvironment();
   await startObservability('sonder-api');
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true,
+    logger: nestLoggerLevels(),
+  });
   app.setGlobalPrefix('api/v1');
   app.use(cookieParser());
 

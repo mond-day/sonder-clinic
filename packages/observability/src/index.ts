@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { Resource } from '@opentelemetry/resources';
@@ -80,4 +81,41 @@ export async function startObservability(serviceName: string): Promise<Observabi
   process.once('SIGINT', () => void shutdown());
 
   return status;
+}
+
+const DOCKER_SECRETS: Array<[envName: string, fileName: string]> = [
+  ['JWT_ACCESS_SECRET', 'jwt_access_secret'],
+  ['JWT_REFRESH_SECRET', 'jwt_refresh_secret'],
+  ['ENCRYPTION_MASTER_KEY', 'encryption_master_key'],
+  ['S3_ACCESS_KEY', 's3_access_key'],
+  ['S3_SECRET_KEY', 's3_secret_key'],
+];
+
+/**
+ * Swarm monta secrets em /run/secrets/<nome>, não em process.env.
+ * Só preenche a variável se ela ainda estiver vazia.
+ */
+export function hydrateDockerSecrets(secretsDir = '/run/secrets'): void {
+  for (const [envName, fileName] of DOCKER_SECRETS) {
+    if (process.env[envName]?.trim()) continue;
+    try {
+      const value = readFileSync(`${secretsDir}/${fileName}`, 'utf8').trim();
+      if (value) process.env[envName] = value;
+    } catch {
+      /* secret ausente neste ambiente */
+    }
+  }
+}
+
+export type NestLogLevel = 'log' | 'error' | 'warn' | 'debug' | 'verbose';
+
+/** Converte LOG_LEVEL (info/debug/…) nos níveis do NestJS. */
+export function nestLoggerLevels(raw = process.env.LOG_LEVEL): NestLogLevel[] {
+  const level = (raw ?? 'info').trim().toLowerCase();
+  if (level === 'silent' || level === 'none' || level === 'off') return [];
+  if (level === 'error') return ['error'];
+  if (level === 'warn' || level === 'warning') return ['error', 'warn'];
+  if (level === 'debug') return ['error', 'warn', 'log', 'debug'];
+  if (level === 'verbose' || level === 'trace') return ['error', 'warn', 'log', 'debug', 'verbose'];
+  return ['error', 'warn', 'log'];
 }

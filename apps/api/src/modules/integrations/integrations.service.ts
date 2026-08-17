@@ -27,6 +27,12 @@ import {
   watchGoogleCalendarEvents,
   type GoogleCalendarListedEvent,
 } from './google-calendar.utils';
+import {
+  googleCalendarConnectionOauthReady,
+  isClinicScopedGoogleCalendar,
+  mergePersonalGoogleEvents,
+  selectGoogleCalendarsToLoad,
+} from './google-calendar-events';
 
 export type PersonalCalendarWarning = {
   type: 'personal_calendar';
@@ -44,6 +50,8 @@ export type PersonalCalendarEventDto = {
   endAt: string;
   allDay: boolean;
   source: 'google_personal';
+  calendarOwner: 'clinic' | 'professional';
+  calendarOwnerName: string;
 };
 
 const envSchema = z.object({
@@ -103,6 +111,18 @@ export class IntegrationsService {
           orderBy: { provider: 'asc' },
         })
       : [];
+    const professionalIds = [...new Set(
+      persisted
+        .filter((connection) => connection.scopeType === 'PROFESSIONAL')
+        .map((connection) => connection.scopeId),
+    )];
+    const professionalNames = professionalIds.length
+      ? await prisma.professional.findMany({
+          where: { id: { in: professionalIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const professionalNameById = new Map(professionalNames.map((item) => [item.id, item.name]));
     const bootstrap = (['NIBO', 'ABACATEPAY', 'EVOLUTION', 'CHATWOOT'] as const).map((provider) => {
       const mock = this.env[`${provider}_MOCK`] === 'true';
       return {
@@ -115,6 +135,9 @@ export class IntegrationsService {
     return {
       configured: persisted.map(({ encryptedCredentials, ...connection }) => ({
         ...connection,
+        scopeLabel: connection.scopeType === 'PROFESSIONAL'
+          ? (professionalNameById.get(connection.scopeId) ?? 'Profissional')
+          : 'Clínica',
         credentials: encryptedCredentials ? { configured: true, masked: '••••••••' } : { configured: false },
       })),
       bootstrap,
@@ -149,7 +172,10 @@ export class IntegrationsService {
       return this.probeGoogleCalendarLive(id, credentials, connection.configuration);
     }
     const mock = (process.env[`${provider}_MOCK`] ?? 'true').toLowerCase() === 'true';
-    if (mock) {
+    const niboApiKey = provider === 'NIBO'
+      ? String(credentials.apiKey || credentials.token || '').trim()
+      : '';
+    if (mock && !(provider === 'NIBO' && niboApiKey)) {
       return {
         success: false,
         provider,
@@ -708,8 +734,8 @@ export class IntegrationsService {
       };
     }
 
-    const connection = await this.findGoogleCalendarConnection(clinicId);
-    if (!connection?.encryptedCredentials) {
+    const connections = await this.listGoogleCalendarConnections(clinicId);
+    if (!connections.length) {
       return {
         available: false as const,
         connected: false,
@@ -718,8 +744,23 @@ export class IntegrationsService {
       };
     }
 
-    const credentials = this.decryptForAdapter(connection.encryptedCredentials);
-    if (!resolveGoogleOAuthCredentials(credentials) || !tokensFromCredentials(credentials)) {
+    let sawIncomplete = false;
+    for (const connection of connections) {
+      if (!connection.encryptedCredentials) continue;
+      const credentials = this.decryptForAdapter(connection.encryptedCredentials);
+      if (googleCalendarConnectionOauthReady(credentials)) {
+        return {
+          available: true as const,
+          connected: true,
+          reason: 'ready' as const,
+          message: 'Google Agenda pronta para avisos e visualização de eventos.',
+          connectionId: connection.id,
+        };
+      }
+      sawIncomplete = true;
+    }
+
+    if (sawIncomplete) {
       return {
         available: false as const,
         connected: true,
@@ -729,11 +770,10 @@ export class IntegrationsService {
     }
 
     return {
-      available: true as const,
-      connected: true,
-      reason: 'ready' as const,
-      message: 'Google Agenda pronta para avisos e visualização de eventos pessoais.',
-      connectionId: connection.id,
+      available: false as const,
+      connected: false,
+      reason: 'not_connected' as const,
+      message: 'Google Agenda não está conectada nesta clínica.',
     };
   }
 
@@ -759,33 +799,54 @@ export class IntegrationsService {
       return { available: false, events: [], message: availability.message };
     }
 
-    try {
-      const ctx = await this.openGoogleCalendarContext(organizationId, clinicId, professionalId);
-      if (!ctx) {
-        return { available: false, events: [], message: 'Google Agenda indisponível no momento.' };
+    const connections = selectGoogleCalendarsToLoad(
+      await this.listGoogleCalendarConnections(clinicId),
+      professionalId,
+    );
+    const ownerNames = await this.googleCalendarOwnerNames(connections);
+    const clinicSyncedIds = await this.clinicSyncedExternalEventIds(organizationId, clinicId, timeMin, timeMax);
+
+    const batches: Array<{
+      calendarOwner: 'clinic' | 'professional';
+      calendarOwnerName: string;
+      events: Array<{ id: string; summary: string; startAt: string; endAt: string; allDay: boolean }>;
+    }> = [];
+    let loaded = 0;
+
+    for (const connection of connections) {
+      try {
+        const ctx = await this.openGoogleCalendarContextForConnection(connection);
+        if (!ctx) continue;
+        const remote = await listGoogleCalendarEvents(ctx.accessToken, ctx.calendarId, { timeMin, timeMax });
+        const calendarOwner = isClinicScopedGoogleCalendar(connection.scopeType) ? 'clinic' as const : 'professional' as const;
+        batches.push({
+          calendarOwner,
+          calendarOwnerName: ownerNames.get(connection.id) ?? (calendarOwner === 'clinic' ? 'Clínica' : 'Profissional'),
+          events: remote
+            .filter((event) => this.isPersonalGoogleEvent(event, clinicSyncedIds))
+            .map((event) => ({
+              id: event.id,
+              summary: event.summary,
+              startAt: event.startAt.toISOString(),
+              endAt: event.endAt.toISOString(),
+              allDay: event.allDay,
+            })),
+        });
+        loaded += 1;
+      } catch {
+        /* um calendário falhou: os outros ainda entram na grade */
       }
+    }
 
-      const remote = await listGoogleCalendarEvents(ctx.accessToken, ctx.calendarId, { timeMin, timeMax });
-      const clinicSyncedIds = await this.clinicSyncedExternalEventIds(organizationId, clinicId, timeMin, timeMax);
-      const events = remote
-        .filter((event) => this.isPersonalGoogleEvent(event, clinicSyncedIds))
-        .map((event): PersonalCalendarEventDto => ({
-          id: event.id,
-          summary: event.summary,
-          startAt: event.startAt.toISOString(),
-          endAt: event.endAt.toISOString(),
-          allDay: event.allDay,
-          source: 'google_personal',
-        }));
-
-      return { available: true, events };
-    } catch {
+    if (!loaded) {
       return {
         available: true,
         events: [],
-        message: 'Não foi possível carregar eventos pessoais do Google agora.',
+        message: 'Não foi possível carregar eventos do Google agora.',
       };
     }
+
+    return { available: true, events: mergePersonalGoogleEvents(batches) };
   }
 
   /**
@@ -811,17 +872,11 @@ export class IntegrationsService {
       const availability = await this.googleCalendarClinicAvailability(organizationId, input.clinicId);
       if (!availability.available) return [];
 
-      const ctx = await this.openGoogleCalendarContext(
-        organizationId,
-        input.clinicId,
+      const connections = selectGoogleCalendarsToLoad(
+        await this.listGoogleCalendarConnections(input.clinicId),
         input.professionalId,
       );
-      if (!ctx) return [];
-
-      const remote = await listGoogleCalendarEvents(ctx.accessToken, ctx.calendarId, {
-        timeMin: startAt,
-        timeMax: endAt,
-      });
+      const ownerNames = await this.googleCalendarOwnerNames(connections);
       const clinicSyncedIds = await this.clinicSyncedExternalEventIds(
         organizationId,
         input.clinicId,
@@ -831,17 +886,38 @@ export class IntegrationsService {
       );
 
       const warnings: PersonalCalendarWarning[] = [];
-      for (const event of remote) {
-        if (!this.isPersonalGoogleEvent(event, clinicSyncedIds)) continue;
-        if (!rangesOverlap(startAt, endAt, event.startAt, event.endAt)) continue;
-        warnings.push({
-          type: 'personal_calendar',
-          message: `Conflito com agenda pessoal: “${event.summary}”. Você pode agendar mesmo assim.`,
-          eventId: event.id,
-          summary: event.summary,
-          startAt: event.startAt.toISOString(),
-          endAt: event.endAt.toISOString(),
-        });
+      const seen = new Set<string>();
+      for (const connection of connections) {
+        try {
+          const ctx = await this.openGoogleCalendarContextForConnection(connection);
+          if (!ctx) continue;
+          const remote = await listGoogleCalendarEvents(ctx.accessToken, ctx.calendarId, {
+            timeMin: startAt,
+            timeMax: endAt,
+          });
+          const calendarOwner = isClinicScopedGoogleCalendar(connection.scopeType) ? 'clinic' : 'professional';
+          const ownerName = ownerNames.get(connection.id)
+            ?? (calendarOwner === 'clinic' ? 'Clínica' : 'Profissional');
+          const conflictLabel = calendarOwner === 'clinic'
+            ? 'a agenda da clínica'
+            : `a agenda de ${ownerName}`;
+          for (const event of remote) {
+            if (seen.has(event.id)) continue;
+            if (!this.isPersonalGoogleEvent(event, clinicSyncedIds)) continue;
+            if (!rangesOverlap(startAt, endAt, event.startAt, event.endAt)) continue;
+            seen.add(event.id);
+            warnings.push({
+              type: 'personal_calendar',
+              message: `Conflito com ${conflictLabel}: “${event.summary}”. Você pode agendar mesmo assim.`,
+              eventId: event.id,
+              summary: event.summary,
+              startAt: event.startAt.toISOString(),
+              endAt: event.endAt.toISOString(),
+            });
+          }
+        } catch {
+          /* aviso não bloqueante: ignora calendário que falhou */
+        }
       }
       return warnings;
     } catch {
@@ -887,6 +963,19 @@ export class IntegrationsService {
     if (!clinic) throw new NotFoundException('Clínica não encontrada.');
     const provider = input.provider;
     const scopeType = input.scopeType ?? process.env.INTEGRATION_SCOPE_DEFAULT ?? 'CLINIC';
+    if (scopeType === 'PROFESSIONAL' && provider !== 'GOOGLE_CALENDAR') {
+      throw new BadRequestException('Vínculo por profissional está disponível só para Google Agenda.');
+    }
+    if (scopeType === 'PROFESSIONAL') {
+      if (!input.scopeId) {
+        throw new BadRequestException('Selecione o profissional para vincular a agenda.');
+      }
+      const linked = await prisma.professionalClinic.findFirst({
+        where: { clinicId: input.clinicId, professionalId: input.scopeId, active: true },
+        select: { id: true },
+      });
+      if (!linked) throw new BadRequestException('Profissional não encontrado nesta clínica.');
+    }
     const scopeId = input.scopeId ?? input.clinicId;
     const existingCredsRow = await prisma.integrationConnection.findUnique({
       where: {
@@ -1033,6 +1122,41 @@ export class IntegrationsService {
     return { id, status };
   }
 
+  private async listGoogleCalendarConnections(clinicId: string) {
+    return prisma.integrationConnection.findMany({
+      where: {
+        clinicId,
+        provider: 'GOOGLE_CALENDAR',
+        status: 'ACTIVE',
+        encryptedCredentials: { not: null },
+      },
+      orderBy: [{ scopeType: 'asc' }, { lastSyncAt: 'desc' }],
+    });
+  }
+
+  private async googleCalendarOwnerNames(
+    connections: Array<{ id: string; scopeType: string; scopeId: string }>,
+  ) {
+    const professionalIds = connections
+      .filter((item) => item.scopeType === 'PROFESSIONAL')
+      .map((item) => item.scopeId);
+    const professionals = professionalIds.length
+      ? await prisma.professional.findMany({
+          where: { id: { in: professionalIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameByProfessionalId = new Map(professionals.map((item) => [item.id, item.name]));
+    return new Map(
+      connections.map((connection) => [
+        connection.id,
+        isClinicScopedGoogleCalendar(connection.scopeType)
+          ? 'Clínica'
+          : (nameByProfessionalId.get(connection.scopeId) ?? 'Profissional'),
+      ]),
+    );
+  }
+
   private async findGoogleCalendarConnection(clinicId: string, professionalId?: string) {
     if (professionalId) {
       const professionalScoped = await prisma.integrationConnection.findFirst({
@@ -1076,7 +1200,15 @@ export class IntegrationsService {
     if (!clinic) return null;
 
     const connection = await this.findGoogleCalendarConnection(clinicId, professionalId);
-    if (!connection?.encryptedCredentials) return null;
+    if (!connection) return null;
+    return this.openGoogleCalendarContextForConnection(connection);
+  }
+
+  private async openGoogleCalendarContextForConnection(
+    connection: { id: string; encryptedCredentials: string | null; configuration: unknown },
+  ): Promise<{ accessToken: string; calendarId: string; connectionId: string } | null> {
+    if (isGoogleCalendarMock()) return null;
+    if (!connection.encryptedCredentials) return null;
 
     let credentials = this.decryptForAdapter(connection.encryptedCredentials);
     const oauth = resolveGoogleOAuthCredentials(credentials);

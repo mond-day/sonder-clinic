@@ -1,9 +1,14 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { list, type RecordValue } from '@/lib/format';
+import {
+  buildDesktopNotificationPlan,
+  notifyDesktop,
+  pickNewUnreadNotifications,
+} from '@/lib/desktop-notifications';
 import { useAuth } from './auth-provider';
 import { useSelection } from './selection-provider';
 
@@ -52,29 +57,66 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 /**
  * Consolida os contadores do workspace (retornos, tarefas, laboratório e
- * notificações) usados pela sidebar e pelo painel de alertas. Sem polling: os
- * dados são revalidados na troca de rota e ao abrir o painel, conforme
- * docs/api/pending-workspace-contracts.md.
+ * notificações) usados pela sidebar e pelo painel de alertas. Revalida na
+ * troca de rota, ao voltar para a aba e a cada ~60s enquanto o app está aberto.
  */
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { clinicId } = useSelection();
   const pathname = usePathname();
+  const router = useRouter();
   const [notifications, setNotifications] = useState<NotificationFeed>(emptyFeed);
   const [returnSummary, setReturnSummary] = useState<ReturnSummary | null>(null);
   const [openTasks, setOpenTasks] = useState(0);
   const [openLabCases, setOpenLabCases] = useState(0);
+  const knownNotificationIds = useRef<Set<string> | null>(null);
+  const baselineClinicId = useRef<string | null>(null);
+
+  const ingestNotifications = useCallback((feed: NotificationFeed, feedClinicId: string) => {
+    const items = (feed.items ?? []) as Notification[];
+    setNotifications({
+      items,
+      unreadCount: feed.unreadCount ?? 0,
+      counts: feed.counts ?? {},
+    });
+
+    if (baselineClinicId.current !== feedClinicId) {
+      baselineClinicId.current = feedClinicId;
+      knownNotificationIds.current = null;
+    }
+    if (knownNotificationIds.current === null) {
+      knownNotificationIds.current = new Set(items.map((item) => item.id));
+      return;
+    }
+
+    const newcomers = pickNewUnreadNotifications(items, knownNotificationIds.current);
+    for (const item of items) knownNotificationIds.current.add(item.id);
+    if (typeof document === 'undefined' || !document.hidden) return;
+
+    for (const entry of buildDesktopNotificationPlan(newcomers)) {
+      notifyDesktop({
+        title: entry.title,
+        body: entry.body,
+        tag: entry.tag,
+        href: entry.href,
+        onClick: entry.href ? () => { router.push(entry.href!); } : undefined,
+      });
+    }
+  }, [router]);
+
+  const fetchNotifications = useCallback((opts?: { keepOnError?: boolean }) => {
+    if (!user || !clinicId) return;
+    void api.get<NotificationFeed>(`/notifications?clinicId=${clinicId}`)
+      .then((feed) => ingestNotifications(feed, clinicId))
+      .catch(() => {
+        if (!opts?.keepOnError) setNotifications(emptyFeed);
+      });
+  }, [user, clinicId, ingestNotifications]);
 
   const refresh = useCallback(() => {
     if (!user || !clinicId) return;
+    fetchNotifications();
     const scope = `clinicId=${clinicId}`;
-    void api.get<NotificationFeed>(`/notifications?${scope}`)
-      .then((feed) => setNotifications({
-        items: (feed.items ?? []) as Notification[],
-        unreadCount: feed.unreadCount ?? 0,
-        counts: feed.counts ?? {},
-      }))
-      .catch(() => setNotifications(emptyFeed));
     void api.get<ReturnSummary>(`/return-alerts/summary?${scope}`)
       .then(setReturnSummary)
       .catch(() => setReturnSummary(null));
@@ -86,9 +128,34 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         list(items).filter((item) => !['INSTALLED', 'CANCELLED'].includes(String(item.status))).length,
       ))
       .catch(() => setOpenLabCases(0));
-  }, [user, clinicId]);
+  }, [user, clinicId, fetchNotifications]);
 
   useEffect(refresh, [refresh, pathname]);
+
+  useEffect(() => {
+    if (!user) {
+      knownNotificationIds.current = null;
+      baselineClinicId.current = null;
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !clinicId) return;
+
+    const interval = window.setInterval(() => {
+      fetchNotifications({ keepOnError: true });
+    }, 60_000);
+
+    function onVisibility() {
+      if (document.visibilityState === 'visible') fetchNotifications({ keepOnError: true });
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [user, clinicId, fetchNotifications]);
 
   const markRead = useCallback(async (id: string) => {
     setNotifications((current) => {

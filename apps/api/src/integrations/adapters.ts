@@ -9,6 +9,19 @@ import { testChatwoot } from './chatwoot';
 
 export type { AdapterResult } from './http';
 
+/** Nibo recusa Authorization; o token vai no header ApiToken e no query apitoken. */
+export function niboAuthHeaders(apiKey: string): Record<string, string> {
+  return { ApiToken: apiKey, Accept: 'application/json' };
+}
+
+export function niboUrl(baseUrl: string, path: string, apiKey: string): string {
+  const root = baseUrl.replace(/\/$/, '');
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  const url = `${root}${suffix}`;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}apitoken=${encodeURIComponent(apiKey)}`;
+}
+
 function asNamedList(body: unknown): Array<{ id: string; name: string }> {
   const rows = Array.isArray(body)
     ? body
@@ -35,37 +48,35 @@ export async function fetchNiboCatalog(apiKey: string): Promise<{
   source: 'live' | 'unavailable';
   message?: string;
 }> {
+  const key = apiKey.trim();
   const mock = envFlag('NIBO_MOCK', 'true');
-  if (mock) {
+  if (!key) {
     return {
       categories: [],
       costCenters: [],
       source: 'unavailable',
-      message: 'Nibo em modo MOCK. Informe os IDs manualmente ou desative NIBO_MOCK para buscar categorias.',
+      message: mock
+        ? 'Nibo em modo MOCK. Informe os IDs manualmente ou desative NIBO_MOCK para buscar categorias.'
+        : 'Informe a API Key do Nibo para buscar categorias.',
     };
   }
   const baseUrl = (process.env.NIBO_BASE_URL ?? 'https://api.nibo.com.br/empresas/v1').replace(/\/$/, '');
-  const headersList: Array<Record<string, string>> = [
-    { apitoken: apiKey, Accept: 'application/json' },
-    { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
-  ];
+  const headers = niboAuthHeaders(key);
   async function tryPaths(paths: string[]): Promise<Array<{ id: string; name: string }>> {
-    for (const headers of headersList) {
-      for (const path of paths) {
-        try {
-          const result = await fetchJson(`${baseUrl}${path}`, { headers });
-          if (result.ok) {
-            const list = asNamedList(result.body);
-            if (list.length) return list;
-          }
-        } catch {
-          /* tenta o próximo caminho */
+    for (const path of paths) {
+      try {
+        const result = await fetchJson(niboUrl(baseUrl, path, key), { headers });
+        if (result.ok) {
+          const list = asNamedList(result.body);
+          if (list.length) return list;
         }
+      } catch {
+        /* tenta o próximo caminho */
       }
     }
     return [];
   }
-  const categories = await tryPaths(['/schedulescategories', '/categories', '/financialcategories']);
+  const categories = await tryPaths(['/categories', '/schedulescategories', '/financialcategories']);
   const costCenters = await tryPaths(['/costcenters', '/costCenters']);
   return {
     categories,
@@ -115,26 +126,39 @@ export async function testEvolution(): Promise<AdapterResult> {
 export async function testNibo(apiKey?: string): Promise<AdapterResult> {
   const mock = envFlag('NIBO_MOCK', 'true');
   const baseUrl = process.env.NIBO_BASE_URL ?? 'https://api.nibo.com.br/empresas/v1';
-  const token = apiKey?.trim() || process.env.NIBO_API_TOKEN;
-  if (mock || !token) {
+  const apiKeyFromCaller = apiKey?.trim() || '';
+  const token = apiKeyFromCaller || process.env.NIBO_API_TOKEN;
+  if (!token) {
     return {
       success: false,
       provider: 'NIBO',
       enabled: false,
-      message: mock
-        ? 'Nibo em modo MOCK (NIBO_MOCK=true). Nenhum sucesso foi simulado.'
-        : 'Nibo desabilitado: configure a API Key da conexão ou NIBO_API_TOKEN.',
+      message: 'Nibo desabilitado: configure a API Key da conexão ou NIBO_API_TOKEN.',
+    };
+  }
+  if (mock && !apiKeyFromCaller) {
+    return {
+      success: false,
+      provider: 'NIBO',
+      enabled: false,
+      message: 'Nibo em modo MOCK (NIBO_MOCK=true). Nenhum sucesso foi simulado.',
     };
   }
   try {
-    const result = await fetchJson(`${baseUrl.replace(/\/$/, '')}/schedules`, {
-      headers: { apitoken: token, Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    });
+    const result = await fetchJson(
+      niboUrl(baseUrl.replace(/\/$/, ''), '/categories?$top=1&$orderby=name', token),
+      { headers: niboAuthHeaders(token) },
+    );
+    const unauthorized = result.status === 401;
     return {
       success: result.ok,
       provider: 'NIBO',
       enabled: true,
-      message: result.ok ? 'Conexão Nibo confirmada.' : `Falha Nibo HTTP ${result.status}.`,
+      message: result.ok
+        ? 'Conexão Nibo confirmada.'
+        : unauthorized
+          ? 'Nibo recusou a chave de acesso (401). Confira a API Key em Empresa → Mais opções → Configurações → API.'
+          : `Falha Nibo HTTP ${result.status}.`,
       detail: result.body,
     };
   } catch (error) {

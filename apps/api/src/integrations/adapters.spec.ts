@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mapAbacatePayStatus, resolveAbacatePayConfig } from './abacatepay';
 import { resolveChatwootConfig, toChatwootPhone } from './chatwoot';
-import { testProvider } from './adapters';
+import { niboAuthHeaders, niboUrl, testNibo, testProvider } from './adapters';
 
 describe('Chatwoot config', () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -45,7 +45,10 @@ describe('AbacatePay config', () => {
 });
 
 describe('testProvider mock honesto', () => {
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
 
   it('Chatwoot, AbacatePay e Nibo não fingem sucesso em MOCK', async () => {
     vi.stubEnv('CHATWOOT_MOCK', 'true');
@@ -54,5 +57,34 @@ describe('testProvider mock honesto', () => {
     await expect(testProvider('CHATWOOT')).resolves.toMatchObject({ success: false, enabled: false });
     await expect(testProvider('ABACATEPAY')).resolves.toMatchObject({ success: false, enabled: false });
     await expect(testProvider('NIBO')).resolves.toMatchObject({ success: false, enabled: false });
+    await expect(testNibo()).resolves.toMatchObject({ success: false, enabled: false });
+  });
+
+  it('com NIBO_MOCK=true e apiKey da conexão não retorna mensagem de MOCK', async () => {
+    vi.stubEnv('NIBO_MOCK', 'true');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '[]',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await testNibo('clinic-api-key');
+    expect(result.message).not.toMatch(/MOCK/i);
+    expect(result.enabled).toBe(true);
+    expect(fetchMock).toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/categories');
+    expect(url).toContain('apitoken=clinic-api-key');
+    expect(init.headers).toMatchObject({ ApiToken: 'clinic-api-key' });
+    expect(init.headers).not.toHaveProperty('Authorization');
+  });
+});
+
+describe('Nibo auth', () => {
+  it('usa ApiToken e query, nunca Authorization', () => {
+    expect(niboAuthHeaders('abc')).toEqual({ ApiToken: 'abc', Accept: 'application/json' });
+    expect(niboUrl('https://api.nibo.com.br/empresas/v1', '/categories', 'abc')).toBe(
+      'https://api.nibo.com.br/empresas/v1/categories?apitoken=abc',
+    );
   });
 });
