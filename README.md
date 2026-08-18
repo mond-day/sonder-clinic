@@ -317,7 +317,6 @@ O `web` ainda não possui testes automatizados. A qualidade atual é validada po
 - `docs/AGENTS.md` — arquitetura, convenções, env e como rodar.
 - `docs/IMPLEMENTATION_STATUS.md` — o que está pronto e residual honesto.
 - `docs/PRODUCTION_READINESS.md` — checklist go/no-go de produção.
-- `docs/DEPLOY_PORTAINER.md` — passo a passo de deploy via Portainer (Docker Swarm).
 - `docs/RELEASE.md` — versionamento, imagens e processo de release.
 - `docs/SECURITY.md` — controles de segurança.
 - `docs/api/workspace-contracts.md` — contratos HTTP do workspace.
