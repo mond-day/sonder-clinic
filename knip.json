@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "ignore": [
+    "**/prisma/migrations/**",
+    "**/dist/**",
+    "**/.next/**",
+    "apps/web/e2e/**",
+    "packages/database/scripts/**",
+    "infra/**"
+  ],
+  "ignoreDependencies": ["prisma", "tsx", "turbo"]
+}

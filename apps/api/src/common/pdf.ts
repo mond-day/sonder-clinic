@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
+import { resolvePublicWebUrl } from './public-web-url';
 
 export type PdfTableInput = {
   title: string;
@@ -32,8 +33,7 @@ export type PdfDocumentInput = {
 
 function publicValidationUrl(code: string, override?: string): string {
   if (override?.trim()) return override.trim();
-  const webUrl = (process.env.WEB_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000')
-    .replace(/\/$/, '');
+  const webUrl = resolvePublicWebUrl();
   return `${webUrl}/validar/documento?codigo=${encodeURIComponent(code)}`;
 }
 

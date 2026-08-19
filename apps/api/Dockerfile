@@ -18,6 +18,7 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS build
 COPY . .
 RUN pnpm --filter @sonder/database generate \
+  && pnpm --filter @sonder/database exec tsc -p tsconfig.bootstrap.json \
   && pnpm --filter @sonder/api build
 
 FROM node:24-bookworm-slim AS runner

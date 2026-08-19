@@ -1,4 +1,5 @@
 import { startObservability, hydrateDockerSecrets } from '@sonder/observability';
+import { assertWorkerProductionEnvironment } from './production-env';
 import { materializeExpiredAnamneses } from './anamnesis-expire';
 import { processDueFinanceRecurrences } from './finance-recurrences';
 import { renewExpiringGoogleCalendarWatches, isGoogleWatchAutoRenewEnabled } from './google-calendar-watch-renew';
@@ -82,6 +83,7 @@ async function tick(): Promise<void> {
 
 async function main(): Promise<void> {
   hydrateDockerSecrets();
+  assertWorkerProductionEnvironment();
   await startObservability('sonder-worker');
   console.info(JSON.stringify({
     service: 'sonder-worker',

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { adultAnamnesisV1 } from './adult-v1';
 import { childAnamnesisV1 } from './child-v1';
 import { elderlyAnamnesisV1 } from './elderly-v1';
@@ -14,7 +14,10 @@ const catalogs = [
 ] as const;
 
 /** Bootstrap idempotente dos modelos padrão — chamar ao criar organização. */
-export async function installDefaultAnamnesisTemplates(prisma: PrismaClient, organizationId: string) {
+export async function installDefaultAnamnesisTemplates(
+  prisma: PrismaClient | Prisma.TransactionClient,
+  organizationId: string,
+) {
   for (const catalog of catalogs) {
     const questionCount = countQuestions(catalog.schema);
     if (questionCount !== catalog.expected) {

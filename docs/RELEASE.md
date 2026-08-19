@@ -2,6 +2,29 @@
 
 Versão atual do monorepo: **1.2.4** (semver `MAJOR.MINOR.PATCH`).
 
+**Padrão de tag: `v1.2.4`.** Não use `v.1.2.4` (ponto extra após o `v`) — o GitHub ignora esse formato.
+
+## Como lançar (v1.2.3)
+
+1. Atualize a versão nos `package.json` do root, apps e packages (`1.2.3` → `1.2.4` se for o caso).
+2. Faça o commit das mudanças na `main`.
+3. Crie a tag anotada e envie:
+
+```bash
+git tag -a v1.2.4 -m "Release 1.2.4"
+git push origin main
+git push origin v1.2.4
+```
+
+4. No GitHub Actions, o workflow **Release** roda sozinho: testes essenciais (CI + instalação limpa) → imagens no GHCR → deploy.
+5. Se `SWARM_HOST` e `SWARM_SSH_KEY` estiverem nos secrets do repositório, a VPS recebe as imagens e o `deploy.sh` aplica banco + migrations.
+6. Abra o domínio HTTPS do frontend.
+7. **Primeira instalação:** página `/setup` — token de instalação, nome da clínica, primeiro usuário, senha.
+8. **Já instalado:** página `/login` com os usuários existentes.
+9. Confirme que a versão no GHCR é `1.2.4` (e também `1.2` / `latest` / `sha-<commit>`).
+
+Não rode seed de demo em produção. O operador não precisa de terminal na API para o primeiro admin.
+
 ## Imagens publicadas
 
 Registry: `ghcr.io/mond-day` (Docker GHCR — **não** npm GitHub Packages)
@@ -12,35 +35,34 @@ Registry: `ghcr.io/mond-day` (Docker GHCR — **não** npm GitHub Packages)
 | Web Next.js | `ghcr.io/mond-day/sonder-clinic-web` |
 | Worker | `ghcr.io/mond-day/sonder-clinic-worker` |
 
-Tags geradas em release (`v1.2.4`):
+Tags geradas no workflow **Release** (`v1.2.4`):
 
 - `1.2.4`
 - `1.2`
 - `latest`
-- `sha-<gitsha>` (sempre)
+- `sha-<gitsha>`
 
-Push em `main` sem tag gera imagem com versão `0.0.0-sha.<sha>` + tag `sha-<sha>` (não sobrescreve `latest`).
+Push em `main` sem tag ainda gera imagem de desenvolvimento `0.0.0-sha.<sha>` + `sha-<sha>` (workflow `release-images.yml`, **não** sobrescreve `latest`).
 
-## Como publicar uma release
+## O que o GitHub precisa para deploy automático
 
-1. Feche residuais de código e atualize docs de status/prod.
-2. Atualize a versão nos `package.json` do root, apps e packages (`1.2.3` → `1.2.4`).
-3. Commit das mudanças.
-4. Crie e envie a tag anotada:
+Secrets do repositório: `SWARM_HOST`, `SWARM_USER`, `SWARM_SSH_KEY`.
+Variável opcional: `SWARM_DEPLOY_DIR` (default `/opt/sonder-clinic`).
+
+Na VPS, uma vez só:
+
+- Docker Swarm + Traefik + redes `digital_network` e `traefik_public`
+- arquivo `/opt/sonder-clinic/.env` com `DATABASE_URL`, `WEB_URL`, `API_URL`, `REDIS_URL`, S3, `INITIAL_SETUP_TOKEN`, etc.
+- login no GHCR para puxar as imagens
+- secrets Docker (`jwt_access_secret`, …)
+
+Sem esses secrets no GitHub, o Release **ainda testa e publica as imagens**. Aí, na VPS:
 
 ```bash
-git tag -a v1.2.4 -m "Release 1.2.4"
-git push origin main
-git push origin v1.2.4
+export API_IMAGE=ghcr.io/mond-day/sonder-clinic-api:1.2.4
+export WEB_IMAGE=ghcr.io/mond-day/sonder-clinic-web:1.2.4
+export WORKER_IMAGE=ghcr.io/mond-day/sonder-clinic-worker:1.2.4
+./infra/swarm/scripts/deploy.sh
 ```
 
-5. O workflow `.github/workflows/release-images.yml` constrói as três imagens multi-stage e publica no GHCR.
-6. Atualize o Swarm apontando `WEB_IMAGE` / `API_IMAGE` / `WORKER_IMAGE` para a tag desejada em `infra/swarm/stack.production.yml`.
-
-## CI de qualidade
-
-`.github/workflows/ci.yml` roda em PR e push em `main`: install, Prisma generate, typecheck, testes, build, `db:deploy`, seed e Playwright E2E.
-
-## Redes e deploy
-
-Produção usa networks externas `digital_network` e `traefik_public`. Redis/MinIO são serviços existentes — não sobem nesta stack. Veja ADR `0002-production-configuration-and-secrets.md` e `PRODUCTION_READINESS.md`.
+Bootstrap, migrate e `/setup`: `docs/FRESH_INSTALL.md`. Também ADR `0002-production-configuration-and-secrets.md` e `PRODUCTION_READINESS.md`.

@@ -14,11 +14,13 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { CatalogsModule } from './modules/catalogs/catalogs.module';
 import { ApiKeysModule } from './modules/public-api/api-keys.module';
 import { PublicApiModule } from './modules/public-api/public-api.module';
+import { SetupModule } from './modules/setup/setup.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }),
     AuthModule,
+    SetupModule,
     PatientsModule,
     SchedulingModule,
     IntegrationsModule,

@@ -9,6 +9,8 @@ import { prisma } from '@sonder/database';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
 import { assertSmtpConfigured, sendMail, smtpConfigured } from '../../common/mail';
+import { assertPasswordPolicy } from '../../common/password-policy';
+import { resolvePublicWebUrl } from '../../common/public-web-url';
 import { hashInviteToken } from '../users/users-invitations.utils';
 
 type LoginResult = {
@@ -99,7 +101,7 @@ export class AuthService {
           expiresAt,
         },
       });
-      const webUrl = (process.env.WEB_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+      const webUrl = resolvePublicWebUrl();
       const resetUrl = `${webUrl}/login?resetToken=${encodeURIComponent(token)}`;
       await sendMail({
         to: user.email,
@@ -119,7 +121,7 @@ export class AuthService {
   }
 
   async resetPassword(token: string, password: string): Promise<{ success: true }> {
-    if (password.length < 8) throw new BadRequestException('A senha deve ter ao menos 8 caracteres.');
+    assertPasswordPolicy(password);
     const tokenHash = this.hash(token);
     const row = await prisma.passwordResetToken.findFirst({
       where: { tokenHash, usedAt: null, expiresAt: { gt: new Date() } },
@@ -155,7 +157,7 @@ export class AuthService {
   }
 
   async acceptInvitation(token: string, password: string): Promise<{ success: true; email: string }> {
-    if (password.length < 8) throw new BadRequestException('A senha deve ter ao menos 8 caracteres.');
+    assertPasswordPolicy(password);
     const invitation = await this.findPendingInvitation(token);
     const existing = await prisma.user.findFirst({
       where: { organizationId: invitation.organizationId, email: invitation.email },

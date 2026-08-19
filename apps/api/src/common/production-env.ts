@@ -17,13 +17,31 @@ function isProduction(env: NodeJS.ProcessEnv = process.env): boolean {
   return (env.NODE_ENV ?? '').toLowerCase() === 'production';
 }
 
-function looksLocalDatabase(url: string): boolean {
+export function looksLocalHost(value: string): boolean {
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(value);
     const host = parsed.hostname.toLowerCase();
     return host === 'localhost' || host === '127.0.0.1' || host === '::1';
   } catch {
-    return /localhost|127\.0\.0\.1/i.test(url);
+    return /localhost|127\.0\.0\.1/i.test(value);
+  }
+}
+
+function looksLocalDatabase(url: string): boolean {
+  return looksLocalHost(url);
+}
+
+function assertPublicHttpsUrl(value: string | undefined, name: string, errors: string[]): void {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) {
+    errors.push(`${name} ausente (obrigatório em produção; sem fallback localhost).`);
+    return;
+  }
+  if (looksLocalHost(trimmed) || /localhost|127\.0\.0\.1/i.test(trimmed)) {
+    errors.push(`${name} não pode apontar para localhost em produção.`);
+  }
+  if (!/^https:\/\//i.test(trimmed)) {
+    errors.push(`${name} deve usar HTTPS em produção.`);
   }
 }
 
@@ -62,6 +80,8 @@ export function assertProductionEnvironment(env: NodeJS.ProcessEnv = process.env
   }
   if (!env.REDIS_URL?.trim()) {
     errors.push('REDIS_URL ausente (obrigatório com QUEUE_DRIVER=redis).');
+  } else if (looksLocalHost(env.REDIS_URL)) {
+    errors.push('REDIS_URL não pode apontar para localhost em produção.');
   }
 
   const storage = (env.STORAGE_DRIVER ?? 'local').toLowerCase();
@@ -69,8 +89,12 @@ export function assertProductionEnvironment(env: NodeJS.ProcessEnv = process.env
     errors.push('STORAGE_DRIVER=local não é permitido em produção (use minio|s3).');
   }
 
-  if (!env.CORS_ORIGIN?.trim()) {
-    errors.push('CORS_ORIGIN deve ser explícito em produção (sem fallback localhost).');
+  assertPublicHttpsUrl(env.CORS_ORIGIN, 'CORS_ORIGIN', errors);
+  assertPublicHttpsUrl(env.WEB_URL, 'WEB_URL', errors);
+
+  const setupToken = env.INITIAL_SETUP_TOKEN?.trim() ?? '';
+  if (setupToken.length < 16) {
+    errors.push('INITIAL_SETUP_TOKEN ausente ou com menos de 16 caracteres.');
   }
 
   if (errors.length) {

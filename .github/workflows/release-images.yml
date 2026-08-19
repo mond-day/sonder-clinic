@@ -1,7 +1,7 @@
 name: Release images
 
-# Publica imagens somente após CI verde no mesmo commit (workflow_run),
-# ou manualmente via workflow_dispatch / release / tag.
+# Publica imagens de desenvolvimento após CI verde na main (workflow_run),
+# ou manualmente via workflow_dispatch. Tags vX.Y.Z usam o workflow Release.
 # latest nunca deve sair de commit sem CI success.
 
 on:
@@ -9,10 +9,6 @@ on:
     workflows: ['CI']
     types: [completed]
     branches: [main, master]
-  release:
-    types: [published]
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:

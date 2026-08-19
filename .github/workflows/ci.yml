@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main, master]
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -82,3 +83,46 @@ jobs:
           echo "WEB log:"; tail -50 /tmp/web.log || true
           exit 1
       - run: pnpm test:e2e
+
+  fresh-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sonder
+          POSTGRES_PASSWORD: senha123
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonder"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://sonder:senha123@localhost:5432/sonder_clinic?schema=public
+      DATABASE_ADMIN_URL: postgresql://sonder:senha123@localhost:5432/postgres
+      INITIAL_SETUP_TOKEN: ci-fresh-install-token-min-16
+      JWT_ACCESS_SECRET: change-me-access-ci-only-min-32-chars!!
+      JWT_REFRESH_SECRET: change-me-refresh-ci-only-min-32-chars!
+      ENCRYPTION_MASTER_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      WEB_URL: http://localhost:3000
+      API_URL: http://localhost:4000
+      CORS_ORIGIN: http://localhost:3000
+      STORAGE_DRIVER: local
+      QUEUE_DRIVER: memory
+      AV_DRIVER: stub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @sonder/database generate
+      - run: pnpm --filter @sonder/api build
+      - run: bash script/fresh-install-ci.sh

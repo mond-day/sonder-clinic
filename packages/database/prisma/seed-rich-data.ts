@@ -566,6 +566,7 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
     ['Dental Prime', 'LABORATORIO', '2750.00'], ['Energia elétrica', 'UTILIDADES', '1180.00'],
     ['Manutenção de equipamentos', 'MANUTENCAO', '890.00'], ['OrtoLab', 'LABORATORIO', '1640.00'],
   ] as const;
+  // Expense é legado (somente seed/relatório). Novos lançamentos usam Payable.
   for (const [index, item] of expenses.entries()) {
     await prisma.expense.upsert({
       where: { id: seedId(`expense:${index}`) },
@@ -601,6 +602,7 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
       },
     });
   }
+  // CommissionEntry é legado (somente histórico/demo). Produção grava CommissionEvent.
   for (let index = 0; index < 6; index += 1) {
     await prisma.commissionEntry.upsert({
       where: { id: seedId(`commission-entry:${index}`) },
@@ -739,9 +741,10 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
       const procedure = procedures[(patientIndex + itemIndex) % procedures.length]!;
       const unitPrice = new Prisma.Decimal(procedure.seedPrice);
       const itemId = seedId(`treatment-item:${patientIndex}:${itemIndex}`);
+      const itemStatus = (['PLANNED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED'] as const)[(patientIndex + itemIndex) % 4] ?? 'PLANNED';
       await prisma.treatmentItem.upsert({
         where: { id: itemId },
-        update: { status: ['PLANNED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED'][(patientIndex + itemIndex) % 4] },
+        update: { status: itemStatus },
         create: {
           id: itemId,
           treatmentPlanId: planId,
@@ -752,7 +755,7 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
           unitPrice,
           total: unitPrice,
           sortOrder: itemIndex,
-          status: ['PLANNED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED'][(patientIndex + itemIndex) % 4],
+          status: itemStatus,
           approvedAt: itemIndex > 0 ? atDay(-15, 11) : undefined,
         },
       });

@@ -1048,7 +1048,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
             <select name="type" value={channelType} onChange={(event) => setChannelType(event.target.value)}>
               <option value="EMAIL">E-mail</option>
               <option value="WHATSAPP">WhatsApp</option>
-              <option value="SMS">SMS (em breve)</option>
+              <option value="SMS" disabled>SMS (não implementado)</option>
             </select>
           </label>
           {channelType === 'WHATSAPP' ? (

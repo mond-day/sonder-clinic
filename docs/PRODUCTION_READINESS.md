@@ -11,8 +11,11 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 | Secrets JWT / `ENCRYPTION_MASTER_KEY` | **NO-GO** até trocar defaults | Fail-fast em `NODE_ENV=production` recusa startup com defaults |
 | `DATABASE_URL` Postgres gerenciado | **NO-GO** | Não-localhost; backups e retenção obrigatórios |
 | HTTPS + Traefik / TLS | **NO-GO** | ADR 0002; redes `traefik_public` |
-| Migrations aplicadas (`db:deploy`) | **NO-GO** | Inclui `20260810020000_anamnesis_source_response` |
-| `COOKIE_SECURE=true` + HTTPS | **NO-GO** | Fail-fast exige `COOKIE_SECURE=true` |
+| Migrations aplicadas (`db:deploy` / bootstrap) | **GO (fluxo)** | Swarm: serviço `migrate` + `infra/swarm/scripts/deploy.sh`. Nunca seed em prod |
+| `COOKIE_SECURE=true` + HTTPS | **GO (stack)** | Fail-fast + `COOKIE_SECURE: "true"` no stack |
+| `WEB_URL` HTTPS público | **GO (stack)** | Sem fallback localhost; e-mails/convites usam `WEB_URL` |
+| Imagens obrigatórias (`API_IMAGE`/`WEB_IMAGE`/`WORKER_IMAGE`) | **GO (stack)** | Sem fallback `1.0.0`; preferir `sha-<commit>` |
+| Setup inicial (`/setup`) | **GO (código)** | Primeiro admin sem seed; token no formulário; API exige `X-Setup-Token` |
 | Storage MinIO/S3 com credenciais | **NO-GO** para uploads | Fail-fast recusa `STORAGE_DRIVER=local` |
 | Redis (`QUEUE_DRIVER=redis` + `REDIS_URL`) | **NO-GO** em prod | Fail-fast + readiness |
 | `CORS_ORIGIN` explícito | **NO-GO** em prod | Sem fallback localhost |
@@ -22,7 +25,7 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 
 | Item | Status | Notas |
 |------|--------|-------|
-| Imagens GHCR (`api`/`web`/`worker`) | **GO (código)** | Só após CI verde (`workflow_run`) |
+| Imagens GHCR (`api`/`web`/`worker`) | **GO (código)** | Tag `vX.Y.Z` só após CI do workflow Release; `main` via `workflow_run` |
 | Branch protection `main` exige CI | **PARTIAL** | Documentado; configurar no GitHub |
 | Health liveness `/health` | **GO** | |
 | Readiness `/api/v1/health/ready` | **GO (código)** | DB + Redis (prod) + storage |
@@ -31,7 +34,9 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 | Monitoramento / OTEL | **GO** (código) / **PARTIAL** (ops) | |
 | ClamAV | **GO** (adapter) / **PARTIAL** (ops) | |
 | Outbox dead-letter | **PARTIAL** | Worker DLQ + API/UI |
-| Seed em produção | **NO-GO** | Só desenvolvimento |
+| Seed em produção | **NO-GO** | Só desenvolvimento. Produção usa `/setup` |
+| Bootstrap de database | **GO (código)** | Cria `sonder_clinic` se ausente (`DATABASE_ADMIN_URL`) + `migrate deploy` |
+| Worker fail-fast | **GO (código)** | Mesmas exigências de DB/Redis/storage em produção |
 
 ## Produto / compliance
 
@@ -49,8 +54,8 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 ## Checklist pré-release operacional
 
 1. Rotacionar secrets; validar `ENCRYPTION_MASTER_KEY` (64 hex ≠ example).
-2. `COOKIE_SECURE=true`, `CORS_ORIGIN`, `QUEUE_DRIVER=redis`, `REDIS_URL`, storage remoto.
-3. `pnpm db:deploy` (inclui `sourceResponseId`); smoke login admin.
+2. `COOKIE_SECURE=true`, `WEB_URL` HTTPS, `CORS_ORIGIN`, `QUEUE_DRIVER=redis`, `REDIS_URL`, storage remoto.
+3. Tag `vX.Y.Z` (workflow Release) ou `infra/swarm/scripts/deploy.sh`. Não rode `pnpm db:seed` em produção. Primeiro admin na página `/setup`.
 4. MinIO/S3 + teste de upload.
 5. SMTP; testar reset/convite/EMAIL.
 6. Imagens `sha-<commit>` (não depender só de `latest`); Swarm; `/health` + `/health/ready`.
@@ -62,5 +67,5 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 
 ## Veredito
 
-**Release Candidate (código):** gaps de estabilização fechados no monorepo.  
-**Go-live pleno:** ainda **NO-GO** até secrets/HTTPS/Redis/S3/SMTP/migrations/backups + CI/E2E verdes em staging.
+**Código:** instalação nova via bootstrap + `/setup` está no fluxo Swarm.  
+**Go-live pleno:** ainda depende de secrets/HTTPS/Redis/S3/SMTP reais, backups e evidência de CI/E2E em staging. Passo a passo: `docs/FRESH_INSTALL.md`.

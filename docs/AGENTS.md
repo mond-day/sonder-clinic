@@ -33,6 +33,8 @@ pnpm install && pnpm db:generate && pnpm db:deploy && pnpm db:seed
 pnpm dev
 ```
 
+Produção (VPS nova): `docs/FRESH_INSTALL.md` — `pnpm db:bootstrap` + `/setup`. Nunca `db:seed` em produção.
+
 - Web: `http://localhost:3000`
 - API: `http://localhost:4000/api/v1` · Swagger `/docs` · Health `/api/v1/health`
 - Login seed: `admin@sonder.local` / `Sonder@123`
@@ -46,7 +48,8 @@ Ver `.env.example`. Resumo:
 | Grupo | Vars |
 |-------|------|
 | Auth | `JWT_*`, `ENCRYPTION_MASTER_KEY` (64 hex), `COOKIE_SECURE` |
-| DB | `DATABASE_URL` |
+| Banco | `DATABASE_URL`, `DATABASE_ADMIN_URL` (só bootstrap) |
+| Setup | `INITIAL_SETUP_TOKEN` (produção, só na API; o operador informa em `/setup`) |
 | Storage | `STORAGE_DRIVER`, `STORAGE_LOCAL_PATH` ou `S3_*` |
 | Antivirus | `AV_DRIVER=stub\|disabled\|clamav`, `CLAMAV_HOST`, `CLAMAV_PORT` |
 | Queue | `QUEUE_DRIVER=memory\|redis`, `REDIS_URL` |

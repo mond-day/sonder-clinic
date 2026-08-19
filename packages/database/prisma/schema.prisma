@@ -427,6 +427,16 @@ model RolePermission {
   @@id([roleId, permissionId])
 }
 
+/// Singleton da instalação inicial. Sem FK de propósito: se org/admin forem
+/// removidos, o setup NÃO reabre. Não usar seed de demo para preencher.
+model SystemInstallation {
+  id             String   @id
+  completedAt    DateTime
+  organizationId String   @db.Uuid
+  adminUserId    String   @db.Uuid
+  createdAt      DateTime @default(now())
+}
+
 model Session {
   id               String    @id @default(uuid()) @db.Uuid
   userId           String    @db.Uuid
@@ -1643,6 +1653,7 @@ model Refund {
   @@index([paymentId, createdAt])
 }
 
+/// Legado. Novos lançamentos operacionais usam Payable. Somente leitura/relatório/seed.
 model Expense {
   id             String    @id @default(uuid()) @db.Uuid
   organizationId String    @db.Uuid
@@ -1813,6 +1824,7 @@ model CommissionRule {
   @@index([organizationId, active, priority])
 }
 
+/// Legado. Fonte de verdade atual: CommissionEvent. Sem novas gravações na API.
 model CommissionEntry {
   id              String             @id @default(uuid()) @db.Uuid
   organizationId  String             @db.Uuid

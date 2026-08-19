@@ -7,7 +7,8 @@
 | [AGENTS.md](./AGENTS.md) | Arquitetura, convenções, como rodar, env crítico |
 | [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) | O que está pronto / residual honesto |
 | [PRODUCTION_READINESS.md](./PRODUCTION_READINESS.md) | Checklist GO / NO-GO / PARTIAL de produção |
-| [RELEASE.md](./RELEASE.md) | Semver, imagens GHCR, processo de tag |
+| [FRESH_INSTALL.md](./FRESH_INSTALL.md) | Depois da tag: migrate + `/setup` ou login |
+| [RELEASE.md](./RELEASE.md) | Tag `vX.Y.Z`, imagens GHCR, deploy |
 | [SECURITY.md](./SECURITY.md) | Controles de segurança e pré-prod |
 | [ASSUMPTIONS.md](./ASSUMPTIONS.md) | Decisões de implementação adotadas |
 | [ENV](./AGENTS.md#env-vars-críticas) | Variáveis (detalhe em `.env.example`) |

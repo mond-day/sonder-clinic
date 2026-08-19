@@ -747,6 +747,9 @@ td.row-actions > div {
 .login-brand strong { color: var(--ink); }
 .login-brand small { color: var(--muted); }
 .login-card .form-error { margin: 0; }
+.login-card fieldset.setup-step { border: 0; margin: 0; padding: 0; display: grid; gap: inherit; }
+.login-card fieldset.setup-step[hidden] { display: none; }
+.login-actions { display: flex; gap: 12px; align-items: center; }
 .login-legal {
   display: flex; gap: 18px; justify-content: center; flex-wrap: wrap;
   font-size: 12px;

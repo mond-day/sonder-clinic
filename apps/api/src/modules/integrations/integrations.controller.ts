@@ -6,6 +6,7 @@ import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { IntegrationsService, type Provider, type SaveConnectionInput } from './integrations.service';
 import { OperationsService } from '../operations/operations.service';
+import { resolvePublicWebUrl } from '../../common/public-web-url';
 
 class SaveIntegrationDto {
   @IsUUID() clinicId!: string;
@@ -112,7 +113,7 @@ export class GoogleCalendarOauthController {
     @Res() res: Response,
   ) {
     if (error) {
-      const webUrl = (process.env.WEB_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+      const webUrl = resolvePublicWebUrl();
       return res.redirect(
         `${webUrl}/configuracoes?integration=GOOGLE_CALENDAR&oauth=error&reason=${encodeURIComponent(error)}`,
       );

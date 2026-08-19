@@ -21,6 +21,7 @@
     "db:generate": "corepack pnpm --filter @sonder/database generate",
     "db:migrate": "corepack pnpm --filter @sonder/database migrate:dev",
     "db:deploy": "corepack pnpm --filter @sonder/database migrate:deploy",
+    "db:bootstrap": "corepack pnpm --filter @sonder/database bootstrap:production",
     "db:seed": "corepack pnpm --filter @sonder/database seed",
     "db:reset": "corepack pnpm --filter @sonder/database reset",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\""

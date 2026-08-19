@@ -8,9 +8,10 @@
     "generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
+    "bootstrap:production": "tsx src/bootstrap-cli.ts",
     "seed": "tsx prisma/seed.ts",
     "reset": "prisma migrate reset",
-    "build": "tsc --noEmit",
+    "build": "tsc --noEmit && tsc -p tsconfig.bootstrap.json",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
@@ -18,10 +19,12 @@
   },
   "dependencies": {
     "@prisma/client": "^6.2.0",
-    "argon2": "^0.41.1"
+    "argon2": "^0.41.1",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.23.1",
     "prisma": "^6.2.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

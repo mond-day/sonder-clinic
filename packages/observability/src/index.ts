@@ -89,6 +89,8 @@ const DOCKER_SECRETS: Array<[envName: string, fileName: string]> = [
   ['ENCRYPTION_MASTER_KEY', 'encryption_master_key'],
   ['S3_ACCESS_KEY', 's3_access_key'],
   ['S3_SECRET_KEY', 's3_secret_key'],
+  ['INITIAL_SETUP_TOKEN', 'initial_setup_token'],
+  ['DATABASE_ADMIN_URL', 'database_admin_url'],
 ];
 
 /**

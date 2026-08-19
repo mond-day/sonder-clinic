@@ -30,6 +30,7 @@ function LoginForm() {
     inviteToken ? 'invite' : resetToken ? 'reset' : 'login',
   );
   const [smtpConfigured, setSmtpConfigured] = useState<boolean | null>(null);
+  const setupDone = searchParams.get('setup') === 'done';
   const [inviteInfo, setInviteInfo] = useState<{ name: string; email: string; organizationName: string } | null>(null);
   const branding = useClinicBranding(undefined, false);
 
@@ -201,6 +202,9 @@ function LoginForm() {
           >
             Esqueci minha senha
           </button>
+          {setupDone ? (
+            <p className="muted-note" role="status">Instalação concluída. Entre com o administrador criado.</p>
+          ) : null}
           {smtpConfigured === false ? (
             <p className="muted-note">A recuperação de senha por e-mail ainda não está disponível nesta clínica. Fale com o administrador.</p>
           ) : null}

@@ -4,6 +4,8 @@ import {
 import * as argon2 from 'argon2';
 import { prisma } from '@sonder/database';
 import { assertSmtpConfigured, sendMail } from '../../common/mail';
+import { assertPasswordPolicy } from '../../common/password-policy';
+import { resolvePublicWebUrl } from '../../common/public-web-url';
 import {
   buildInviteEmail,
   buildInviteUrl,
@@ -46,6 +48,7 @@ export class UsersService {
       where: { organizationId, email: input.email.toLowerCase() },
     });
     if (existing) throw new ConflictException('E-mail já cadastrado nesta organização.');
+    assertPasswordPolicy(input.password);
     return prisma.user.create({
       data: {
         organizationId,
@@ -124,7 +127,7 @@ export class UsersService {
         expiresAt,
       },
     });
-    const inviteUrl = buildInviteUrl(process.env.WEB_URL ?? 'http://localhost:3000', token);
+    const inviteUrl = buildInviteUrl(resolvePublicWebUrl(), token);
     const mail = buildInviteEmail({
       name: invitation.name,
       organizationName: organization.tradeName,
@@ -162,7 +165,7 @@ export class UsersService {
       where: { id: organizationId },
       select: { tradeName: true },
     });
-    const inviteUrl = buildInviteUrl(process.env.WEB_URL ?? 'http://localhost:3000', token);
+    const inviteUrl = buildInviteUrl(resolvePublicWebUrl(), token);
     const mail = buildInviteEmail({
       name: invitation.name,
       organizationName: organization.tradeName,

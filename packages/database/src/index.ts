@@ -11,3 +11,11 @@ export const prisma =
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 export { Prisma } from '@prisma/client';
+export {
+  installAdminRole,
+  installCoreDefaults,
+  installOdontogramConditions,
+  installPermissions,
+} from './core-defaults';
+export { ODONTOGRAM_CONDITIONS, PERMISSION_CODES } from './permissions';
+export { INSTALLATION_SINGLETON_ID } from './installation';

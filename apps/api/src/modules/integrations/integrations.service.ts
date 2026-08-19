@@ -4,6 +4,7 @@ import { Prisma, prisma } from '@sonder/database';
 import { storageStatus } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
+import { resolvePublicWebUrl } from '../../common/public-web-url';
 import {
   buildGoogleAuthorizeUrl,
   ensureFreshAccessToken,
@@ -147,7 +148,7 @@ export class IntegrationsService {
   }
 
   async test(provider: Provider | 'GOOGLE_CALENDAR' | 'OPENAI') {
-    const { testProvider } = await import('../../integrations/adapters');
+    const { testProvider } = await import('../../integrations/adapters.js');
     return testProvider(provider);
   }
 
@@ -189,7 +190,7 @@ export class IntegrationsService {
       };
     }
     if (provider === 'CHATWOOT') {
-      const { testChatwoot, resolveChatwootConfig } = await import('../../integrations/chatwoot');
+      const { testChatwoot, resolveChatwootConfig } = await import('../../integrations/chatwoot.js');
       const result = await testChatwoot(resolveChatwootConfig(credentials, connection.configuration));
       await prisma.integrationConnection.update({
         where: { id },
@@ -201,7 +202,7 @@ export class IntegrationsService {
       return { ...result, connectionId: id, mode: 'live', credentialsConfigured: true };
     }
     if (provider === 'ABACATEPAY') {
-      const { testAbacatePay, resolveAbacatePayConfig } = await import('../../integrations/abacatepay');
+      const { testAbacatePay, resolveAbacatePayConfig } = await import('../../integrations/abacatepay.js');
       const result = await testAbacatePay(resolveAbacatePayConfig(credentials, connection.configuration));
       await prisma.integrationConnection.update({
         where: { id },
@@ -213,7 +214,7 @@ export class IntegrationsService {
       return { ...result, connectionId: id, mode: 'live', credentialsConfigured: true };
     }
     if (provider === 'NIBO') {
-      const { testNibo } = await import('../../integrations/adapters');
+      const { testNibo } = await import('../../integrations/adapters.js');
       const apiKey = credentials.apiKey || credentials.token;
       const result = await testNibo(apiKey);
       await prisma.integrationConnection.update({
@@ -225,7 +226,7 @@ export class IntegrationsService {
       });
       return { ...result, connectionId: id, mode: 'live', credentialsConfigured: true };
     }
-    const { testProvider } = await import('../../integrations/adapters');
+    const { testProvider } = await import('../../integrations/adapters.js');
     const result = await testProvider(provider);
     await prisma.integrationConnection.update({
       where: { id },
@@ -266,7 +267,7 @@ export class IntegrationsService {
         message: 'API Key do Nibo ausente nesta conexão.',
       };
     }
-    const { fetchNiboCatalog } = await import('../../integrations/adapters');
+    const { fetchNiboCatalog } = await import('../../integrations/adapters.js');
     return fetchNiboCatalog(apiKey);
   }
 
@@ -444,7 +445,7 @@ export class IntegrationsService {
         } as Prisma.InputJsonValue,
       },
     });
-    const webUrl = (process.env.WEB_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const webUrl = resolvePublicWebUrl();
     return {
       success: true,
       connectionId: connection.id,

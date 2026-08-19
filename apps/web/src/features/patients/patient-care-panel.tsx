@@ -294,9 +294,9 @@ export function PatientCarePanel({
           <label>Canal
             <select name="channel" defaultValue="WHATSAPP">
               <option value="WHATSAPP">WhatsApp</option>
-              <option value="SMS">SMS</option>
               <option value="EMAIL">E-mail</option>
               <option value="PHONE">Telefone</option>
+              <option value="SMS" disabled>SMS (não implementado)</option>
             </select>
           </label>
           <label>Categoria

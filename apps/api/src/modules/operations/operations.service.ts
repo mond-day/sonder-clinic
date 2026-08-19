@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { buildClinicalDocumentPdf, buildValidationQrPng } from '../../common/pdf';
 import { formatBrazilianDate, formatCpfFull } from '../../common/dates';
 import { parseWithZod } from '../../common/zod-validation';
+import { resolvePublicWebUrl } from '../../common/public-web-url';
 import { CertificateService } from '../settings/certificate.service';
 import { TreatmentContractService } from '../documents/treatment-contract.service';
 import {
@@ -2477,7 +2478,7 @@ export class OperationsService {
         select: { validationCode: true },
       });
     if (!document && !prescription) throw new NotFoundException('Documento não encontrado.');
-    const webUrl = (process.env.WEB_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const webUrl = resolvePublicWebUrl();
     const validationUrl = `${webUrl}/validar/documento?codigo=${encodeURIComponent(validationCode)}`;
     const content = await buildValidationQrPng(validationUrl);
     return { filename: `qr-${validationCode.slice(0, 8)}.png`, contentType: 'image/png', content };
@@ -2684,7 +2685,7 @@ export class OperationsService {
       isAbacatePayMock,
       resolveAbacatePayConfig,
       createAbacatePayCharge,
-    } = await import('../../integrations/abacatepay');
+    } = await import('../../integrations/abacatepay.js');
     if (isAbacatePayMock()) {
       throw new BadRequestException(
         'AbacatePay em modo MOCK (ABACATEPAY_MOCK=true). Nenhuma cobrança foi criada.',
@@ -2702,7 +2703,7 @@ export class OperationsService {
     });
     let credentials: Record<string, string> | undefined;
     if (connection?.encryptedCredentials) {
-      const { decryptCredentialsPayload } = await import('../../integrations/credentials');
+      const { decryptCredentialsPayload } = await import('../../integrations/credentials.js');
       credentials = decryptCredentialsPayload(connection.encryptedCredentials);
     }
     const config = resolveAbacatePayConfig(credentials, connection?.configuration);
@@ -2799,7 +2800,7 @@ export class OperationsService {
       resolveAbacatePayConfig,
       checkAbacatePayCharge,
       mapAbacatePayStatus,
-    } = await import('../../integrations/abacatepay');
+    } = await import('../../integrations/abacatepay.js');
     if (isAbacatePayMock()) {
       throw new BadRequestException('AbacatePay em modo MOCK. Status não foi consultado.');
     }
@@ -2815,7 +2816,7 @@ export class OperationsService {
     });
     let credentials: Record<string, string> | undefined;
     if (connection?.encryptedCredentials) {
-      const { decryptCredentialsPayload } = await import('../../integrations/credentials');
+      const { decryptCredentialsPayload } = await import('../../integrations/credentials.js');
       credentials = decryptCredentialsPayload(connection.encryptedCredentials);
     }
     const config = resolveAbacatePayConfig(credentials, connection?.configuration);
@@ -2882,7 +2883,7 @@ export class OperationsService {
       timingSafeSecretEqual,
       isAbacatePayPaidEvent,
       readAbacatePayWebhookChargeId,
-    } = await import('../../integrations/abacatepay');
+    } = await import('../../integrations/abacatepay.js');
 
     let payload: unknown;
     try {
@@ -2921,7 +2922,7 @@ export class OperationsService {
     });
     let storedSecret = '';
     if (connection?.encryptedCredentials) {
-      const { decryptCredentialsPayload } = await import('../../integrations/credentials');
+      const { decryptCredentialsPayload } = await import('../../integrations/credentials.js');
       storedSecret = decryptCredentialsPayload(connection.encryptedCredentials).webhookSecret ?? '';
     }
     const hmacOk = verifyAbacatePaySignature(input.rawBody, input.signature);

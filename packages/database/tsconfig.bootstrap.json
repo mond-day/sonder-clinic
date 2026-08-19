@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "module": "Node16",
+    "moduleResolution": "node16"
+  },
+  "include": ["src/bootstrap.ts", "src/bootstrap-cli.ts"]
+}

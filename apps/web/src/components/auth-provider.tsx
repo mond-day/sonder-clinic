@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { authApi, type AuthUser } from '@/lib/api';
+import { authApi, api, type AuthUser } from '@/lib/api';
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -13,26 +13,83 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function isPublicPath(pathname: string): boolean {
+  return pathname === '/login'
+    || pathname === '/setup'
+    || pathname.startsWith('/legal/')
+    || pathname.startsWith('/assinar/')
+    || pathname.startsWith('/validar/');
+}
+
+function isSetupExemptPath(pathname: string): boolean {
+  return pathname === '/setup'
+    || pathname.startsWith('/legal/')
+    || pathname.startsWith('/assinar/')
+    || pathname.startsWith('/validar/');
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [starting, setStarting] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
-    const isPublic =
-      pathname === '/login'
-      || pathname.startsWith('/legal/')
-      || pathname.startsWith('/assinar/')
-      || pathname.startsWith('/validar/');
-    if (isPublic) {
-      setLoading(false);
-      return;
+    const publicPath = isPublicPath(pathname);
+    let cancelled = false;
+    setLoading(true);
+    setStarting(false);
+
+    async function resolveAuth() {
+      for (let attempt = 0; attempt < 20 && !cancelled; attempt++) {
+        try {
+          const status = await api.get<{ required: boolean }>('/setup/status');
+          if (cancelled) return;
+          setStarting(false);
+          if (status.required && !isSetupExemptPath(pathname)) {
+            router.replace('/setup');
+            return;
+          }
+          if (!status.required && pathname === '/setup') {
+            router.replace('/login');
+            return;
+          }
+          if (publicPath) {
+            setLoading(false);
+            return;
+          }
+          try {
+            const { user: current } = await authApi.refresh();
+            if (!cancelled) setUser(current);
+          } catch {
+            if (!cancelled) router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+          }
+          if (!cancelled) setLoading(false);
+          return;
+        } catch {
+          if (cancelled) return;
+          if (publicPath) {
+            setLoading(false);
+            return;
+          }
+          setStarting(true);
+          await wait(2000);
+        }
+      }
+      if (!cancelled) {
+        setStarting(false);
+        setLoading(false);
+        if (!publicPath) router.replace('/login');
+      }
     }
-    authApi.refresh()
-      .then(({ user: current }) => setUser(current))
-      .catch(() => router.replace(`/login?next=${encodeURIComponent(pathname)}`))
-      .finally(() => setLoading(false));
+
+    void resolveAuth();
+    return () => { cancelled = true; };
   }, [pathname, router]);
 
   const value = useMemo<AuthContextValue>(() => ({
@@ -48,6 +105,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       router.replace('/login');
     },
   }), [user, loading, router]);
+
+  if ((loading || starting) && !isPublicPath(pathname)) {
+    return (
+      <AuthContext.Provider value={value}>
+        <main className="login-page">
+          <div className="login-card">
+            <p>{starting ? 'Preparando a instalação…' : 'Carregando…'}</p>
+          </div>
+        </main>
+      </AuthContext.Provider>
+    );
+  }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

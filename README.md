@@ -179,7 +179,9 @@ Na raiz (`package.json`):
 | `pnpm test:integration` | Testes de integração |
 | `pnpm db:generate` | `prisma generate` |
 | `pnpm db:migrate` | `prisma migrate dev` |
-| `pnpm db:seed` | Popula dados de demonstração |
+| `pnpm db:deploy` | `prisma migrate deploy` (produção/CI) |
+| `pnpm db:bootstrap` | Cria o database se necessário + `migrate deploy` |
+| `pnpm db:seed` | Popula dados de demonstração (proibido em produção) |
 | `pnpm db:reset` | Recria o banco (destrutivo) |
 | `pnpm format` | Prettier |
 
@@ -274,12 +276,14 @@ As credenciais ficam **criptografadas (AES‑256‑GCM)**, são **mascaradas na 
 
 Deploy via **Docker Swarm** em `infra/swarm/stack.production.yml`:
 
-- Serviços `web`, `api` e `worker` com healthchecks, limites/reservas de CPU/memória e `restart_policy`.
+- Serviços `migrate`, `web`, `api` e `worker`. Imagens **obrigatórias** (`API_IMAGE`, `WEB_IMAGE`, `WORKER_IMAGE`) — sem fallback `1.0.0`.
+- `COOKIE_SECURE=true` e `WEB_URL` HTTPS no stack da API. Traefik usa `/api/v1/health/ready`.
+- Bootstrap: `infra/swarm/scripts/deploy.sh` (banco + migrate). Primeiro admin na página `/setup`. Detalhes em `docs/FRESH_INSTALL.md`.
 - Redes **externas** `traefik_public` (borda/TLS) e `digital_network` (interna). Redis e MinIO são serviços **já existentes** — não sobem nesta stack.
 - **Traefik** faz roteamento por host com TLS (Let's Encrypt): `web` em `app.sonder.clinic` (porta 3000), `api` em `api.sonder.clinic` (porta 4000). Hosts configuráveis por env (`APP_HOST`, `API_HOST`).
 - Segredos via **Docker secrets** externos: `jwt_access_secret`, `jwt_refresh_secret`, `encryption_master_key`, `s3_access_key`, `s3_secret_key`.
 
-Imagens publicadas no **GHCR** (`ghcr.io/mond-day`), tag padrão **1.2.4**:
+Imagens publicadas no **GHCR** (`ghcr.io/mond-day`). Informe a tag no deploy (`sha-<commit>` ou versão de release):
 
 - `ghcr.io/mond-day/sonder-clinic-api`
 - `ghcr.io/mond-day/sonder-clinic-web`
@@ -287,18 +291,18 @@ Imagens publicadas no **GHCR** (`ghcr.io/mond-day`), tag padrão **1.2.4**:
 
 ## CI/CD e release
 
-- **CI** (`.github/workflows/ci.yml`): em PR e push em `main`/`master` roda `install → prisma generate → typecheck → test → build` (Node 24, pnpm 9.15).
-- **Release de imagens** (`.github/workflows/release-images.yml`): ao enviar uma tag `vX.Y.Z`, constrói as três imagens multi‑stage e publica no GHCR (tags `X.Y.Z`, `X.Y`, `latest`, `sha-<gitsha>`). Push em `main` sem tag gera `0.0.0-sha.<sha>` sem sobrescrever `latest`.
+- **CI** (`.github/workflows/ci.yml`): qualidade (lint/typecheck/test/e2e) e job `fresh-install`.
+- **Release** (`.github/workflows/release.yml`): tag `v1.2.4` (não `v.1.2.4`) dispara testes → imagens GHCR (`1.2.4`, `1.2`, `latest`, `sha-<gitsha>`) → deploy Swarm. Push em `main` sem tag gera `0.0.0-sha.<sha>` sem sobrescrever `latest`.
 
 Passos de release (detalhes em `docs/RELEASE.md`):
 
 ```bash
 # 1. Atualize a versão nos package.json (root + apps + packages)
-# 2. Commit
+# 2. Commit na main
 git tag -a v1.2.4 -m "Release 1.2.4"
 git push origin main
 git push origin v1.2.4
-# 3. Atualize WEB_IMAGE/API_IMAGE/WORKER_IMAGE no stack de produção
+# 3. Abra o domínio: /setup na primeira vez, /login se já existir clínica
 ```
 
 ## Testes, typecheck e build
