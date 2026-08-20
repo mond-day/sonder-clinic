@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
+import { envelopeDecryptJson, envelopeEncryptJson } from '@sonder/observability';
 import { storageStatus } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
@@ -99,7 +100,6 @@ export type SaveConnectionInput = {
 @Injectable()
 export class IntegrationsService {
   private readonly env = envSchema.parse(process.env);
-  private readonly key = this.readEncryptionKey();
 
   async list(organizationId?: string) {
     const persisted = organizationId
@@ -615,16 +615,11 @@ export class IntegrationsService {
     resourceState?: string;
     messageNumber?: string;
   }) {
-    const verified = verifyGoogleWebhookHeaders({
-      channelId: headers.channelId,
-      channelToken: headers.channelToken,
-      resourceState: headers.resourceState,
-    });
-    if (!verified.ok) {
-      throw new BadRequestException(verified.reason ?? 'Webhook Google inválido.');
+    if (!headers.channelId?.trim()) {
+      throw new BadRequestException('X-Goog-Channel-ID ausente.');
     }
 
-    const channelId = headers.channelId!.trim();
+    const channelId = headers.channelId.trim();
     const connections = await prisma.integrationConnection.findMany({
       where: { provider: 'GOOGLE_CALENDAR', status: 'ACTIVE' },
       include: { clinic: { select: { organizationId: true } } },
@@ -646,11 +641,16 @@ export class IntegrationsService {
         ? (match.configuration as Record<string, unknown>)
         : {};
     const expectedToken = resolveGoogleCalendarWebhookToken(cfg);
+    if (!expectedToken) {
+      throw new BadRequestException(
+        'Canal Google sem token configurado. Reconfigure o watch com webhookChannelToken.',
+      );
+    }
     const tokenCheck = verifyGoogleWebhookHeaders({
       channelId,
       channelToken: headers.channelToken,
       resourceState: headers.resourceState,
-      expectedToken: expectedToken || undefined,
+      expectedToken,
     });
     if (!tokenCheck.ok) {
       throw new BadRequestException(tokenCheck.reason ?? 'Token do canal inválido.');
@@ -1276,29 +1276,11 @@ export class IntegrationsService {
     return required[provider].every((key) => Boolean(process.env[key]));
   }
 
-  private readEncryptionKey(): Buffer {
-    const value = process.env.ENCRYPTION_MASTER_KEY;
-    if (!value || !/^[a-f0-9]{64}$/i.test(value)) {
-      throw new BadRequestException('ENCRYPTION_MASTER_KEY deve conter 32 bytes em hexadecimal.');
-    }
-    return Buffer.from(value, 'hex');
-  }
-
   private encrypt(value: Record<string, string>): string {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.key, iv);
-    const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
-    return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
+    return envelopeEncryptJson(value);
   }
 
   decryptForAdapter(payload: string): Record<string, string> {
-    const [ivValue, tagValue, encryptedValue] = payload.split('.');
-    if (!ivValue || !tagValue || !encryptedValue) throw new BadRequestException('Credencial criptografada inválida.');
-    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(ivValue, 'base64url'));
-    decipher.setAuthTag(Buffer.from(tagValue, 'base64url'));
-    return parseWithZod(credentialsSchema, JSON.parse(Buffer.concat([
-      decipher.update(Buffer.from(encryptedValue, 'base64url')),
-      decipher.final(),
-    ]).toString('utf8')));
+    return parseWithZod(credentialsSchema, envelopeDecryptJson(payload));
   }
 }

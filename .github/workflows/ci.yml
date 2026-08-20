@@ -55,6 +55,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Audit dependências de produção
+        run: pnpm audit --prod --audit-level=high
+        continue-on-error: true
       - run: pnpm --filter @sonder/database generate
       - run: pnpm lint
       - run: pnpm typecheck

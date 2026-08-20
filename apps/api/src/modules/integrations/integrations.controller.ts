@@ -143,7 +143,8 @@ export class GoogleCalendarOauthController {
 
 /**
  * Webhook AbacatePay (transparent.completed) — sem AuthGuard.
- * Cadastre no dashboard: POST {API}/integrations/abacatepay/webhook?webhookSecret=SEU_SEGREDO
+ * Cadastre no dashboard: POST {API}/integrations/abacatepay/webhook
+ * (assinatura HMAC obrigatória no header x-webhook-signature).
  */
 @ApiTags('integrations-webhooks')
 @Controller('integrations/abacatepay')
@@ -151,11 +152,16 @@ export class AbacatePayWebhookController {
   constructor(private readonly operations: OperationsService) {}
 
   @Post('webhook')
-  handle(
+  async handle(
     @Req() req: RawBodyRequest<Request>,
-    @Query('webhookSecret') webhookSecret?: string,
     @Headers('x-webhook-signature') signature?: string,
   ) {
+    const { assertRateLimit, RATE_LIMITS } = await import('../../common/rate-limit.js');
+    await assertRateLimit(
+      `webhook:abacatepay:${req.ip ?? 'unknown'}`,
+      RATE_LIMITS.webhook.max,
+      RATE_LIMITS.webhook.windowMs,
+    );
     const raw = req.rawBody;
     if (!raw?.length) {
       throw new UnauthorizedException('Corpo do webhook ausente.');
@@ -163,7 +169,6 @@ export class AbacatePayWebhookController {
     return this.operations.handleAbacatePayWebhook({
       rawBody: Buffer.isBuffer(raw) ? raw : Buffer.from(raw),
       signature,
-      webhookSecret,
     });
   }
 }

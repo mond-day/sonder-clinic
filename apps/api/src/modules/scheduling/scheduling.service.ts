@@ -1,8 +1,14 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, prisma } from '@sonder/database';
 import { z } from 'zod';
+import {
+  assertClinicInScope,
+  clinicWhere,
+  type ClinicScope,
+} from '../../common/clinic-scope';
 import { parseWithZod } from '../../common/zod-validation';
 import { IntegrationsService, type PersonalCalendarWarning } from '../integrations/integrations.service';
+import { rethrowAppointmentConstraint } from './appointment-conflict';
 
 const appointmentSchema = z.object({
   clinicId: z.string().uuid(),
@@ -70,11 +76,12 @@ const appointmentInclude = {
 export class SchedulingService {
   constructor(private readonly integrations: IntegrationsService) {}
 
-  list(organizationId: string, from?: string, to?: string, clinicId?: string) {
+  list(organizationId: string, from?: string, to?: string, clinicId?: string, scope?: ClinicScope) {
+    if (clinicId && scope) assertClinicInScope(scope, clinicId);
     return prisma.appointment.findMany({
       where: {
         organizationId,
-        clinicId,
+        ...(clinicId ? { clinicId } : clinicWhere(scope ?? { clinicIds: null })),
         startAt: {
           gte: from ? new Date(from) : undefined,
           lt: to ? new Date(to) : undefined,
@@ -86,9 +93,13 @@ export class SchedulingService {
     });
   }
 
-  async find(organizationId: string, id: string) {
+  async find(organizationId: string, id: string, scope?: ClinicScope) {
     const appointment = await prisma.appointment.findFirst({
-      where: { id, organizationId },
+      where: {
+        id,
+        organizationId,
+        ...clinicWhere(scope ?? { clinicIds: null }),
+      },
       include: appointmentInclude,
     });
     if (!appointment) throw new NotFoundException('Agendamento não encontrado.');
@@ -134,8 +145,9 @@ export class SchedulingService {
     );
   }
 
-  async create(organizationId: string, input: AppointmentInput) {
+  async create(organizationId: string, input: AppointmentInput, scope?: ClinicScope) {
     parseWithZod(appointmentSchema, input);
+    if (scope) assertClinicInScope(scope, input.clinicId);
     await this.assertResources(organizationId, input);
     const startAt = new Date(input.startAt);
     const endAt = new Date(input.endAt);
@@ -180,16 +192,23 @@ export class SchedulingService {
       await this.configureReminder(transaction, organizationId, row.id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
       await this.enqueueCalendarSync(transaction, row.id, 'UPSERT');
       return transaction.appointment.findUniqueOrThrow({ where: { id: row.id }, include: appointmentInclude });
-    }, { isolationLevel: 'Serializable' });
+    }, { isolationLevel: 'Serializable' }).catch(rethrowAppointmentConstraint);
 
     const warnings = await this.safePersonalWarnings(organizationId, input);
     return { ...created, warnings };
   }
 
-  async reschedule(organizationId: string, id: string, input: AppointmentInput) {
+  async reschedule(organizationId: string, id: string, input: AppointmentInput, scope?: ClinicScope) {
     parseWithZod(appointmentSchema, input);
+    if (scope) assertClinicInScope(scope, input.clinicId);
     await this.assertResources(organizationId, input);
-    const appointment = await prisma.appointment.findFirst({ where: { id, organizationId } });
+    const appointment = await prisma.appointment.findFirst({
+      where: {
+        id,
+        organizationId,
+        ...clinicWhere(scope ?? { clinicIds: null }),
+      },
+    });
     if (!appointment) throw new NotFoundException('Agendamento não encontrado.');
     if (appointment.status === 'CANCELLED') throw new ConflictException('Agendamento cancelado não pode ser remarcado.');
     const startAt = new Date(input.startAt);
@@ -242,7 +261,7 @@ export class SchedulingService {
         });
       }
       return transaction.appointment.findUniqueOrThrow({ where: { id: row.id }, include: appointmentInclude });
-    }, { isolationLevel: 'Serializable' });
+    }, { isolationLevel: 'Serializable' }).catch(rethrowAppointmentConstraint);
 
     const warnings = await this.safePersonalWarnings(organizationId, input, id);
     return { ...updated, warnings };

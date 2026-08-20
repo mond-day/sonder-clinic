@@ -90,6 +90,7 @@ const DOCKER_SECRETS: Array<[envName: string, fileName: string]> = [
   ['S3_ACCESS_KEY', 's3_access_key'],
   ['S3_SECRET_KEY', 's3_secret_key'],
   ['INITIAL_SETUP_TOKEN', 'initial_setup_token'],
+  ['DATABASE_URL', 'database_url'],
   ['DATABASE_ADMIN_URL', 'database_admin_url'],
 ];
 
@@ -110,6 +111,14 @@ export function hydrateDockerSecrets(secretsDir = '/run/secrets'): void {
 }
 
 export type NestLogLevel = 'log' | 'error' | 'warn' | 'debug' | 'verbose';
+
+export {
+  envelopeDecrypt,
+  envelopeDecryptJson,
+  envelopeEncrypt,
+  envelopeEncryptJson,
+  isEnvelopeV2,
+} from './envelope-crypto';
 
 /** Converte LOG_LEVEL (info/debug/…) nos níveis do NestJS. */
 export function nestLoggerLevels(raw = process.env.LOG_LEVEL): NestLogLevel[] {

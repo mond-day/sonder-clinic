@@ -138,7 +138,7 @@ const integrationFields: Record<IntegrationProvider, Array<{
   ],
   ABACATEPAY: [
     { key: 'apiKey', label: 'Chave de acesso', secret: true, hint: 'Bearer token da AbacatePay (API v2).' },
-    { key: 'webhookSecret', label: 'Segredo de webhook', secret: true, required: false, hint: 'Opcional. Cadastre POST {API}/integrations/abacatepay/webhook?webhookSecret=SEU_SEGREDO no dashboard. “Atualizar status” continua disponível como fallback.' },
+    { key: 'webhookSecret', label: 'Segredo HMAC de webhook', secret: true, required: false, hint: 'Cadastre POST {API}/integrations/abacatepay/webhook no dashboard AbacatePay. A autenticação é só por assinatura HMAC (header x-webhook-signature).' },
     { key: 'baseUrl', label: 'URL da API', type: 'url', required: false, hint: 'Padrão: https://api.abacatepay.com/v2' },
   ],
   EVOLUTION: [

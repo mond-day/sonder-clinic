@@ -928,7 +928,7 @@ export function SettingsView() {
               <div className="info-item span-2">
                 <small>URL do webhook</small>
                 <strong className="contract-hint" style={{ display: 'block', marginTop: 6 }}>
-                  {`${API_URL}/integrations/abacatepay/webhook?webhookSecret=SEU_SEGREDO`}
+                  {`${API_URL}/integrations/abacatepay/webhook`}
                 </strong>
                 <span>Cadastre esta URL no dashboard da AbacatePay (evento transparent.completed). Inclua o segredo salvo na integração.</span>
               </div>

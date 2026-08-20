@@ -294,19 +294,19 @@ export class SettingsController {
 
   @Get('outbox/dead-letter')
   @RequirePermissions('organization.manage', 'audit.view')
-  deadLetter(@Query('limit') limit?: string) {
-    return this.settings.listDeadLetterOutbox(limit ? Number(limit) : 50);
+  deadLetter(@Req() req: AuthenticatedRequest, @Query('limit') limit?: string) {
+    return this.settings.listDeadLetterOutbox(req.auth.organizationId, limit ? Number(limit) : 50);
   }
 
   @Post('outbox/dead-letter/:id/retry')
   @RequirePermissions('organization.manage')
   retryDeadLetter(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.settings.retryDeadLetterOutbox(id, req.auth.userId);
+    return this.settings.retryDeadLetterOutbox(req.auth.organizationId, id, req.auth.userId);
   }
 
   @Post('outbox/dead-letter/:id/discard')
   @RequirePermissions('organization.manage')
   discardDeadLetter(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.settings.discardDeadLetterOutbox(id, req.auth.userId);
+    return this.settings.discardDeadLetterOutbox(req.auth.organizationId, id, req.auth.userId);
   }
 }

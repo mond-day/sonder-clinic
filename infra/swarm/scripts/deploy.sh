@@ -37,6 +37,27 @@ if [[ ${#token} -lt 16 ]]; then
   exit 1
 fi
 
+ensure_secret() {
+  local name="$1"
+  local value="$2"
+  if docker secret inspect "${name}" >/dev/null 2>&1; then
+    echo "Secret ${name} já existe (Docker secrets são imutáveis; remova manualmente para rotacionar)."
+    return 0
+  fi
+  printf '%s' "${value}" | docker secret create "${name}" -
+  echo "Secret ${name} criado."
+}
+
+ensure_secret database_url "${DATABASE_URL}"
+ensure_secret initial_setup_token "${INITIAL_SETUP_TOKEN}"
+if [[ -n "${DATABASE_ADMIN_URL:-}" ]]; then
+  ensure_secret database_admin_url "${DATABASE_ADMIN_URL}"
+elif ! docker secret inspect database_admin_url >/dev/null 2>&1; then
+  # Secret externo obrigatório no stack; placeholder vazio se o admin URL não for usado.
+  printf '' | docker secret create database_admin_url -
+  echo "Secret database_admin_url criado (vazio). Defina DATABASE_ADMIN_URL para criar o database automaticamente."
+fi
+
 echo "Deploying ${STACK_NAME} from ${COMPOSE_FILE}"
 docker stack deploy -c "${COMPOSE_FILE}" "${STACK_NAME}"
 

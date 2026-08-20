@@ -3,6 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { startObservability, hydrateDockerSecrets, nestLoggerLevels } from '@sonder/observability';
 import { AppModule } from './app.module';
 import { assertProductionEnvironment, isSwaggerEnabled } from './common/production-env';
@@ -23,10 +24,29 @@ async function bootstrap(): Promise<void> {
     rawBody: true,
     logger: nestLoggerLevels(),
   });
+
+  const isProd = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
+  const httpAdapter = app.getHttpAdapter();
+  if (typeof httpAdapter.getInstance === 'function') {
+    const instance = httpAdapter.getInstance() as { set?: (key: string, value: unknown) => void };
+    if (isProd && typeof instance.set === 'function') {
+      instance.set('trust proxy', 1);
+    }
+  }
+
+  app.use(helmet({
+    contentSecurityPolicy: isSwaggerEnabled() ? false : {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  }));
   app.setGlobalPrefix('api/v1');
   app.use(cookieParser());
 
-  const isProd = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
   const corsOrigin = process.env.CORS_ORIGIN?.trim();
   if (isProd && !corsOrigin) {
     throw new Error('CORS_ORIGIN deve ser explícito em produção.');

@@ -10,10 +10,12 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
+import { RATE_LIMITS, consumeRateLimit } from '../../common/rate-limit';
 import { ApiKeysService } from './api-keys.service';
 import {
+  API_KEY_RATE_LIMIT,
+  apiKeyRateLimitKey,
   extractApiKeyHeader,
-  SlidingWindowThrottle,
   type ApiKeyScope,
 } from './api-key.utils';
 
@@ -33,8 +35,6 @@ export type PublicApiAuth = {
 
 export type PublicApiRequest = Request & { publicAuth: PublicApiAuth };
 
-const throttle = new SlidingWindowThrottle();
-
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
   constructor(
@@ -50,9 +50,13 @@ export class ApiKeyGuard implements CanActivate {
     }
 
     const auth = await this.keys.authenticate(plaintext);
-    const limit = throttle.consume(auth.apiKeyId);
-    if (!limit.allowed) {
-      throw new HttpException('Limite de 120 requisições por minuto nesta chave.', HttpStatus.TOO_MANY_REQUESTS);
+    const { max, windowMs } = RATE_LIMITS.apiKey;
+    const allowed = await consumeRateLimit(apiKeyRateLimitKey(auth.apiKeyId), max, windowMs);
+    if (!allowed) {
+      throw new HttpException(
+        `Limite de ${API_KEY_RATE_LIMIT.max} requisições por minuto nesta chave.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
     request.publicAuth = auth;
 

@@ -19,7 +19,7 @@ const inviteSchema = z.object({
 });
 
 const createUserSchema = inviteSchema.extend({
-  password: z.string().min(8, 'A senha deve ter ao menos 8 caracteres.'),
+  password: z.string().min(10, 'A senha deve ter ao menos 10 caracteres, com maiúscula, minúscula e número.'),
 });
 
 const editUserSchema = z.object({
@@ -470,7 +470,7 @@ export function UsersView() {
             </select>
           </label>
           {inviteMode === 'create' ? (
-            <label>Senha inicial<input name="password" type="password" minLength={8} required autoComplete="new-password" /></label>
+            <label>Senha inicial<input name="password" type="password" minLength={10} required autoComplete="new-password" /></label>
           ) : null}
           {inviteMode === 'invite' && smtpConfigured === false ? (
             <p className="form-error span-2" role="alert">

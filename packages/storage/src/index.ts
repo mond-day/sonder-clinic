@@ -156,6 +156,7 @@ class MinioStorageAdapter implements StorageAdapter {
       Body: body,
       ContentType: input.contentType,
       Metadata: input.metadata,
+      ServerSideEncryption: 'AES256',
     }));
     return {
       bucket: this.bucket,

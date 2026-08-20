@@ -16,15 +16,15 @@ Passo a passo de lançamento: `docs/RELEASE.md`.
 
 Não use seed de demonstração em produção (`admin@sonder.local` / `Sonder@123` são só para desenvolvimento).
 
-O token `INITIAL_SETUP_TOKEN` fica **só na API** (`.env` / secret). A página `/setup` pede esse valor no formulário; o Next.js **não** injeta o token sozinho.
+O token `INITIAL_SETUP_TOKEN` e o `DATABASE_URL` entram como **Docker secrets** no Swarm (`initial_setup_token`, `database_url`). O `deploy.sh` cria esses secrets a partir do `.env` da VPS se ainda não existirem. A página `/setup` pede o token no formulário; o Next.js **não** injeta o token sozinho.
 
 ## O PostgreSQL precisa ter o database criado antes?
 
-Não, no fluxo suportado. No `.env` da VPS:
+Não, no fluxo suportado. No `.env` da VPS (usado pelo `deploy.sh` para popular secrets):
 
-- `DATABASE_URL` — usuário runtime e database da aplicação (ex.: `sonder_clinic`)
-- `DATABASE_ADMIN_URL` (opcional) — conexão no database de manutenção (`postgres`) com permissão para `CREATE DATABASE`
-- `INITIAL_SETUP_TOKEN` — secret forte na API; cole o mesmo valor no campo de token de `/setup`
+- `DATABASE_URL` — usuário runtime e database da aplicação (ex.: `sonder_clinic`); montado como secret `database_url`
+- `DATABASE_ADMIN_URL` (opcional) — secret `database_admin_url` no serviço `migrate`
+- `INITIAL_SETUP_TOKEN` — secret `initial_setup_token` na API; cole o mesmo valor no campo de token de `/setup`
 
 Se `sonder_clinic` ainda não existir, o bootstrap cria. Se já existir, segue direto para as migrations.
 

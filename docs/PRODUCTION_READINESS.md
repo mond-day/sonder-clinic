@@ -26,7 +26,7 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 | Item | Status | Notas |
 |------|--------|-------|
 | Imagens GHCR (`api`/`web`/`worker`) | **GO (código)** | Tag `vX.Y.Z` só após CI do workflow Release; `main` via `workflow_run` |
-| Branch protection `main` exige CI | **PARTIAL** | Documentado; configurar no GitHub |
+| Branch protection `main` exige CI | **PARTIAL** | Configurar no GitHub (Settings → Branches). O YAML do CI não ativa protection sozinho. Exemplo: `gh api repos/{owner}/{repo}/branches/main/protection` com `required_status_checks` apontando para o job `quality`. |
 | Health liveness `/health` | **GO** | |
 | Readiness `/api/v1/health/ready` | **GO (código)** | DB + Redis (prod) + storage |
 | Swagger | **GO (código)** | Off por default em prod (`SWAGGER_ENABLED`) |

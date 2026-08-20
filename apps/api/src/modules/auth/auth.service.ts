@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { prisma } from '@sonder/database';
+import { Prisma, prisma } from '@sonder/database';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
 import { assertSmtpConfigured, sendMail, smtpConfigured } from '../../common/mail';
@@ -17,6 +17,15 @@ type LoginResult = {
   accessToken: string;
   refreshToken: string;
   user: { id: string; name: string; email: string; organizationId: string; permissions: string[] };
+};
+
+type UserWithRoles = {
+  id: string;
+  name: string;
+  email: string;
+  organizationId: string;
+  status: string;
+  roles: Array<{ role: { permissions: Array<{ permission: { code: string } }> } }>;
 };
 
 @Injectable()
@@ -60,20 +69,49 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string): Promise<LoginResult> {
-    const session = await prisma.session.findFirst({
-      where: {
-        refreshTokenHash: this.hash(refreshToken),
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      include: {
-        user: { include: { roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } } } },
-      },
-    });
-    if (!session) throw new UnauthorizedException('Sessão inválida ou expirada.');
+    const tokenHash = this.hash(refreshToken);
+    const now = new Date();
 
-    await prisma.session.update({ where: { id: session.id }, data: { revokedAt: new Date() } });
-    return this.issueForUser(session.user.id, session.userAgent ?? undefined, session.ipAddress ?? undefined);
+    return prisma.$transaction(async (tx) => {
+      // Claim atômico: só um refresh concorrente revoga o token (count === 1).
+      const claimed = await tx.session.updateMany({
+        where: {
+          refreshTokenHash: tokenHash,
+          revokedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { revokedAt: now },
+      });
+      if (claimed.count !== 1) {
+        throw new UnauthorizedException('Sessão inválida ou expirada.');
+      }
+
+      const session = await tx.session.findFirst({
+        where: { refreshTokenHash: tokenHash, revokedAt: now },
+        include: {
+          user: {
+            include: {
+              roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } },
+            },
+          },
+        },
+      });
+      if (!session) throw new UnauthorizedException('Sessão inválida ou expirada.');
+      if (session.user.status !== 'ACTIVE') {
+        await tx.session.updateMany({
+          where: { userId: session.user.id, revokedAt: null },
+          data: { revokedAt: now },
+        });
+        throw new UnauthorizedException('Sessão inválida ou expirada.');
+      }
+
+      return this.issueForUserInTx(
+        tx,
+        session.user,
+        session.userAgent ?? undefined,
+        session.ipAddress ?? undefined,
+      );
+    });
   }
 
   async logout(refreshToken: string): Promise<void> {
@@ -123,22 +161,33 @@ export class AuthService {
   async resetPassword(token: string, password: string): Promise<{ success: true }> {
     assertPasswordPolicy(password);
     const tokenHash = this.hash(token);
-    const row = await prisma.passwordResetToken.findFirst({
-      where: { tokenHash, usedAt: null, expiresAt: { gt: new Date() } },
-      include: { user: { select: { id: true, status: true } } },
-    });
-    if (!row || row.user.status !== 'ACTIVE') {
-      throw new BadRequestException('Link de redefinição inválido ou expirado.');
-    }
-    const passwordHash = await argon2.hash(password);
-    await prisma.$transaction([
-      prisma.user.update({ where: { id: row.userId }, data: { passwordHash } }),
-      prisma.passwordResetToken.update({ where: { id: row.id }, data: { usedAt: new Date() } }),
-      prisma.session.updateMany({
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+    const now = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      // Consumo atômico: dois resets simultâneos com o mesmo token → só um vence.
+      const claimed = await tx.passwordResetToken.updateMany({
+        where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (claimed.count !== 1) {
+        throw new BadRequestException('Link de redefinição inválido ou expirado.');
+      }
+
+      const row = await tx.passwordResetToken.findFirst({
+        where: { tokenHash, usedAt: now },
+        include: { user: { select: { id: true, status: true } } },
+      });
+      if (!row || row.user.status !== 'ACTIVE') {
+        throw new BadRequestException('Link de redefinição inválido ou expirado.');
+      }
+
+      await tx.user.update({ where: { id: row.userId }, data: { passwordHash } });
+      await tx.session.updateMany({
         where: { userId: row.userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      }),
-    ]);
+        data: { revokedAt: now },
+      });
+    });
     return { success: true };
   }
 
@@ -251,27 +300,31 @@ export class AuthService {
     return invitation;
   }
 
-  private async issueForUser(
-    userId: string,
+  private async issueForUserInTx(
+    tx: Prisma.TransactionClient,
+    user: UserWithRoles,
     userAgent?: string,
     ipAddress?: string,
   ): Promise<LoginResult> {
-    const refreshed = await prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      include: { roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } } },
-    });
-    const permissions = [...new Set(refreshed.roles.flatMap(({ role }) =>
+    if (user.status !== 'ACTIVE') {
+      await tx.session.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      throw new UnauthorizedException('Sessão inválida ou expirada.');
+    }
+    const permissions = [...new Set(user.roles.flatMap(({ role }) =>
       role.permissions.map(({ permission }) => permission.code),
     ))];
     const accessToken = await this.jwt.signAsync({
-      sub: refreshed.id,
-      organizationId: refreshed.organizationId,
+      sub: user.id,
+      organizationId: user.organizationId,
       permissions,
     });
     const nextRefresh = randomBytes(48).toString('base64url');
-    await prisma.session.create({
+    await tx.session.create({
       data: {
-        userId: refreshed.id,
+        userId: user.id,
         refreshTokenHash: this.hash(nextRefresh),
         userAgent,
         ipAddress,
@@ -282,10 +335,10 @@ export class AuthService {
       accessToken,
       refreshToken: nextRefresh,
       user: {
-        id: refreshed.id,
-        name: refreshed.name,
-        email: refreshed.email,
-        organizationId: refreshed.organizationId,
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        organizationId: user.organizationId,
         permissions,
       },
     };

@@ -19,12 +19,26 @@ export class ApiError extends Error {
   }
 }
 
+function readCookie(name: string): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]!) : undefined;
+}
+
+function csrfHeaders(): HeadersInit {
+  const token = readCookie('csrf_token');
+  return token ? { 'X-CSRF-Token': token } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     credentials: 'include',
     headers: {
       ...(init?.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+      ...(mutating ? csrfHeaders() : {}),
       ...init?.headers,
     },
   });
@@ -33,6 +47,7 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
     const refreshed = await fetch(`${API_URL}/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
+      headers: csrfHeaders(),
     });
     if (refreshed.ok) return request<T>(path, init, false);
   }
@@ -67,3 +82,9 @@ export const authApi = {
   refresh: () => request<{ user: AuthUser }>('/auth/refresh', { method: 'POST' }, false),
   logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }, false),
 };
+
+/** Path relativo seguro para redirect pós-login (bloqueia //evil.com). */
+export function safeNextPath(next: string | null | undefined, fallback = '/'): string {
+  if (!next || !next.startsWith('/') || next.startsWith('//')) return fallback;
+  return next;
+}

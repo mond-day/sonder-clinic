@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Use
 import { ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUUID, Length, MaxLength, MinLength } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
+import { resolveClinicScope } from '../../common/clinic-scope';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { PatientsService } from './patients.service';
 
@@ -127,7 +128,7 @@ export class PatientsController {
 
   @Get('patients')
   @RequirePermissions('patient.view')
-  list(
+  async list(
     @Req() request: AuthenticatedRequest,
     @Query('search') search?: string,
     @Query('clinicId') clinicId?: string,
@@ -136,10 +137,16 @@ export class PatientsController {
     @Query('includeArchived') includeArchived?: string,
   ) {
     const takeNum = take ? Number(take) : undefined;
+    const scope = await resolveClinicScope(
+      request.auth.organizationId,
+      request.auth.userId,
+      request.auth.permissions ?? [],
+    );
     return this.patients.list(request.auth.organizationId, search, clinicId, {
       cursor,
       take: Number.isFinite(takeNum) ? takeNum : undefined,
       includeArchived: includeArchived === 'true',
+      scope,
     });
   }
 
@@ -163,8 +170,13 @@ export class PatientsController {
 
   @Post('patients')
   @RequirePermissions('patient.create')
-  create(@Req() request: AuthenticatedRequest, @Body() input: CreatePatientDto) {
-    return this.patients.create(request.auth.organizationId, input);
+  async create(@Req() request: AuthenticatedRequest, @Body() input: CreatePatientDto) {
+    const scope = await resolveClinicScope(
+      request.auth.organizationId,
+      request.auth.userId,
+      request.auth.permissions ?? [],
+    );
+    return this.patients.create(request.auth.organizationId, input, scope);
   }
 
   @Put('patients/:id')
@@ -175,8 +187,13 @@ export class PatientsController {
 
   @Get('patients/:id')
   @RequirePermissions('patient.view')
-  find(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
-    return this.patients.find(request.auth.organizationId, id);
+  async find(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    const scope = await resolveClinicScope(
+      request.auth.organizationId,
+      request.auth.userId,
+      request.auth.permissions ?? [],
+    );
+    return this.patients.find(request.auth.organizationId, id, scope);
   }
 
   @Get('patients/:id/merge-preview')

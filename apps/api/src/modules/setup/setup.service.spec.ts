@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { clearMemoryRateLimits, consumeRateLimit, RATE_LIMITS } from '../../common/rate-limit';
 import { classifySetupState } from './setup.dto';
-import { consumeSetupAttempt, setupTokensEqual } from './setup.service';
+import { setupTokensEqual } from './setup.service';
 
 describe('setup helpers', () => {
   it('classifica EMPTY / READY / INCONSISTENT sem expor contagens', () => {
@@ -19,14 +20,14 @@ describe('setup helpers', () => {
     expect(setupTokensEqual('token-certo', 'token-errado')).toBe(false);
   });
 
-  it('limita tentativas de initialize por chave', () => {
-    const key = `test-${Date.now()}-${Math.random()}`;
-    expect(consumeSetupAttempt(key, 1_000)).toBe(true);
-    expect(consumeSetupAttempt(key, 1_001)).toBe(true);
-    expect(consumeSetupAttempt(key, 1_002)).toBe(true);
-    expect(consumeSetupAttempt(key, 1_003)).toBe(true);
-    expect(consumeSetupAttempt(key, 1_004)).toBe(true);
-    expect(consumeSetupAttempt(key, 1_005)).toBe(false);
-    expect(consumeSetupAttempt(key, 1_000 + 15 * 60 * 1000)).toBe(true);
+  it('limita tentativas de initialize por chave', async () => {
+    clearMemoryRateLimits();
+    const key = `setup:test-${Date.now()}-${Math.random()}`;
+    const { max, windowMs } = RATE_LIMITS.setup;
+    for (let i = 0; i < max; i += 1) {
+      expect(await consumeRateLimit(key, max, windowMs, 1_000 + i)).toBe(true);
+    }
+    expect(await consumeRateLimit(key, max, windowMs, 1_000 + max)).toBe(false);
+    expect(await consumeRateLimit(key, max, windowMs, 1_000 + windowMs)).toBe(true);
   });
 });

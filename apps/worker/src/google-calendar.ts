@@ -1,9 +1,4 @@
-/**
- * Google Calendar sync no worker (clinic → Google).
- * Espelha helpers da API; tokens vêm da IntegrationConnection criptografada.
- */
-
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { envelopeDecryptJson, envelopeEncryptJson } from '@sonder/observability';
 
 export type GoogleOAuthEnv = {
   clientId: string;
@@ -24,47 +19,12 @@ function pick(...values: unknown[]): string {
   return '';
 }
 
-function masterKey(): Buffer {
-  const keyValue = process.env.ENCRYPTION_MASTER_KEY;
-  if (!keyValue || !/^[a-f0-9]{64}$/i.test(keyValue)) {
-    throw new Error('ENCRYPTION_MASTER_KEY ausente ou inválida no worker.');
-  }
-  return Buffer.from(keyValue, 'hex');
-}
-
 export function encryptIntegrationCredentials(value: Record<string, string>): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', masterKey(), iv);
-  const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
-  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
+  return envelopeEncryptJson(value);
 }
 
 export function decryptIntegrationCredentials(payload: string): Record<string, string> {
-  const [ivValue, tagValue, encryptedValue] = payload.split('.');
-  if (!ivValue || !tagValue || !encryptedValue) {
-    throw new Error('Credencial Google criptografada inválida.');
-  }
-  const decipher = createDecipheriv(
-    'aes-256-gcm',
-    masterKey(),
-    Buffer.from(ivValue, 'base64url'),
-  );
-  decipher.setAuthTag(Buffer.from(tagValue, 'base64url'));
-  const parsed: unknown = JSON.parse(
-    Buffer.concat([
-      decipher.update(Buffer.from(encryptedValue, 'base64url')),
-      decipher.final(),
-    ]).toString('utf8'),
-  );
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Credencial Google descriptografada inválida.');
-  }
-  return Object.fromEntries(
-    Object.entries(parsed).filter(
-      (entry): entry is [string, string] =>
-        typeof entry[1] === 'string' && entry[1].trim().length > 0,
-    ),
-  );
+  return envelopeDecryptJson(payload);
 }
 
 export function resolveGoogleOAuth(credentials: Record<string, string>): GoogleOAuthEnv | null {

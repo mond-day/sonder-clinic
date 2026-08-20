@@ -1,8 +1,6 @@
 import {
   ConflictException,
   ForbiddenException,
-  HttpException,
-  HttpStatus,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -11,6 +9,7 @@ import * as argon2 from 'argon2';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { parseWithZod } from '../../common/zod-validation';
 import { assertPasswordPolicy } from '../../common/password-policy';
+import { assertRateLimit, RATE_LIMITS } from '../../common/rate-limit';
 import {
   classifySetupState,
   initializeSetupSchema,
@@ -19,25 +18,11 @@ import {
 } from './setup.dto';
 
 const SETUP_LOCK_KEY = 87_214_602;
-const SETUP_ATTEMPT_MAX = 5;
-const SETUP_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
-const setupAttempts = new Map<string, { count: number; resetAt: number }>();
 
 export function setupTokensEqual(expected: string, provided: string): boolean {
   const left = createHash('sha256').update(expected).digest();
   const right = createHash('sha256').update(provided).digest();
   return timingSafeEqual(left, right);
-}
-
-export function consumeSetupAttempt(key: string, now = Date.now()): boolean {
-  const current = setupAttempts.get(key);
-  if (!current || now >= current.resetAt) {
-    setupAttempts.set(key, { count: 1, resetAt: now + SETUP_ATTEMPT_WINDOW_MS });
-    return true;
-  }
-  if (current.count >= SETUP_ATTEMPT_MAX) return false;
-  current.count += 1;
-  return true;
 }
 
 @Injectable()
@@ -63,9 +48,12 @@ export class SetupService {
     headerToken: string | undefined,
     meta?: { ipAddress?: string; userAgent?: string },
   ) {
-    if (!consumeSetupAttempt(meta?.ipAddress?.trim() || 'unknown')) {
-      throw new HttpException('Muitas tentativas de setup. Aguarde alguns minutos.', HttpStatus.TOO_MANY_REQUESTS);
-    }
+    await assertRateLimit(
+      `setup:${meta?.ipAddress?.trim() || 'unknown'}`,
+      RATE_LIMITS.setup.max,
+      RATE_LIMITS.setup.windowMs,
+      'Muitas tentativas de setup. Aguarde alguns minutos.',
+    );
 
     const status = await this.getStatus();
     if (status.state === 'READY') {

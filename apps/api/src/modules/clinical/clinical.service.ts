@@ -11,6 +11,18 @@ const json = (value: unknown) => value as Prisma.InputJsonValue;
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const STORAGE_UNAVAILABLE_MESSAGE =
   'O armazenamento de arquivos não está configurado. Não é possível enviar ou abrir fotos neste momento.';
+const ALLOWED_CLINICAL_MIME = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'video/mp4',
+]);
+
+function sanitizeDownloadFilename(name: string): string {
+  const base = name.replace(/[\r\n"]/g, '').replace(/[^\w.\- ()[\]]+/g, '_').trim();
+  return (base || 'arquivo').slice(0, 180);
+}
 
 function serializeMediaFile<T extends { file?: { sizeBytes?: bigint | number | null } | null }>(row: T): T {
   if (!row.file || row.file.sizeBytes == null) return row;
@@ -490,6 +502,11 @@ export class ClinicalService {
     if (media.file.antivirusStatus === 'INFECTED') {
       throw new ConflictException('Arquivo rejeitado pelo antivírus.');
     }
+    if (media.file.antivirusStatus !== 'CLEAN') {
+      throw new ConflictException(
+        'Arquivo ainda não liberado pelo antivírus. Aguarde a varredura ou configure ClamAV (AV_DRIVER=clamav).',
+      );
+    }
     const buffer = await this.storage.getObject(media.file.objectKey);
     await prisma.auditEvent.create({
       data: {
@@ -502,7 +519,7 @@ export class ClinicalService {
       },
     });
     return {
-      filename: media.displayName ?? media.file.originalName,
+      filename: sanitizeDownloadFilename(media.displayName ?? media.file.originalName),
       contentType: media.file.mimeType,
       content: buffer,
       antivirusStatus: media.file.antivirusStatus,
@@ -672,7 +689,11 @@ export class ClinicalService {
     const file = input.file;
     if (!file?.buffer?.length) throw new BadRequestException('Envie um arquivo.');
     if (file.size > MAX_MEDIA_BYTES) throw new BadRequestException('Arquivo deve ter no máximo 25 MB.');
-    if (input.type === 'PROFILE_PHOTO' && !file.mimetype.toLowerCase().startsWith('image/')) {
+    const mime = (file.mimetype || '').toLowerCase();
+    if (!ALLOWED_CLINICAL_MIME.has(mime)) {
+      throw new BadRequestException('Tipo de arquivo não permitido. Use PDF, JPEG, PNG, WEBP ou MP4.');
+    }
+    if (input.type === 'PROFILE_PHOTO' && !mime.startsWith('image/')) {
       throw new BadRequestException('A foto de perfil deve ser uma imagem (JPG, PNG ou WEBP).');
     }
     const extension = file.originalname.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '';

@@ -2,13 +2,14 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Use
 import { ApiTags } from '@nestjs/swagger';
 import { IsArray, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
+import { MIN_PASSWORD_LENGTH } from '../../common/password-policy';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { UsersService } from './users.service';
 
 class CreateUserDto {
   @IsString() @MinLength(2) name!: string;
   @IsEmail() email!: string;
-  @IsString() @MinLength(8) password!: string;
+  @IsString() @MinLength(MIN_PASSWORD_LENGTH) password!: string;
   @IsOptional() @IsArray() @IsUUID(undefined, { each: true }) roleIds?: string[];
 }
 class UpdateUserDto {

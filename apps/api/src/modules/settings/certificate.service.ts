@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, prisma } from '@sonder/database';
+import { envelopeDecrypt, envelopeEncrypt } from '@sonder/observability';
 import { createStorageAdapter, type StorageAdapter } from '@sonder/storage';
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import forge from 'node-forge';
@@ -63,7 +64,6 @@ function cpfDigits(value?: string | null) {
 
 @Injectable()
 export class CertificateService {
-  private readonly key = this.readEncryptionKey();
   private readonly storage: StorageAdapter = createStorageAdapter();
 
   validatePkcs12(buffer: Buffer, password: string): CertificateMetadata {
@@ -441,27 +441,15 @@ export class CertificateService {
   }
 
   private encrypt(value: string) {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.key, iv);
-    const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
-    return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
+    return envelopeEncrypt(value);
   }
 
   private decrypt(payload: string) {
-    const [ivPart, tagPart, dataPart] = payload.split('.');
-    if (!ivPart || !tagPart || !dataPart) throw new BadRequestException('Criptografia do certificado inválida.');
-    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(ivPart, 'base64url'));
-    decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
-    return Buffer.concat([
-      decipher.update(Buffer.from(dataPart, 'base64url')),
-      decipher.final(),
-    ]).toString('utf8');
-  }
-
-  private readEncryptionKey() {
-    const value = process.env.ENCRYPTION_MASTER_KEY;
-    if (!value || !/^[a-f0-9]{64}$/i.test(value)) throw new BadRequestException('ENCRYPTION_MASTER_KEY inválida.');
-    return Buffer.from(value, 'hex');
+    try {
+      return envelopeDecrypt(payload).toString('utf8');
+    } catch {
+      throw new BadRequestException('Criptografia do certificado inválida.');
+    }
   }
 
   private async assertClinic(organizationId: string, clinicId: string) {

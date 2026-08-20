@@ -1,4 +1,5 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { envelopeDecrypt, envelopeEncrypt } from '@sonder/observability';
 
 export const API_KEY_SCOPES = [
   'appointments:read',
@@ -66,32 +67,11 @@ export function normalizeApiKeyScopes(scopes: string[]): ApiKeyScope[] {
 }
 
 export function encryptApiKeySecret(plaintext: string, masterKey = process.env.ENCRYPTION_MASTER_KEY): string {
-  const key = readMasterKey(masterKey);
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
+  return envelopeEncrypt(plaintext, masterKey);
 }
 
 export function decryptApiKeySecret(payload: string, masterKey = process.env.ENCRYPTION_MASTER_KEY): string {
-  const key = readMasterKey(masterKey);
-  const [ivPart, tagPart, dataPart] = payload.split('.');
-  if (!ivPart || !tagPart || !dataPart) {
-    throw new Error('Segredo criptografado inválido.');
-  }
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivPart, 'base64url'));
-  decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
-  return Buffer.concat([
-    decipher.update(Buffer.from(dataPart, 'base64url')),
-    decipher.final(),
-  ]).toString('utf8');
-}
-
-function readMasterKey(value?: string): Buffer {
-  if (!value || !/^[a-f0-9]{64}$/i.test(value)) {
-    throw new Error('ENCRYPTION_MASTER_KEY inválida.');
-  }
-  return Buffer.from(value, 'hex');
+  return envelopeDecrypt(payload, masterKey).toString('utf8');
 }
 
 export function extractApiKeyHeader(headers: {
@@ -104,30 +84,7 @@ export function extractApiKeyHeader(headers: {
   return undefined;
 }
 
-export class SlidingWindowThrottle {
-  private readonly hits = new Map<string, { count: number; resetAt: number }>();
-
-  constructor(
-    private readonly max: number = API_KEY_RATE_LIMIT.max,
-    private readonly windowMs: number = API_KEY_RATE_LIMIT.windowMs,
-  ) {}
-
-  consume(id: string, now = Date.now()): { allowed: boolean; remaining: number; resetAt: number } {
-    if (this.hits.size > 10_000) {
-      for (const [key, slot] of this.hits) {
-        if (now >= slot.resetAt) this.hits.delete(key);
-      }
-    }
-    const current = this.hits.get(id);
-    if (!current || now >= current.resetAt) {
-      const resetAt = now + this.windowMs;
-      this.hits.set(id, { count: 1, resetAt });
-      return { allowed: true, remaining: this.max - 1, resetAt };
-    }
-    if (current.count >= this.max) {
-      return { allowed: false, remaining: 0, resetAt: current.resetAt };
-    }
-    current.count += 1;
-    return { allowed: true, remaining: this.max - current.count, resetAt: current.resetAt };
-  }
+/** Chave Redis/memória para throttle da Public API (~120/min por apiKeyId). */
+export function apiKeyRateLimitKey(apiKeyId: string): string {
+  return `api-key:${apiKeyId}`;
 }

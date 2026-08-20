@@ -1,6 +1,11 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { prisma } from '@sonder/database';
 import { z } from 'zod';
+import {
+  assertClinicInScope,
+  patientClinicFilter,
+  type ClinicScope,
+} from '../../common/clinic-scope';
 import { parseWithZod } from '../../common/zod-validation';
 import {
   addPatientGuardian,
@@ -79,15 +84,19 @@ export class PatientsService {
     organizationId: string,
     search?: string,
     clinicId?: string,
-    options?: { cursor?: string; take?: number; includeArchived?: boolean },
+    options?: { cursor?: string; take?: number; includeArchived?: boolean; scope?: ClinicScope },
   ) {
+    const scope = options?.scope ?? { clinicIds: null };
+    if (clinicId) assertClinicInScope(scope, clinicId);
     const paginated = options?.cursor !== undefined || options?.take !== undefined;
     const take = Math.min(Math.max(options?.take ?? (paginated ? 50 : 100), 1), 100);
     const items = await prisma.patient.findMany({
       where: {
         organizationId,
         status: options?.includeArchived ? undefined : { not: 'ARCHIVED' },
-        clinics: clinicId ? { some: { clinicId, status: 'ACTIVE' } } : undefined,
+        ...(clinicId
+          ? { clinics: { some: { clinicId, status: 'ACTIVE' } } }
+          : patientClinicFilter(scope)),
         ...(options?.cursor ? { id: { gt: options.cursor } } : {}),
         ...(search
           ? {
@@ -140,16 +149,21 @@ export class PatientsService {
     });
   }
 
-  async find(organizationId: string, id: string) {
+  async find(organizationId: string, id: string, scope?: ClinicScope) {
     const patient = await prisma.patient.findFirst({
-      where: { id, organizationId },
+      where: {
+        id,
+        organizationId,
+        ...(scope ? patientClinicFilter(scope) : {}),
+      },
       include: { guardians: { include: { guardian: true } }, alerts: true, clinics: true },
     });
     if (!patient) throw new NotFoundException('Paciente não encontrado.');
     return patient;
   }
 
-  async create(organizationId: string, input: CreatePatientInput) {
+  async create(organizationId: string, input: CreatePatientInput, scope?: ClinicScope) {
+    if (scope) assertClinicInScope(scope, input.clinicId);
     const parsed = parseWithZod(patientDataSchema, input);
     if (parsed.cpf) {
       const duplicate = await prisma.patient.findFirst({ where: { organizationId, cpf: parsed.cpf } });

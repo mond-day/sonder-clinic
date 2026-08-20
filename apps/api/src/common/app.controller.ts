@@ -3,7 +3,6 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { prisma } from '@sonder/database';
-import { observabilityStatus } from '@sonder/observability';
 import { storageStatus } from '@sonder/storage';
 import net from 'node:net';
 
@@ -39,19 +38,10 @@ async function pingRedis(url: string, timeoutMs = 2_000): Promise<boolean> {
 export class AppController {
   @Get('health')
   health() {
-    const storage = storageStatus();
-    const observability = observabilityStatus('sonder-api');
     return {
       status: 'ok',
       service: 'sonder-api',
       timestamp: new Date().toISOString(),
-      storage: storage.storage,
-      antivirus: storage.antivirus,
-      observability: {
-        enabled: observability.enabled,
-        exporter: observability.exporter,
-        reason: observability.reason,
-      },
     };
   }
 

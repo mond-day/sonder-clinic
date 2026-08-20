@@ -16,8 +16,8 @@ const schema = z.object({
   taxId: z.string().optional(),
   adminName: z.string().trim().min(2, 'Informe o nome do administrador.'),
   adminEmail: z.string().email('Informe um e-mail válido.'),
-  adminPassword: z.string().min(8, 'A senha deve ter ao menos 8 caracteres.'),
-  confirmPassword: z.string().min(8),
+  adminPassword: z.string().min(10, 'A senha deve ter ao menos 10 caracteres, com maiúscula, minúscula e número.'),
+  confirmPassword: z.string().min(10),
 });
 
 export default function SetupPage() {
@@ -97,8 +97,8 @@ export default function SetupPage() {
         <label>CNPJ/CPF (opcional)<input name="taxId" /></label>
         <label>Nome do administrador<input name="adminName" required minLength={2} autoComplete="name" /></label>
         <label>E-mail<input name="adminEmail" type="email" required autoComplete="username" /></label>
-        <label>Senha<input name="adminPassword" type="password" required minLength={8} autoComplete="new-password" /></label>
-        <label>Confirmar senha<input name="confirmPassword" type="password" required minLength={8} autoComplete="new-password" /></label>
+        <label>Senha<input name="adminPassword" type="password" required minLength={10} autoComplete="new-password" /></label>
+        <label>Confirmar senha<input name="confirmPassword" type="password" required minLength={10} autoComplete="new-password" /></label>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="login-actions">
           <button className="button primary full" disabled={submitting}>

@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '
 import { ApiTags } from '@nestjs/swagger';
 import { IsArray, IsDateString, IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
+import { resolveClinicScope } from '../../common/clinic-scope';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { SchedulingService } from './scheduling.service';
 
@@ -36,13 +37,18 @@ export class SchedulingController {
 
   @Get()
   @RequirePermissions('appointment.view')
-  list(
+  async list(
     @Req() request: AuthenticatedRequest,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('clinicId') clinicId?: string,
   ) {
-    return this.scheduling.list(request.auth.organizationId, from, to, clinicId);
+    const scope = await resolveClinicScope(
+      request.auth.organizationId,
+      request.auth.userId,
+      request.auth.permissions ?? [],
+    );
+    return this.scheduling.list(request.auth.organizationId, from, to, clinicId, scope);
   }
 
   @Get('personal-calendar/status')
@@ -80,14 +86,24 @@ export class SchedulingController {
 
   @Post()
   @RequirePermissions('appointment.create')
-  create(@Req() request: AuthenticatedRequest, @Body() input: CreateAppointmentDto) {
-    return this.scheduling.create(request.auth.organizationId, input);
+  async create(@Req() request: AuthenticatedRequest, @Body() input: CreateAppointmentDto) {
+    const scope = await resolveClinicScope(
+      request.auth.organizationId,
+      request.auth.userId,
+      request.auth.permissions ?? [],
+    );
+    return this.scheduling.create(request.auth.organizationId, input, scope);
   }
 
   @Put(':id')
   @RequirePermissions('appointment.update')
-  reschedule(@Req() request: AuthenticatedRequest, @Param('id') id: string, @Body() input: CreateAppointmentDto) {
-    return this.scheduling.reschedule(request.auth.organizationId, id, input);
+  async reschedule(@Req() request: AuthenticatedRequest, @Param('id') id: string, @Body() input: CreateAppointmentDto) {
+    const scope = await resolveClinicScope(
+      request.auth.organizationId,
+      request.auth.userId,
+      request.auth.permissions ?? [],
+    );
+    return this.scheduling.reschedule(request.auth.organizationId, id, input, scope);
   }
 
   @Post(':id/cancel')

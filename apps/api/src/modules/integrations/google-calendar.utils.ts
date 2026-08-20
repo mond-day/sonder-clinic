@@ -555,13 +555,14 @@ export function verifyGoogleWebhookHeaders(input: {
   if (!input.channelId?.trim()) {
     return { ok: false, reason: 'X-Goog-Channel-ID ausente.' };
   }
-  if (input.expectedToken) {
-    const received = input.channelToken ?? '';
-    const a = Buffer.from(received);
-    const b = Buffer.from(input.expectedToken);
-    if (a.length !== b.length || !timingSafeEqual(a, b)) {
-      return { ok: false, reason: 'Token do canal inválido.' };
-    }
+  if (!input.expectedToken?.trim()) {
+    return { ok: false, reason: 'Token do canal não configurado.' };
+  }
+  const received = input.channelToken ?? '';
+  const a = Buffer.from(received);
+  const b = Buffer.from(input.expectedToken);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    return { ok: false, reason: 'Token do canal inválido.' };
   }
   const state = (input.resourceState ?? '').toLowerCase();
   if (state === 'sync') return { ok: true, syncOnly: true };

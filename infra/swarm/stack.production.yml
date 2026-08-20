@@ -4,6 +4,7 @@ version: "3.9"
 # Deploy oficial: infra/swarm/scripts/deploy.sh
 # WEB_URL = URL pública HTTPS do frontend (também usada em e-mails).
 # API_URL = URL pública da API consumida pelo browser (inclua /api/v1 se o cliente exigir).
+# DATABASE_URL e INITIAL_SETUP_TOKEN entram como Docker secrets (não em environment).
 
 services:
   migrate:
@@ -13,9 +14,10 @@ services:
       NODE_ENV: production
       TZ: ${TZ:-America/Cuiaba}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      DATABASE_URL: ${DATABASE_URL:?Defina DATABASE_URL}
-      DATABASE_ADMIN_URL: ${DATABASE_ADMIN_URL:-}
       BOOTSTRAP_KEEP_ALIVE: "true"
+    secrets:
+      - database_url
+      - database_admin_url
     networks: [digital_network]
     deploy:
       replicas: 1
@@ -63,13 +65,12 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      DATABASE_URL: ${DATABASE_URL:?Defina DATABASE_URL}
       REDIS_URL: ${REDIS_URL:?Defina REDIS_URL}
       S3_ENDPOINT: ${S3_ENDPOINT:?Defina S3_ENDPOINT}
       S3_BUCKET: ${S3_BUCKET:?Defina S3_BUCKET}
       QUEUE_DRIVER: redis
       STORAGE_DRIVER: s3
-      AV_DRIVER: ${AV_DRIVER:-disabled}
+      AV_DRIVER: ${AV_DRIVER:-clamav}
       COOKIE_SECURE: "true"
       WEB_URL: ${WEB_URL:?Defina WEB_URL}
       CORS_ORIGIN: ${WEB_URL:?Defina WEB_URL}
@@ -79,13 +80,14 @@ services:
       INTEGRATION_SCOPE_DEFAULT: ${INTEGRATION_SCOPE_DEFAULT:-CLINIC}
       AI_PROVIDER: ${AI_PROVIDER:-OPENAI}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-      INITIAL_SETUP_TOKEN: ${INITIAL_SETUP_TOKEN:-}
     secrets:
       - jwt_access_secret
       - jwt_refresh_secret
       - encryption_master_key
       - s3_access_key
       - s3_secret_key
+      - initial_setup_token
+      - database_url
     networks: [digital_network, traefik_public]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/api/v1/health >/dev/null || exit 1"]
@@ -120,17 +122,17 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      DATABASE_URL: ${DATABASE_URL:?Defina DATABASE_URL}
       REDIS_URL: ${REDIS_URL:?Defina REDIS_URL}
       S3_ENDPOINT: ${S3_ENDPOINT:?Defina S3_ENDPOINT}
       S3_BUCKET: ${S3_BUCKET:?Defina S3_BUCKET}
       QUEUE_DRIVER: redis
       STORAGE_DRIVER: s3
-      AV_DRIVER: ${AV_DRIVER:-disabled}
+      AV_DRIVER: ${AV_DRIVER:-clamav}
     secrets:
       - encryption_master_key
       - s3_access_key
       - s3_secret_key
+      - database_url
     networks: [digital_network]
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
@@ -151,3 +153,6 @@ secrets:
   encryption_master_key: { external: true }
   s3_access_key: { external: true }
   s3_secret_key: { external: true }
+  initial_setup_token: { external: true }
+  database_url: { external: true }
+  database_admin_url: { external: true }

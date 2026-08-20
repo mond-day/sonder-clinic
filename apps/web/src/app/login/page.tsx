@@ -7,11 +7,11 @@ import { Eye, EyeOff } from 'lucide-react';
 import { z } from 'zod';
 import { useAuth } from '@/components/auth-provider';
 import { ClinicBrandMark, ClinicBrandText, useClinicBranding } from '@/components/clinic-brand';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, safeNextPath } from '@/lib/api';
 
 const loginSchema = z.object({
   email: z.string().email('Informe um e-mail válido.'),
-  password: z.string().min(8, 'A senha deve ter ao menos 8 caracteres.'),
+  password: z.string().min(1, 'Informe a senha.'),
 });
 
 type LoginMode = 'login' | 'forgot' | 'reset' | 'invite';
@@ -69,7 +69,7 @@ function LoginForm() {
     try {
       await login(parsed.data.email, parsed.data.password);
       const next = new URLSearchParams(window.location.search).get('next');
-      router.replace(next?.startsWith('/') ? next : '/');
+      router.replace(safeNextPath(next));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível entrar.');
     } finally {
@@ -105,8 +105,8 @@ function LoginForm() {
     const data = new FormData(event.currentTarget);
     const password = String(data.get('password') ?? '');
     const confirm = String(data.get('confirm') ?? '');
-    if (password.length < 8) {
-      setError('A senha deve ter ao menos 8 caracteres.');
+    if (password.length < 10 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+      setError('A senha deve ter ao menos 10 caracteres, com maiúscula, minúscula e número.');
       return;
     }
     if (password !== confirm) {
@@ -133,8 +133,8 @@ function LoginForm() {
     const data = new FormData(event.currentTarget);
     const password = String(data.get('password') ?? '');
     const confirm = String(data.get('confirm') ?? '');
-    if (password.length < 8) {
-      setError('A senha deve ter ao menos 8 caracteres.');
+    if (password.length < 10 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+      setError('A senha deve ter ao menos 10 caracteres, com maiúscula, minúscula e número.');
       return;
     }
     if (password !== confirm) {
@@ -182,7 +182,6 @@ function LoginForm() {
                 name="password"
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="current-password"
-                minLength={8}
                 required
               />
               <button
@@ -230,7 +229,7 @@ function LoginForm() {
       ) : null}
       {mode === 'reset' ? (
         <>
-          <div><h1>Nova senha</h1><p>Defina uma senha com ao menos 8 caracteres.</p></div>
+          <div><h1>Nova senha</h1><p>Defina uma senha com ao menos 10 caracteres, com maiúscula, minúscula e número.</p></div>
           <label>
             Nova senha
             <div className="password-field">
@@ -238,7 +237,7 @@ function LoginForm() {
                 name="password"
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="new-password"
-                minLength={8}
+                minLength={10}
                 required
               />
               <button
@@ -251,7 +250,7 @@ function LoginForm() {
               </button>
             </div>
           </label>
-          <label>Confirmar senha<input name="confirm" type="password" autoComplete="new-password" minLength={8} required /></label>
+          <label>Confirmar senha<input name="confirm" type="password" autoComplete="new-password" minLength={10} required /></label>
           {error && <p className="form-error" role="alert">{error}</p>}
           {message && <p className="muted-note" role="status">{message}</p>}
           <button className="button primary full" disabled={submitting || !resetToken}>
@@ -279,7 +278,7 @@ function LoginForm() {
                 name="password"
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="new-password"
-                minLength={8}
+                minLength={10}
                 required
               />
               <button
@@ -292,7 +291,7 @@ function LoginForm() {
               </button>
             </div>
           </label>
-          <label>Confirmar senha<input name="confirm" type="password" autoComplete="new-password" minLength={8} required /></label>
+          <label>Confirmar senha<input name="confirm" type="password" autoComplete="new-password" minLength={10} required /></label>
           {error && <p className="form-error" role="alert">{error}</p>}
           {message && <p className="muted-note" role="status">{message}</p>}
           <button className="button primary full" disabled={submitting || !inviteToken}>

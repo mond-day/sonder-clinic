@@ -49,7 +49,12 @@ export async function processDueFinanceRecurrences(now = new Date()): Promise<nu
   return generated;
 }
 
-async function materialize(recurrence: {
+/**
+ * Materializa uma ocorrência com claim atômico de `nextOccurrence`.
+ * Duas materializações simultâneas: só uma avança nextOccurrence (updateMany count === 1)
+ * e cria o lançamento — a outra retorna false sem duplicar.
+ */
+export async function materialize(recurrence: {
   id: string;
   organizationId: string;
   clinicId: string;
@@ -64,8 +69,8 @@ async function materialize(recurrence: {
 }): Promise<boolean> {
   const occurrence = new Date(recurrence.nextOccurrence);
   if (recurrence.endsAt && occurrence > recurrence.endsAt) {
-    await prisma.financeRecurrence.update({
-      where: { id: recurrence.id },
+    await prisma.financeRecurrence.updateMany({
+      where: { id: recurrence.id, nextOccurrence: occurrence, active: true },
       data: { active: false },
     });
     return false;
@@ -74,8 +79,24 @@ async function materialize(recurrence: {
   const metadata = (recurrence.metadata ?? {}) as Record<string, unknown>;
   const dueDate = occurrence;
   const description = `${recurrence.description} (${dueDate.toISOString().slice(0, 10)})`;
+  const nextOccurrence = advanceOccurrence(occurrence, recurrence.frequency, recurrence.interval);
+  const exhausted = Boolean(recurrence.endsAt && nextOccurrence > recurrence.endsAt);
 
-  await prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
+    // Claim: só quem avançar nextOccurrence materializa o lançamento.
+    const claimed = await tx.financeRecurrence.updateMany({
+      where: {
+        id: recurrence.id,
+        nextOccurrence: occurrence,
+        active: true,
+      },
+      data: {
+        nextOccurrence,
+        active: exhausted ? false : true,
+      },
+    });
+    if (claimed.count !== 1) return false;
+
     if (recurrence.kind === 'PAYABLE') {
       await tx.payable.create({
         data: {
@@ -107,17 +128,8 @@ async function materialize(recurrence: {
     } else {
       throw new Error(`kind inválido: ${recurrence.kind}`);
     }
-
-    const nextOccurrence = advanceOccurrence(occurrence, recurrence.frequency, recurrence.interval);
-    const exhausted = Boolean(recurrence.endsAt && nextOccurrence > recurrence.endsAt);
-    await tx.financeRecurrence.update({
-      where: { id: recurrence.id },
-      data: {
-        nextOccurrence,
-        active: exhausted ? false : true,
-      },
-    });
+    return true;
   });
 
-  return true;
+  return created;
 }

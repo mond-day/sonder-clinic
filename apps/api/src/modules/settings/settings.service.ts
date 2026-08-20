@@ -746,17 +746,34 @@ export class SettingsService {
     });
   }
 
-  listDeadLetterOutbox(limit = 50) {
+  listDeadLetterOutbox(organizationId: string, limit = 50) {
     return prisma.outboxEvent.findMany({
-      where: { deadLetterAt: { not: null } },
+      where: {
+        deadLetterAt: { not: null },
+        OR: [
+          { payload: { path: ['organizationId'], equals: organizationId } },
+          // eventos legados sem organizationId no payload ficam ocultos (defense-in-depth)
+        ],
+      },
       orderBy: { deadLetterAt: 'desc' },
       take: Math.min(Math.max(limit, 1), 200),
     });
   }
 
-  async retryDeadLetterOutbox(id: string, actorId: string) {
+  private async findDeadLetterForOrg(organizationId: string, id: string) {
     const event = await prisma.outboxEvent.findFirst({ where: { id, deadLetterAt: { not: null } } });
     if (!event) throw new NotFoundException('Evento dead-letter não encontrado.');
+    const payload = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
+      ? event.payload as Record<string, unknown>
+      : {};
+    if (payload.organizationId !== organizationId) {
+      throw new NotFoundException('Evento dead-letter não encontrado.');
+    }
+    return event;
+  }
+
+  async retryDeadLetterOutbox(organizationId: string, id: string, actorId: string) {
+    const event = await this.findDeadLetterForOrg(organizationId, id);
     const updated = await prisma.outboxEvent.update({
       where: { id },
       data: {
@@ -782,9 +799,8 @@ export class SettingsService {
     return updated;
   }
 
-  async discardDeadLetterOutbox(id: string, actorId: string) {
-    const event = await prisma.outboxEvent.findFirst({ where: { id, deadLetterAt: { not: null } } });
-    if (!event) throw new NotFoundException('Evento dead-letter não encontrado.');
+  async discardDeadLetterOutbox(organizationId: string, id: string, actorId: string) {
+    const event = await this.findDeadLetterForOrg(organizationId, id);
     await prisma.auditEvent.create({
       data: {
         actorId,

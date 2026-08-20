@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { clearMemoryRateLimits, consumeRateLimit, RATE_LIMITS } from '../../common/rate-limit';
 import {
   apiKeyKindPrefix,
+  apiKeyRateLimitKey,
   decryptApiKeySecret,
   encryptApiKeySecret,
   extractApiKeyHeader,
@@ -8,10 +10,14 @@ import {
   hashApiKey,
   maskApiKey,
   normalizeApiKeyScopes,
-  SlidingWindowThrottle,
+  API_KEY_RATE_LIMIT,
 } from './api-key.utils';
 
 describe('api-key.utils', () => {
+  afterEach(() => {
+    clearMemoryRateLimits();
+  });
+
   it('gera chaves com prefixo de ambiente e hash irreversível', () => {
     const live = generateApiKey('production');
     const test = generateApiKey('development');
@@ -44,28 +50,37 @@ describe('api-key.utils', () => {
     expect(extractApiKeyHeader({})).toBeUndefined();
   });
 
-  it('cifra e decifra o segredo com ENCRYPTION_MASTER_KEY', () => {
+  it('cifra e decifra o segredo com ENCRYPTION_MASTER_KEY (envelope v2)', () => {
     const master = '11'.repeat(32);
     const generated = generateApiKey('development');
     const payload = encryptApiKeySecret(generated.plaintext, master);
     expect(payload).not.toContain(generated.plaintext);
-    expect(payload.split('.').length).toBe(3);
+    expect(payload.startsWith('v2.')).toBe(true);
     expect(decryptApiKeySecret(payload, master)).toBe(generated.plaintext);
+  });
+
+  it('decifra segredo legado v1', () => {
+    const { createCipheriv, randomBytes } = require('node:crypto') as typeof import('node:crypto');
+    const master = '11'.repeat(32);
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', Buffer.from(master, 'hex'), iv);
+    const encrypted = Buffer.concat([cipher.update('sk_test_legacy', 'utf8'), cipher.final()]);
+    const v1 = [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
+    expect(decryptApiKeySecret(v1, master)).toBe('sk_test_legacy');
   });
 
   it('rejeita chave mestra inválida', () => {
     expect(() => encryptApiKeySecret('sk_test_abc', 'short')).toThrow(/ENCRYPTION_MASTER_KEY/);
   });
 
-  it('aplica janela deslizante de rate limit', () => {
-    const throttle = new SlidingWindowThrottle(2, 1_000);
-    const first = throttle.consume('k1', 0);
-    const second = throttle.consume('k1', 10);
-    const third = throttle.consume('k1', 20);
-    expect(first.allowed).toBe(true);
-    expect(second.allowed).toBe(true);
-    expect(third.allowed).toBe(false);
-    expect(third.remaining).toBe(0);
-    expect(throttle.consume('k1', 1_000).allowed).toBe(true);
+  it('rate limit por chave via helper Redis/memória (~120/min)', async () => {
+    expect(API_KEY_RATE_LIMIT).toEqual(RATE_LIMITS.apiKey);
+    const key = apiKeyRateLimitKey('key-test');
+    const { max, windowMs } = RATE_LIMITS.apiKey;
+    for (let i = 0; i < max; i += 1) {
+      expect(await consumeRateLimit(key, max, windowMs, 1_000 + i)).toBe(true);
+    }
+    expect(await consumeRateLimit(key, max, windowMs, 1_000 + max)).toBe(false);
+    expect(await consumeRateLimit(key, max, windowMs, 1_000 + windowMs)).toBe(true);
   });
 });

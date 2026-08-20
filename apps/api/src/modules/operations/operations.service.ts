@@ -2876,11 +2876,9 @@ export class OperationsService {
   async handleAbacatePayWebhook(input: {
     rawBody: Buffer;
     signature?: string;
-    webhookSecret?: string;
   }) {
     const {
       verifyAbacatePaySignature,
-      timingSafeSecretEqual,
       isAbacatePayPaidEvent,
       readAbacatePayWebhookChargeId,
     } = await import('../../integrations/abacatepay.js');
@@ -2911,30 +2909,8 @@ export class OperationsService {
       return { success: true, ignored: true, message: 'Cobrança desconhecida.' };
     }
 
-    const connection = await prisma.integrationConnection.findFirst({
-      where: {
-        clinicId: payment.receivable.clinicId,
-        provider: 'ABACATEPAY',
-        status: 'ACTIVE',
-        encryptedCredentials: { not: null },
-      },
-      select: { encryptedCredentials: true },
-    });
-    let storedSecret = '';
-    if (connection?.encryptedCredentials) {
-      const { decryptCredentialsPayload } = await import('../../integrations/credentials.js');
-      storedSecret = decryptCredentialsPayload(connection.encryptedCredentials).webhookSecret ?? '';
-    }
-    const hmacOk = verifyAbacatePaySignature(input.rawBody, input.signature);
-    const secretOk = storedSecret ? timingSafeSecretEqual(storedSecret, input.webhookSecret) : false;
-    if (storedSecret && !secretOk) {
-      throw new UnauthorizedException('Segredo de webhook AbacatePay inválido.');
-    }
-    if (input.signature && !hmacOk) {
-      throw new UnauthorizedException('Assinatura HMAC AbacatePay inválida.');
-    }
-    if (!storedSecret && !hmacOk) {
-      throw new UnauthorizedException('Webhook AbacatePay sem autenticação válida.');
+    if (!input.signature || !verifyAbacatePaySignature(input.rawBody, input.signature)) {
+      throw new UnauthorizedException('Assinatura HMAC AbacatePay inválida ou ausente.');
     }
 
     const eventId = String(row.id ?? `${chargeId}:${event}`).slice(0, 190);
@@ -4298,8 +4274,8 @@ function advanceOccurrence(from: Date, frequency: string, interval: number): Dat
 async function materializeFinanceRecurrence(recurrence: RecurrenceRow) {
   const occurrence = new Date(recurrence.nextOccurrence);
   if (recurrence.endsAt && occurrence > recurrence.endsAt) {
-    await prisma.financeRecurrence.update({
-      where: { id: recurrence.id },
+    await prisma.financeRecurrence.updateMany({
+      where: { id: recurrence.id, nextOccurrence: occurrence, active: true },
       data: { active: false },
     });
     return null;
@@ -4307,8 +4283,24 @@ async function materializeFinanceRecurrence(recurrence: RecurrenceRow) {
   const metadata = (recurrence.metadata ?? {}) as Record<string, unknown>;
   const dueDate = occurrence;
   const description = `${recurrence.description} (${dueDate.toISOString().slice(0, 10)})`;
+  const nextOccurrence = advanceOccurrence(occurrence, recurrence.frequency, recurrence.interval);
+  const exhausted = Boolean(recurrence.endsAt && nextOccurrence > recurrence.endsAt);
 
   return prisma.$transaction(async (tx) => {
+    // Claim atômico de nextOccurrence — evita lançamento duplicado sob race (worker × API).
+    const claimed = await tx.financeRecurrence.updateMany({
+      where: {
+        id: recurrence.id,
+        nextOccurrence: occurrence,
+        active: true,
+      },
+      data: {
+        nextOccurrence,
+        active: exhausted ? false : true,
+      },
+    });
+    if (claimed.count !== 1) return null;
+
     let created: { type: string; id: string };
     if (recurrence.kind === 'PAYABLE') {
       const payable = await tx.payable.create({
@@ -4344,15 +4336,7 @@ async function materializeFinanceRecurrence(recurrence: RecurrenceRow) {
       throw new BadRequestException(`Tipo de recorrência inválido: ${recurrence.kind}`);
     }
 
-    const nextOccurrence = advanceOccurrence(occurrence, recurrence.frequency, recurrence.interval);
-    const exhausted = Boolean(recurrence.endsAt && nextOccurrence > recurrence.endsAt);
-    const updated = await tx.financeRecurrence.update({
-      where: { id: recurrence.id },
-      data: {
-        nextOccurrence,
-        active: exhausted ? false : true,
-      },
-    });
+    const updated = await tx.financeRecurrence.findUniqueOrThrow({ where: { id: recurrence.id } });
     return { recurrence: updated, generated: created };
   });
 }

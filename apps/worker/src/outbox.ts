@@ -1,5 +1,5 @@
-import { createDecipheriv } from 'node:crypto';
 import { prisma } from '@sonder/database';
+import { envelopeDecryptJson } from '@sonder/observability';
 import { isWithinAllowedHours, nextAllowedWindowStart } from './allowed-hours';
 import { readEvolutionConfiguration, sendEvolutionText } from './evolution';
 import { isChatwootMock, readChatwootConfiguration, sendChatwootText } from './chatwoot';
@@ -29,35 +29,7 @@ type OutboxEvent = {
 };
 
 function decryptCredentials(payload: string): Record<string, string> {
-  const keyValue = process.env.ENCRYPTION_MASTER_KEY;
-  if (!keyValue || !/^[a-f0-9]{64}$/i.test(keyValue)) {
-    throw new Error('ENCRYPTION_MASTER_KEY ausente ou inválida no worker.');
-  }
-  const [ivValue, tagValue, encryptedValue] = payload.split('.');
-  if (!ivValue || !tagValue || !encryptedValue) {
-    throw new Error('Credencial Evolution criptografada inválida.');
-  }
-  const decipher = createDecipheriv(
-    'aes-256-gcm',
-    Buffer.from(keyValue, 'hex'),
-    Buffer.from(ivValue, 'base64url'),
-  );
-  decipher.setAuthTag(Buffer.from(tagValue, 'base64url'));
-  const parsed: unknown = JSON.parse(
-    Buffer.concat([
-      decipher.update(Buffer.from(encryptedValue, 'base64url')),
-      decipher.final(),
-    ]).toString('utf8'),
-  );
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Credencial Evolution descriptografada inválida.');
-  }
-  const credentials = Object.fromEntries(
-    Object.entries(parsed).filter(
-      (entry): entry is [string, string] =>
-        typeof entry[1] === 'string' && entry[1].trim().length > 0,
-    ),
-  );
+  const credentials = envelopeDecryptJson(payload);
   if (!Object.keys(credentials).length) {
     throw new Error('Credencial Evolution descriptografada está vazia.');
   }

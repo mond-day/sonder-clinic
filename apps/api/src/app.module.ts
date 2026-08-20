@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './common/app.controller';
+import { CsrfGuard } from './common/csrf';
 import { AuthModule } from './modules/auth/auth.module';
 import { PatientsModule } from './modules/patients/patients.module';
 import { SchedulingModule } from './modules/scheduling/scheduling.module';
@@ -35,5 +37,6 @@ import { SetupModule } from './modules/setup/setup.module';
     PublicApiModule,
   ],
   controllers: [AppController],
+  providers: [{ provide: APP_GUARD, useClass: CsrfGuard }],
 })
 export class AppModule {}

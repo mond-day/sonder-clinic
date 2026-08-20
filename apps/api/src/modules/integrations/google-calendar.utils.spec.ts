@@ -93,10 +93,13 @@ describe('google-calendar.utils', () => {
 
   it('verifyGoogleWebhookHeaders valida token e sync', async () => {
     const { verifyGoogleWebhookHeaders, resolveGoogleCalendarWebhookUrl } = await import('./google-calendar.utils.js');
-    expect(verifyGoogleWebhookHeaders({ channelId: 'c1', resourceState: 'sync' })).toEqual({
-      ok: true,
-      syncOnly: true,
-    });
+    expect(verifyGoogleWebhookHeaders({ channelId: 'c1', resourceState: 'sync' }).ok).toBe(false);
+    expect(verifyGoogleWebhookHeaders({
+      channelId: 'c1',
+      channelToken: 'tok',
+      expectedToken: 'tok',
+      resourceState: 'sync',
+    })).toEqual({ ok: true, syncOnly: true });
     expect(verifyGoogleWebhookHeaders({
       channelId: 'c1',
       channelToken: 'tok',

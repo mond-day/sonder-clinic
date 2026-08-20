@@ -6,6 +6,7 @@ import { prisma } from '@sonder/database';
 import { assertSmtpConfigured, sendMail } from '../../common/mail';
 import { assertPasswordPolicy } from '../../common/password-policy';
 import { resolvePublicWebUrl } from '../../common/public-web-url';
+import { invalidateUserStatusCache } from '../../common/user-status-cache';
 import {
   buildInviteEmail,
   buildInviteUrl,
@@ -66,7 +67,7 @@ export class UsersService {
 
   async update(organizationId: string, id: string, input: { name?: string; email?: string; status?: 'ACTIVE' | 'BLOCKED' | 'INVITED' }) {
     await this.get(organizationId, id);
-    return prisma.user.update({
+    const updated = await prisma.user.update({
       where: { id },
       data: {
         name: input.name,
@@ -75,6 +76,14 @@ export class UsersService {
       },
       select: { id: true, name: true, email: true, status: true },
     });
+    if (input.status === 'BLOCKED') {
+      await prisma.session.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
+    if (input.status) invalidateUserStatusCache(id);
+    return updated;
   }
 
   listInvitations(organizationId: string) {

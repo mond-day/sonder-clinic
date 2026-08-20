@@ -253,7 +253,7 @@ export class ClinicalController {
   ) {
     const file = await this.clinical.downloadPatientMedia(req.auth.organizationId, id, mediaId, req.auth.userId);
     res.setHeader('Content-Type', file.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename.replace(/"/g, '')}"`);
     res.setHeader('X-Antivirus-Status', file.antivirusStatus);
     res.send(file.content);
   }
