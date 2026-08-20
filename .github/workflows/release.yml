@@ -47,7 +47,7 @@ jobs:
             file: apps/worker/Dockerfile
             image: sonder-clinic-worker
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve version
         id: meta
@@ -99,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Deploy Swarm
         env:
           VERSION: ${{ github.ref_name }}
