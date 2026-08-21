@@ -114,5 +114,5 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            NEXT_PUBLIC_API_URL=https://api.sonder.clinic/api/v1
-            NEXT_PUBLIC_APP_URL=https://app.sonder.clinic
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'https://api.sonder.clinic/api/v1' }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://app.sonder.clinic' }}
