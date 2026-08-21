@@ -3,6 +3,9 @@
     "target": "ES2022",
     "module": "Node16",
     "moduleResolution": "node16",
+    // Ver comentário em packages/typescript-config/base.json.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

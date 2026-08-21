@@ -118,7 +118,7 @@ export {
   envelopeEncrypt,
   envelopeEncryptJson,
   isEnvelopeV2,
-} from './envelope-crypto';
+} from './envelope-crypto.ts';
 
 /** Converte LOG_LEVEL (info/debug/…) nos níveis do NestJS. */
 export function nestLoggerLevels(raw = process.env.LOG_LEVEL): NestLogLevel[] {

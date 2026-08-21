@@ -16,6 +16,6 @@ export {
   installCoreDefaults,
   installOdontogramConditions,
   installPermissions,
-} from './core-defaults';
-export { ODONTOGRAM_CONDITIONS, PERMISSION_CODES } from './permissions';
-export { INSTALLATION_SINGLETON_ID } from './installation';
+} from './core-defaults.ts';
+export { ODONTOGRAM_CONDITIONS, PERMISSION_CODES } from './permissions.ts';
+export { INSTALLATION_SINGLETON_ID } from './installation.ts';

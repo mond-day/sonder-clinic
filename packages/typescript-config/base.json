@@ -6,6 +6,10 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "bundler",
+    // Os pacotes internos publicam TS cru (main: ./src/index.ts). O Node carrega esses arquivos
+    // como ESM, onde o import relativo precisa da extensão explícita .ts.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "declaration": true,

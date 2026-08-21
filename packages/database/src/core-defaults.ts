@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { installDefaultAnamnesisTemplates } from '../prisma/seeds/anamnesis';
-import { ODONTOGRAM_CONDITIONS, PERMISSION_CODES } from './permissions';
+import { installDefaultAnamnesisTemplates } from '../prisma/seeds/anamnesis/index.ts';
+import { ODONTOGRAM_CONDITIONS, PERMISSION_CODES } from './permissions.ts';
 
 export type PrismaLike = PrismaClient | Prisma.TransactionClient;
 

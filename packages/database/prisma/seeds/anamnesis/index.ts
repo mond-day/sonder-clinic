@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { adultAnamnesisV1 } from './adult-v1';
-import { childAnamnesisV1 } from './child-v1';
-import { elderlyAnamnesisV1 } from './elderly-v1';
-import { pregnantAnamnesisV1 } from './pregnant-v1';
-import { countQuestions } from './builder';
+import { adultAnamnesisV1 } from './adult-v1.ts';
+import { childAnamnesisV1 } from './child-v1.ts';
+import { elderlyAnamnesisV1 } from './elderly-v1.ts';
+import { pregnantAnamnesisV1 } from './pregnant-v1.ts';
+import { countQuestions } from './builder.ts';
 
 const catalogs = [
   { name: 'Anamnese adulto', audience: 'ADULT', schema: adultAnamnesisV1, expected: 42 },

@@ -1,4 +1,4 @@
-import { buildSchema, type SeedSection } from './builder';
+import { buildSchema, type SeedSection } from './builder.ts';
 
 const sections: SeedSection[] = [
   {
