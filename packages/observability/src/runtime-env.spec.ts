@@ -14,6 +14,8 @@ describe('hydrateDockerSecrets', () => {
   });
 
   it('lê arquivos do Swarm só quando o env está vazio', () => {
+    // O CI define JWT_ACCESS_SECRET no ambiente do job; o teste precisa do env vazio.
+    delete process.env.JWT_ACCESS_SECRET;
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'jwt_access_secret'), ' from-file \n');
     writeFileSync(join(dir, 's3_access_key'), 'minio-key');
