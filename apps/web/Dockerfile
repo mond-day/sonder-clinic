@@ -17,7 +17,7 @@ RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY . .
-ARG NEXT_PUBLIC_API_URL=https://api.sonder.clinic
+ARG NEXT_PUBLIC_API_URL=https://api.sonder.clinic/api/v1
 ARG NEXT_PUBLIC_APP_URL=https://app.sonder.clinic
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
