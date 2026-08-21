@@ -1,23 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
+import { API_URL as API, bearerHeaders } from './helpers';
 
-/**
- * Fatia 4 — suíte E2E alinhada a CENTER_CLINIC_UX_REFINEMENT_CURSOR.md §§24–30
- * + regressões críticas das fatias 1–3 e remessa final.
- * Skips explícitos quando o ambiente não tem seed/dados necessários.
- */
-
-const email = process.env.E2E_EMAIL ?? 'admin@sonder.local';
-const password = process.env.E2E_PASSWORD ?? 'Sonder@123';
-const API = process.env.E2E_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
-
-async function login(page: Page) {
-  await page.goto('/login');
-  await page.locator('input[name="email"]').waitFor({ state: 'visible' });
-  await page.locator('input[name="email"]').fill(email);
-  await page.locator('input[name="password"]').fill(password);
-  await page.getByRole('button', { name: /^entrar$/i }).click();
-  await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 20_000 });
-}
+/** Fatia 4 — CENTER_CLINIC_UX_REFINEMENT_CURSOR.md §§24–30. Skip quando o seed não tem o dado. */
 
 async function openFirstPatient(page: Page) {
   await page.goto('/pacientes');
@@ -26,16 +10,8 @@ async function openFirstPatient(page: Page) {
   await link.click();
 }
 
-async function apiLogin(request: import('@playwright/test').APIRequestContext) {
-  const response = await request.post(`${API}/auth/login`, { data: { email, password } });
-  expect(response.ok()).toBeTruthy();
-  const body = await response.json();
-  return { token: body.accessToken as string };
-}
-
 test.describe('Fatia 4 — E2E Agenda (§24)', () => {
   test('calendário/lista exclusivos + persistência', async ({ page }) => {
-    await login(page);
     await page.goto('/agenda');
     await expect(page.getByRole('heading', { name: /agenda clínica/i })).toBeVisible({ timeout: 15_000 });
 
@@ -68,7 +44,6 @@ test.describe('Fatia 4 — E2E Agenda (§24)', () => {
 
 test.describe('Fatia 4 — E2E Evolução (§25)', () => {
   test('draft: criar, abrir, editar, excluir', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /^evolução$/i }).click();
     await page.getByRole('button', { name: /nova evolução/i }).click();
@@ -100,7 +75,6 @@ test.describe('Fatia 4 — E2E Evolução (§25)', () => {
   });
 
   test('signed: sem edição direta; adendo se disponível', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /^evolução$/i }).click();
 
@@ -122,7 +96,6 @@ test.describe('Fatia 4 — E2E Evolução (§25)', () => {
 
 test.describe('Fatia 4 — E2E Odontograma (§26)', () => {
   test('dente 26 + face O + inspetor + histórico', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /^odontograma$/i }).click();
     await expect(page.locator('.odontogram-workspace, .odontogram-board')).toBeVisible({ timeout: 15_000 });
@@ -141,7 +114,6 @@ test.describe('Fatia 4 — E2E Odontograma (§26)', () => {
 
 test.describe('Fatia 4 — E2E Tratamentos (§27)', () => {
   test('lista + modal de plano com abas', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /tratamentos/i }).click();
     await expect(page.getByText(/plano|tratamento|procedimento/i).first()).toBeVisible({ timeout: 15_000 });
@@ -166,7 +138,6 @@ test.describe('Fatia 4 — E2E Tratamentos (§27)', () => {
 
 test.describe('Fatia 4 — E2E Documentos (§28)', () => {
   test('prescrição inicia vazia + adicionar item', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /documentos/i }).click();
     await page.getByRole('button', { name: /novo documento/i }).click();
@@ -181,7 +152,6 @@ test.describe('Fatia 4 — E2E Documentos (§28)', () => {
   });
 
   test('solicitação de exame inicia sem item vazio', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /documentos/i }).click();
     await page.getByRole('button', { name: /novo documento/i }).click();
@@ -194,7 +164,6 @@ test.describe('Fatia 4 — E2E Documentos (§28)', () => {
   });
 
   test('atestado: dias/horas + CID condicional', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /documentos/i }).click();
     await page.getByRole('button', { name: /novo documento/i }).click();
@@ -218,7 +187,6 @@ test.describe('Fatia 4 — E2E Documentos (§28)', () => {
   });
 
   test('arquivos: subaba e preview se houver mídia', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /documentos/i }).click();
     const tabs = page.getByRole('tablist', { name: /documentos e arquivos/i });
@@ -235,7 +203,6 @@ test.describe('Fatia 4 — E2E Documentos (§28)', () => {
 
 test.describe('Fatia 4 — E2E Pacientes duplicados (§29)', () => {
   test('listagem sem Merge + painel administrativo', async ({ page }) => {
-    await login(page);
     await page.goto('/pacientes');
     await expect(page.getByRole('heading', { name: /pacientes/i }).first()).toBeVisible({ timeout: 15_000 });
     const more = page.getByRole('button', { name: /mais ações/i }).first();
@@ -262,7 +229,6 @@ test.describe('Fatia 4 — E2E Pacientes duplicados (§29)', () => {
 
 test.describe('Fatia 4 — E2E Tarefas (§30)', () => {
   test('modal estável + comentário CRUD se houver tarefa', async ({ page }) => {
-    await login(page);
     await page.goto('/tarefas');
     await expect(page.getByRole('heading', { name: /tarefas/i })).toBeVisible({ timeout: 15_000 });
 
@@ -292,8 +258,7 @@ test.describe('Fatia 4 — E2E Tarefas (§30)', () => {
 
 test.describe('Fatia 4 — integrações honestas (API)', () => {
   test('Google oauth-status e Evolution sem mock não fingem sucesso', async ({ request }) => {
-    const { token } = await apiLogin(request);
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = bearerHeaders();
 
     const oauth = await request.get(`${API}/integrations/google-calendar/oauth-status`, { headers });
     expect(oauth.ok()).toBeTruthy();

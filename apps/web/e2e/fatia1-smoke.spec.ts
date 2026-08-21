@@ -1,20 +1,7 @@
-import { expect, test, type Page } from '@playwright/test';
-
-const email = process.env.E2E_EMAIL ?? 'admin@sonder.local';
-const password = process.env.E2E_PASSWORD ?? 'Sonder@123';
-
-async function login(page: Page) {
-  await page.goto('/login');
-  await page.locator('input[name="email"]').waitFor({ state: 'visible' });
-  await page.locator('input[name="email"]').fill(email);
-  await page.locator('input[name="password"]').fill(password);
-  await page.getByRole('button', { name: /^entrar$/i }).click();
-  await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 20_000 });
-}
+import { expect, test } from '@playwright/test';
 
 test.describe('Fatia 1 — smoke UX', () => {
   test('agenda: toggle Calendário ↔ Lista exclusivo', async ({ page }) => {
-    await login(page);
     await page.goto('/agenda');
     await expect(page.getByRole('heading', { name: /agenda clínica/i })).toBeVisible({ timeout: 15_000 });
 
@@ -37,7 +24,6 @@ test.describe('Fatia 1 — smoke UX', () => {
   });
 
   test('tarefas: modal não fecha no backdrop; composer inline', async ({ page }) => {
-    await login(page);
     await page.goto('/tarefas');
     await expect(page.getByRole('heading', { name: /tarefas/i })).toBeVisible({ timeout: 15_000 });
 
@@ -61,7 +47,6 @@ test.describe('Fatia 1 — smoke UX', () => {
   });
 
   test('documentos: exame inicia vazio; atestado com toggle CID', async ({ page }) => {
-    await login(page);
     await page.goto('/pacientes');
     const link = page.locator('a[href^="/pacientes/"]').first();
     await expect(link).toBeVisible({ timeout: 15_000 });

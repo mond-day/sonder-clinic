@@ -1,17 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const email = process.env.E2E_EMAIL ?? 'admin@sonder.local';
-const password = process.env.E2E_PASSWORD ?? 'Sonder@123';
-
-async function login(page: Page) {
-  await page.goto('/login');
-  await page.locator('input[name="email"]').waitFor({ state: 'visible' });
-  await page.locator('input[name="email"]').fill(email);
-  await page.locator('input[name="password"]').fill(password);
-  await page.getByRole('button', { name: /^entrar$/i }).click();
-  await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 20_000 });
-}
-
 async function openFirstPatient(page: Page) {
   await page.goto('/pacientes');
   const link = page.locator('a[href^="/pacientes/"]').first();
@@ -21,7 +9,6 @@ async function openFirstPatient(page: Page) {
 
 test.describe('Fatia 3 — smoke UX', () => {
   test('pacientes: lista sem Merge por UUID', async ({ page }) => {
-    await login(page);
     await page.goto('/pacientes');
     await expect(page.getByRole('heading', { name: /pacientes/i }).first()).toBeVisible({ timeout: 15_000 });
     const more = page.getByRole('button', { name: /mais ações/i }).first();
@@ -33,7 +20,6 @@ test.describe('Fatia 3 — smoke UX', () => {
   });
 
   test('configurações: pacientes duplicados + preview', async ({ page }) => {
-    await login(page);
     await page.goto('/configuracoes');
     await expect(page.getByRole('heading', { name: /configurações/i }).first()).toBeVisible({ timeout: 15_000 });
     await page.getByRole('button', { name: /pacientes duplicados/i }).click();
@@ -52,7 +38,6 @@ test.describe('Fatia 3 — smoke UX', () => {
   });
 
   test('evolução: detalhe clicável e ações de rascunho', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /^evolução$/i }).click();
     await page.getByRole('button', { name: /nova evolução/i }).click();
@@ -81,7 +66,6 @@ test.describe('Fatia 3 — smoke UX', () => {
   });
 
   test('odontograma: face L/P e inspetor', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /^odontograma$/i }).click();
     await expect(page.locator('.odontogram-workspace, .odontogram-board')).toBeVisible({ timeout: 15_000 });

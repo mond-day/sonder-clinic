@@ -1,50 +1,11 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-
-const email = process.env.E2E_EMAIL ?? 'admin@sonder.local';
-const password = process.env.E2E_PASSWORD ?? 'Sonder@123';
-const API_URL = process.env.E2E_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4000/api/v1';
+import { API_URL, bearerHeaders } from './helpers';
 
 async function dismissAlertsDrawer(page: Page) {
   const close = page.getByRole('button', { name: /fechar alertas/i });
   if (await close.isVisible().catch(() => false)) {
     await close.click();
   }
-}
-
-async function login(page: Page) {
-  await page.goto('/login');
-  await page.locator('input[name="email"]').waitFor({ state: 'visible' });
-  await page.locator('input[name="email"]').fill(email);
-  await page.locator('input[name="password"]').fill(password);
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await page.getByRole('button', { name: /^entrar$/i }).click();
-    try {
-      await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 15_000 });
-      await dismissAlertsDrawer(page);
-      return;
-    } catch {
-      if (attempt === 2) throw new Error('Login falhou após 3 tentativas (API indisponível?).');
-      await page.waitForTimeout(1_500);
-    }
-  }
-}
-
-async function apiLogin(request: APIRequestContext) {
-  const response = await request.post(`${API_URL}/auth/login`, {
-    data: { email, password },
-  });
-  expect(response.ok()).toBeTruthy();
-  // JWT só vem no Set-Cookie (httpOnly); Playwright request context também guarda o cookie.
-  const setCookie = response.headers()['set-cookie'] ?? '';
-  const match = /access_token=([^;]+)/.exec(Array.isArray(setCookie) ? setCookie.join(';') : setCookie);
-  const token = match?.[1] ?? '';
-  expect(token.length).toBeGreaterThan(20);
-  return {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-    },
-  };
 }
 
 async function openPatientAnamnesis(page: Page) {
@@ -148,7 +109,6 @@ async function createCompletableDraft(
 
 test.describe('Anamnese E2E', () => {
   test('A — draft e retomada', async ({ page }) => {
-    await login(page);
     await openPatientAnamnesis(page);
     await page.getByRole('button', { name: /nova anamnese/i }).click();
     const adult = page.locator('.template-picker').getByRole('button', { name: /adulto/i }).first();
@@ -175,7 +135,6 @@ test.describe('Anamnese E2E', () => {
   });
 
   test('B — delete draft', async ({ page }) => {
-    await login(page);
     await openPatientAnamnesis(page);
     const draftRow = page.getByTestId('anamnesis-row-DRAFT').first();
     if (!(await draftRow.count())) {
@@ -188,7 +147,7 @@ test.describe('Anamnese E2E', () => {
   });
 
   test('C — lock 409 real em AWAITING_SIGNATURE', async ({ request }) => {
-    const { headers } = await apiLogin(request);
+    const headers = bearerHeaders();
     const { clinicId, patientId } = await resolveClinicAndPatient(request, headers);
     const draft = await createCompletableDraft(request, headers, clinicId, patientId);
     if (!draft) test.skip(true, 'Não foi possível criar draft completo.');
@@ -214,7 +173,7 @@ test.describe('Anamnese E2E', () => {
   });
 
   test('D — revoke real do link público', async ({ page, request }) => {
-    const { headers } = await apiLogin(request);
+    const headers = bearerHeaders();
     const { clinicId, patientId } = await resolveClinicAndPatient(request, headers);
     const draft = await createCompletableDraft(request, headers, clinicId, patientId);
     if (!draft) test.skip(true, 'Não foi possível criar draft completo.');
@@ -238,7 +197,7 @@ test.describe('Anamnese E2E', () => {
   });
 
   test('E — effectiveStatus presente na listagem', async ({ request }) => {
-    const { headers } = await apiLogin(request);
+    const headers = bearerHeaders();
     const { patientId } = await resolveClinicAndPatient(request, headers);
     const list = await request.get(`${API_URL}/patients/${patientId}/anamnesis`, { headers });
     expect(list.ok()).toBeTruthy();
@@ -251,7 +210,7 @@ test.describe('Anamnese E2E', () => {
   });
 
   test('F — supersede seguro (origem permanece SIGNED)', async ({ request }) => {
-    const { headers } = await apiLogin(request);
+    const headers = bearerHeaders();
     const { clinicId, patientId } = await resolveClinicAndPatient(request, headers);
     const list = await request.get(`${API_URL}/patients/${patientId}/anamnesis`, { headers });
     const items = await list.json();
@@ -294,7 +253,6 @@ test.describe('Anamnese E2E', () => {
   });
 
   test('G — respostas no detalhe', async ({ page }) => {
-    await login(page);
     await openPatientAnamnesis(page);
     const view = page.getByRole('button', { name: /^visualizar$/i }).first();
     if (!(await view.count())) test.skip(true, 'Sem anamnese para visualizar.');
@@ -304,7 +262,6 @@ test.describe('Anamnese E2E', () => {
   });
 
   test('admin modelos anamnese preview/filtros', async ({ page }) => {
-    await login(page);
     await page.goto('/configuracoes');
     await dismissAlertsDrawer(page);
     await page.getByRole('button', { name: /anamnese \(modelos\)/i }).click();
@@ -313,7 +270,6 @@ test.describe('Anamnese E2E', () => {
   });
 
   test('Document templates admin — editar/preview', async ({ page }) => {
-    await login(page);
     await page.goto('/documentos');
     await dismissAlertsDrawer(page);
     await expect(page.getByText(/modelos de documento/i).first()).toBeVisible({ timeout: 20_000 });

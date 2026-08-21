@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 
 const apiUrl = process.env.API_URL ?? 'http://localhost:4000';
 
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test.describe('Setup inicial', () => {
   test('não permite /setup depois que a instalação já tem dados', async ({ page, request }) => {
     const status = await request.get(`${apiUrl}/api/v1/setup/status`);

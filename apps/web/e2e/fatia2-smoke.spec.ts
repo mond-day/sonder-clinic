@@ -1,17 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const email = process.env.E2E_EMAIL ?? 'admin@sonder.local';
-const password = process.env.E2E_PASSWORD ?? 'Sonder@123';
-
-async function login(page: Page) {
-  await page.goto('/login');
-  await page.locator('input[name="email"]').waitFor({ state: 'visible' });
-  await page.locator('input[name="email"]').fill(email);
-  await page.locator('input[name="password"]').fill(password);
-  await page.getByRole('button', { name: /^entrar$/i }).click();
-  await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 20_000 });
-}
-
 async function openFirstPatient(page: Page) {
   await page.goto('/pacientes');
   const link = page.locator('a[href^="/pacientes/"]').first();
@@ -21,7 +9,6 @@ async function openFirstPatient(page: Page) {
 
 test.describe('Fatia 2 — smoke UX', () => {
   test('documentos: subabas + picker + prescrição vazia', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /^documentos$/i }).click();
 
@@ -51,7 +38,6 @@ test.describe('Fatia 2 — smoke UX', () => {
   });
 
   test('tratamentos: KPIs compactos e plano em modal', async ({ page }) => {
-    await login(page);
     await openFirstPatient(page);
     await page.getByRole('button', { name: /^tratamentos$/i }).click();
 

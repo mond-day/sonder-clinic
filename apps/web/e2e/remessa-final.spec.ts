@@ -1,33 +1,8 @@
-import { expect, test, type Page } from '@playwright/test';
-
-const email = process.env.E2E_EMAIL ?? 'admin@sonder.local';
-const password = process.env.E2E_PASSWORD ?? 'Sonder@123';
-const API = process.env.E2E_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
-
-async function login(page: Page) {
-  await page.goto('/login');
-  await page.locator('input[name="email"]').waitFor({ state: 'visible' });
-  await page.locator('input[name="email"]').fill(email);
-  await page.locator('input[name="password"]').fill(password);
-  await page.getByRole('button', { name: /^entrar$/i }).click();
-  await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 20_000 });
-}
-
-async function apiLogin(request: import('@playwright/test').APIRequestContext) {
-  const response = await request.post(`${API}/auth/login`, {
-    data: { email, password },
-  });
-  expect(response.ok()).toBeTruthy();
-  const body = await response.json();
-  return {
-    token: body.accessToken as string,
-    organizationId: body.user?.organizationId as string | undefined,
-  };
-}
+import { expect, test } from '@playwright/test';
+import { API_URL as API, bearerHeaders } from './helpers';
 
 test.describe('Remessa final — fluxos críticos', () => {
   test('tratamentos: workspace abre e lista planos', async ({ page }) => {
-    await login(page);
     await page.goto('/pacientes');
     const link = page.locator('a[href^="/pacientes/"]').first();
     await expect(link).toBeVisible({ timeout: 15_000 });
@@ -37,7 +12,6 @@ test.describe('Remessa final — fluxos críticos', () => {
   });
 
   test('documentos: workspace abre biblioteca', async ({ page }) => {
-    await login(page);
     await page.goto('/pacientes');
     const link = page.locator('a[href^="/pacientes/"]').first();
     await expect(link).toBeVisible({ timeout: 15_000 });
@@ -47,8 +21,7 @@ test.describe('Remessa final — fluxos críticos', () => {
   });
 
   test('financeiro: pagamento parcial + estorno parcial (API)', async ({ request }) => {
-    const { token } = await apiLogin(request);
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = bearerHeaders();
 
     const clinics = await request.get(`${API}/clinics`, { headers });
     expect(clinics.ok()).toBeTruthy();
@@ -121,8 +94,7 @@ test.describe('Remessa final — fluxos críticos', () => {
   });
 
   test('tarefas: recorrência e histórico (API)', async ({ request }) => {
-    const { token } = await apiLogin(request);
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = bearerHeaders();
     const clinics = await request.get(`${API}/clinics`, { headers });
     const clinicId = (await clinics.json())[0]?.id as string;
     const created = await request.post(`${API}/tasks`, {
@@ -165,8 +137,7 @@ test.describe('Remessa final — fluxos críticos', () => {
   });
 
   test('laboratório: criar e avançar status com motivo de cancelamento', async ({ request }) => {
-    const { token } = await apiLogin(request);
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = bearerHeaders();
     const clinics = await request.get(`${API}/clinics`, { headers });
     const clinicId = (await clinics.json())[0]?.id as string;
     const patients = await request.get(`${API}/patients?clinicId=${clinicId}`, { headers });
@@ -207,8 +178,7 @@ test.describe('Remessa final — fluxos críticos', () => {
   });
 
   test('pesquisa global inclui documentos/prescrições quando permitido', async ({ request }) => {
-    const { token } = await apiLogin(request);
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = bearerHeaders();
     const clinics = await request.get(`${API}/clinics`, { headers });
     const clinicId = (await clinics.json())[0]?.id as string;
     const search = await request.get(`${API}/search?clinicId=${clinicId}&q=a`, { headers });

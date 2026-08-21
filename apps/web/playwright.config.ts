@@ -1,6 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
+import { join } from 'node:path';
 
 const baseURL = process.env.WEB_URL ?? 'http://localhost:3000';
+const authFile = join(__dirname, 'e2e/.auth/admin.json');
 
 export default defineConfig({
   testDir: './e2e',
@@ -14,5 +16,16 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'setup', testMatch: /auth\.setup\.ts/ },
+    {
+      name: 'chromium',
+      dependencies: ['setup'],
+      testIgnore: /auth\.setup\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: authFile,
+      },
+    },
+  ],
 });
