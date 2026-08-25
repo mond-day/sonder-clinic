@@ -6,7 +6,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
 
 API_BASE="${API_URL:-http://localhost:4000}/api/v1"
-SETUP_TOKEN="${INITIAL_SETUP_TOKEN:?Defina INITIAL_SETUP_TOKEN}"
 ADMIN_EMAIL="${FRESH_INSTALL_ADMIN_EMAIL:-admin.install@example.com}"
 ADMIN_PASSWORD="${FRESH_INSTALL_ADMIN_PASSWORD:-Install@12345}"
 
@@ -45,19 +44,10 @@ status="$(curl -sf "${API_BASE}/setup/status")"
 echo "status inicial: ${status}"
 echo "${status}" | grep -q '"required":true'
 
-code_no_token="$(curl -s -o /tmp/setup-no-token.json -w '%{http_code}' -X POST "${API_BASE}/setup/initialize" -H 'Content-Type: application/json' -d '{}')"
-if [[ "${code_no_token}" != "401" && "${code_no_token}" != "403" ]]; then
-  echo "esperado 401/403 sem token, obteve ${code_no_token}" >&2
-  cat /tmp/setup-no-token.json >&2
-  exit 1
-fi
-
-code_bad="$(curl -s -o /tmp/setup-bad.json -w '%{http_code}' -X POST "${API_BASE}/setup/initialize" \
-  -H 'Content-Type: application/json' -H 'X-Setup-Token: token-errado' \
-  -d '{"organization":{"legalName":"A","tradeName":"A"},"clinic":{"legalName":"A","tradeName":"A"},"unit":{"name":"U"},"admin":{"name":"A","email":"a@b.com","password":"12345678"}}')"
-if [[ "${code_bad}" != "401" && "${code_bad}" != "403" ]]; then
-  echo "esperado 401/403 com token errado, obteve ${code_bad}" >&2
-  cat /tmp/setup-bad.json >&2
+code_empty="$(curl -s -o /tmp/setup-empty.json -w '%{http_code}' -X POST "${API_BASE}/setup/initialize" -H 'Content-Type: application/json' -d '{}')"
+if [[ "${code_empty}" != "400" ]]; then
+  echo "esperado 400 com payload vazio, obteve ${code_empty}" >&2
+  cat /tmp/setup-empty.json >&2
   exit 1
 fi
 
@@ -72,7 +62,7 @@ JSON
 )"
 
 code_ok="$(curl -s -o /tmp/setup-ok.json -w '%{http_code}' -X POST "${API_BASE}/setup/initialize" \
-  -H 'Content-Type: application/json' -H "X-Setup-Token: ${SETUP_TOKEN}" -d "${payload}")"
+  -H 'Content-Type: application/json' -d "${payload}")"
 if [[ "${code_ok}" != "201" ]]; then
   echo "setup falhou: HTTP ${code_ok}" >&2
   cat /tmp/setup-ok.json >&2
@@ -84,7 +74,7 @@ echo "status após setup: ${status2}"
 echo "${status2}" | grep -q '"required":false'
 
 code_again="$(curl -s -o /tmp/setup-again.json -w '%{http_code}' -X POST "${API_BASE}/setup/initialize" \
-  -H 'Content-Type: application/json' -H "X-Setup-Token: ${SETUP_TOKEN}" -d "${payload}")"
+  -H 'Content-Type: application/json' -d "${payload}")"
 if [[ "${code_again}" != "409" && "${code_again}" != "410" ]]; then
   echo "segunda inicialização deveria ser 409/410, obteve ${code_again}" >&2
   cat /tmp/setup-again.json >&2

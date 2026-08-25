@@ -35,6 +35,14 @@ function LoginForm() {
   const branding = useClinicBranding(undefined, false);
 
   useEffect(() => {
+    api.get<{ required: boolean }>('/setup/status')
+      .then((result) => {
+        if (result.required) router.replace('/setup');
+      })
+      .catch(() => undefined);
+  }, [router]);
+
+  useEffect(() => {
     api.get<{ smtpConfigured: boolean }>('/auth/smtp-status')
       .then((result) => setSmtpConfigured(result.smtpConfigured))
       .catch(() => setSmtpConfigured(null));

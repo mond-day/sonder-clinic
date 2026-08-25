@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { omitSetupSecrets, readSetupTokenHeader, resolveSetupApiBase } from '@/lib/setup-initialize';
+import { omitSetupSecrets, resolveSetupApiBase } from '@/lib/setup-initialize';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -7,8 +7,6 @@ export const dynamic = 'force-dynamic';
 const noStore = { 'Cache-Control': 'no-store' };
 
 export async function POST(request: Request) {
-  const token = readSetupTokenHeader(request.headers.get('x-setup-token'));
-
   let body: unknown;
   try {
     body = await request.json();
@@ -17,20 +15,11 @@ export async function POST(request: Request) {
   }
 
   const payload = omitSetupSecrets(body);
-  if (!token) {
-    return NextResponse.json(
-      { message: 'Informe o token de instalação.' },
-      { status: 401, headers: noStore },
-    );
-  }
 
   try {
     const response = await fetch(`${resolveSetupApiBase()}/setup/initialize`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Setup-Token': token,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     const apiPayload = await response.json().catch(() => null);

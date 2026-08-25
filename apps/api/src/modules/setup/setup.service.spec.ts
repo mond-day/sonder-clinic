@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { clearMemoryRateLimits, consumeRateLimit, RATE_LIMITS } from '../../common/rate-limit';
 import { classifySetupState } from './setup.dto';
-import { setupTokensEqual } from './setup.service';
 
 describe('setup helpers', () => {
   it('classifica EMPTY / READY / INCONSISTENT sem expor contagens', () => {
@@ -13,11 +12,6 @@ describe('setup helpers', () => {
       .toEqual({ required: false, state: 'INCONSISTENT' });
     expect(classifySetupState({ installationExists: false, organizationCount: 0, userCount: 1 }))
       .toEqual({ required: false, state: 'INCONSISTENT' });
-  });
-
-  it('compara tokens com tempo constante via hash', () => {
-    expect(setupTokensEqual('token-certo', 'token-certo')).toBe(true);
-    expect(setupTokensEqual('token-certo', 'token-errado')).toBe(false);
   });
 
   it('limita tentativas de initialize por chave', async () => {

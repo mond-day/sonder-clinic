@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpCode, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Req } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { SetupService } from './setup.service';
@@ -17,10 +17,9 @@ export class SetupController {
   @HttpCode(201)
   initialize(
     @Body() body: unknown,
-    @Headers('x-setup-token') headerToken: string | undefined,
     @Req() request: Request,
   ) {
-    return this.setup.initialize(body, headerToken, {
+    return this.setup.initialize(body, {
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
     });

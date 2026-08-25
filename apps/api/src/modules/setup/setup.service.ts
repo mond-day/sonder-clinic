@@ -1,12 +1,7 @@
-import {
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { Prisma, INSTALLATION_SINGLETON_ID, installCoreDefaults, prisma } from '@sonder/database';
 import * as argon2 from 'argon2';
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { parseWithZod } from '../../common/zod-validation';
 import { assertPasswordPolicy } from '../../common/password-policy';
 import { assertRateLimit, RATE_LIMITS } from '../../common/rate-limit';
@@ -18,12 +13,6 @@ import {
 } from './setup.dto';
 
 const SETUP_LOCK_KEY = 87_214_602;
-
-export function setupTokensEqual(expected: string, provided: string): boolean {
-  const left = createHash('sha256').update(expected).digest();
-  const right = createHash('sha256').update(provided).digest();
-  return timingSafeEqual(left, right);
-}
 
 @Injectable()
 export class SetupService {
@@ -45,7 +34,6 @@ export class SetupService {
 
   async initialize(
     input: unknown,
-    headerToken: string | undefined,
     meta?: { ipAddress?: string; userAgent?: string },
   ) {
     await assertRateLimit(
@@ -65,7 +53,6 @@ export class SetupService {
       );
     }
 
-    this.assertSetupToken(headerToken);
     const data = parseWithZod(initializeSetupSchema, input);
     assertPasswordPolicy(data.admin.password);
 
@@ -82,18 +69,6 @@ export class SetupService {
         throw new ConflictException('Setup already completed.');
       }
       throw error;
-    }
-  }
-
-  private assertSetupToken(provided: string | undefined): void {
-    const expected = process.env.INITIAL_SETUP_TOKEN?.trim() ?? '';
-    if (!expected) {
-      throw new ForbiddenException(
-        'INITIAL_SETUP_TOKEN não configurado. Defina o secret/env antes do primeiro setup.',
-      );
-    }
-    if (!provided || !setupTokensEqual(expected, provided)) {
-      throw new UnauthorizedException('Token de setup inválido.');
     }
   }
 

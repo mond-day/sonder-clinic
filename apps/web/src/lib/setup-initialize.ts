@@ -16,11 +16,6 @@ export function resolveSetupApiBase(
   return raw.replace(/\/$/, '');
 }
 
-/** Token informado pelo operador. Nunca ler INITIAL_SETUP_TOKEN do env do Next. */
-export function readSetupTokenHeader(header: string | null | undefined): string {
-  return header?.trim() ?? '';
-}
-
 const SETUP_SECRET_KEYS = new Set(['setupToken', 'token', 'initialSetupToken']);
 
 export function omitSetupSecrets(body: unknown): unknown {

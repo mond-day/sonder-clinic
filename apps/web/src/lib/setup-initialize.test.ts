@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { omitSetupSecrets, readSetupTokenHeader, resolveSetupApiBase, toInitializeBody } from './setup-initialize';
+import { omitSetupSecrets, resolveSetupApiBase, toInitializeBody } from './setup-initialize';
 
 describe('toInitializeBody', () => {
   it('preenche organização, clínica e unidade a partir do nome da clínica', () => {
@@ -53,13 +53,7 @@ describe('resolveSetupApiBase', () => {
   });
 });
 
-describe('setup token forwarding', () => {
-  it('lê o token só do header informado pelo operador', () => {
-    expect(readSetupTokenHeader('  secret-do-operador  ')).toBe('secret-do-operador');
-    expect(readSetupTokenHeader(null)).toBe('');
-    expect(readSetupTokenHeader(undefined)).toBe('');
-  });
-
+describe('setup payload sanitization', () => {
   it('remove campos de token do JSON antes de encaminhar', () => {
     expect(omitSetupSecrets({
       setupToken: 'nao-deve-seguir',

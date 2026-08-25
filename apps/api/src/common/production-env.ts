@@ -92,11 +92,6 @@ export function assertProductionEnvironment(env: NodeJS.ProcessEnv = process.env
   assertPublicHttpsUrl(env.CORS_ORIGIN, 'CORS_ORIGIN', errors);
   assertPublicHttpsUrl(env.WEB_URL, 'WEB_URL', errors);
 
-  const setupToken = env.INITIAL_SETUP_TOKEN?.trim() ?? '';
-  if (setupToken.length < 16) {
-    errors.push('INITIAL_SETUP_TOKEN ausente ou com menos de 16 caracteres.');
-  }
-
   if (errors.length) {
     throw new Error(
       `Ambiente de produção inválido — recusando startup:\n- ${errors.join('\n- ')}`,

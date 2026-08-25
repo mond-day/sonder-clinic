@@ -32,17 +32,12 @@ describe('production-env', () => {
       STORAGE_DRIVER: 's3',
       CORS_ORIGIN: 'https://app.example.com',
       WEB_URL: 'https://app.example.com',
-      INITIAL_SETUP_TOKEN: 'production-setup-token',
     } as NodeJS.ProcessEnv;
     expect(() => assertProductionEnvironment(valid)).not.toThrow();
     expect(() => assertProductionEnvironment({
       ...valid,
       WEB_URL: 'http://localhost:3000',
     })).toThrow(/WEB_URL/);
-    expect(() => assertProductionEnvironment({
-      ...valid,
-      INITIAL_SETUP_TOKEN: 'short',
-    })).toThrow(/INITIAL_SETUP_TOKEN/);
   });
 
   it('swagger default off em production', () => {

@@ -11,7 +11,6 @@ import { toInitializeBody } from '@/lib/setup-initialize';
 type SetupStatus = { required: boolean; state: 'EMPTY' | 'READY' | 'INCONSISTENT' };
 
 const schema = z.object({
-  setupToken: z.string().trim().min(1, 'Informe o token de instalação.'),
   clinicName: z.string().trim().min(2, 'Informe o nome da clínica.'),
   taxId: z.string().optional(),
   adminName: z.string().trim().min(2, 'Informe o nome do administrador.'),
@@ -51,29 +50,35 @@ export default function SetupPage() {
     }
     setSubmitting(true);
     try {
-      const { setupToken, ...fields } = parsed.data;
       const response = await fetch('/api/setup/initialize', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Setup-Token': setupToken,
-        },
-        body: JSON.stringify(toInitializeBody(fields)),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(toInitializeBody(parsed.data)),
       });
       const payload = await response.json().catch(() => null) as { message?: string | string[] } | null;
       if (!response.ok) {
         const detail = Array.isArray(payload?.message) ? payload.message.join(' ') : payload?.message;
-        throw new ApiError(detail ?? 'Não foi possível concluir o setup.', response.status);
+        throw new ApiError(detail ?? 'Não foi possível criar o primeiro usuário.', response.status);
       }
       router.replace('/login?setup=done');
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Não foi possível concluir o setup.');
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o primeiro usuário.');
     } finally {
       setSubmitting(false);
     }
   }
 
-  if (status && !status.required) {
+  if (!status) {
+    return (
+      <main className="login-page">
+        <div className="login-card">
+          <p>{error || 'Verificando instalação…'}</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!status.required) {
     return (
       <main className="login-page">
         <div className="login-card"><p>Redirecionando para o login…</p></div>
@@ -89,10 +94,9 @@ export default function SetupPage() {
           <ClinicBrandText branding={branding} fallbackSubtitle="Clinic" />
         </div>
         <div>
-          <h1>Configuração inicial</h1>
-          <p>Informe o token de instalação, o nome da clínica e o primeiro administrador. Depois você entra com esse e-mail e senha.</p>
+          <h1>Criar primeiro usuário</h1>
+          <p>Esta instalação ainda não tem usuários. Informe a clínica e o administrador. Depois entre com esse e-mail e senha.</p>
         </div>
-        <label>Token de instalação<input name="setupToken" type="password" required autoComplete="off" spellCheck={false} /></label>
         <label>Nome da clínica<input name="clinicName" required minLength={2} autoComplete="organization" /></label>
         <label>CNPJ/CPF (opcional)<input name="taxId" /></label>
         <label>Nome do administrador<input name="adminName" required minLength={2} autoComplete="name" /></label>
@@ -102,7 +106,7 @@ export default function SetupPage() {
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="login-actions">
           <button className="button primary full" disabled={submitting}>
-            {submitting ? 'Criando…' : 'Concluir instalação'}
+            {submitting ? 'Criando…' : 'Criar primeiro usuário'}
           </button>
         </div>
       </form>
