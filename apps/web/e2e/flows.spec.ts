@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openFirstPatient, openPatientChartTab } from './helpers';
 
 test('1. recepção pesquisa paciente e abre menu', async ({ page }) => {
   await page.goto('/pacientes');
@@ -15,13 +16,9 @@ test('2. agenda abre detalhe em leitura', async ({ page }) => {
 });
 
 test('3. dentista acessa anamnese no prontuário', async ({ page }) => {
-  await page.goto('/pacientes');
-  const link = page.locator('a[href^="/pacientes/"]').first();
-  if (await link.count()) {
-    await link.click();
-    await page.getByRole('button', { name: /anamnese/i }).click();
-    await expect(page.getByText(/anamnese|modelo/i).first()).toBeVisible();
-  }
+  await openFirstPatient(page);
+  await openPatientChartTab(page, /^anamnese$/i);
+  await expect(page.getByText(/anamnese|modelo/i).first()).toBeVisible();
 });
 
 test('4. administrador abre configurações de anamnese/usuários', async ({ page }) => {
@@ -29,7 +26,7 @@ test('4. administrador abre configurações de anamnese/usuários', async ({ pag
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/usuários/i);
   await page.goto('/configuracoes');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/configurações/i);
-  await page.getByRole('button', { name: /anamnese \(modelos\)/i }).click();
+  await page.getByRole('button', { name: /modelos de anamnese/i }).click();
   await expect(page.getByText(/modelos de anamnese|editor visual/i).first()).toBeVisible();
 });
 
@@ -40,13 +37,9 @@ test('5. página pública de assinatura responde a token inválido', async ({ pa
 });
 
 test('6-7. evolução no prontuário', async ({ page }) => {
-  await page.goto('/pacientes');
-  const link = page.locator('a[href^="/pacientes/"]').first();
-  if (await link.count()) {
-    await link.click();
-    await page.getByRole('button', { name: /evolução/i }).click();
-    await expect(page.getByText(/evolução|histórico|registro/i).first()).toBeVisible();
-  }
+  await openFirstPatient(page);
+  await openPatientChartTab(page, /^evolução$/i);
+  await expect(page.getByText(/evolução|histórico|registro/i).first()).toBeVisible();
 });
 
 test('8. plano de tratamento listado', async ({ page }) => {
@@ -72,5 +65,5 @@ test('11. laboratório', async ({ page }) => {
 test('12. relatório exporta catálogo', async ({ page }) => {
   await page.goto('/relatorios');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(/relatórios/i);
-  await page.getByRole('button', { name: /atualizar/i }).click();
+  await expect(page.getByText(/selecione o relatório|buscar relatório/i).first()).toBeVisible();
 });

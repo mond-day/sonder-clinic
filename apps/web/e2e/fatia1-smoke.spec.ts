@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openFirstPatient, openPatientChartTab } from './helpers';
 
 test.describe('Fatia 1 — smoke UX', () => {
   test('agenda: toggle Calendário ↔ Lista exclusivo', async ({ page }) => {
@@ -47,11 +48,8 @@ test.describe('Fatia 1 — smoke UX', () => {
   });
 
   test('documentos: exame inicia vazio; atestado com toggle CID', async ({ page }) => {
-    await page.goto('/pacientes');
-    const link = page.locator('a[href^="/pacientes/"]').first();
-    await expect(link).toBeVisible({ timeout: 15_000 });
-    await link.click();
-    await page.getByRole('button', { name: /documentos/i }).click();
+    await openFirstPatient(page);
+    await openPatientChartTab(page, /documentos/i);
 
     await page.getByRole('button', { name: /novo documento/i }).click();
     const picker = page.getByRole('dialog', { name: /novo documento/i });
@@ -62,20 +60,18 @@ test.describe('Fatia 1 — smoke UX', () => {
     await expect(examDialog).toBeVisible();
     await expect(examDialog.getByText(/nenhum exame adicionado/i)).toBeVisible();
     await expect(examDialog.getByPlaceholder(/tomografia|cone beam/i)).toHaveCount(0);
-    await examDialog.getByRole('button', { name: /adicionar exame/i }).click();
-    await expect(examDialog.getByRole('button', { name: /radiografia panorâmica/i })).toBeVisible();
     await examDialog.getByRole('button', { name: /radiografia panorâmica/i }).click();
     await expect(examDialog.locator('input[value="Radiografia panorâmica"]')).toBeVisible();
     await examDialog.getByRole('button', { name: /cancelar/i }).click();
 
     await page.getByRole('button', { name: /novo documento/i }).click();
-    await page.getByRole('dialog', { name: /novo documento/i }).getByRole('option', { name: /^atestado/i }).click();
+    await page.getByRole('dialog', { name: /novo documento/i }).getByRole('option', { name: /atestado/i }).click();
     const certDialog = page.getByRole('dialog').filter({ hasText: /atestado|incluir cid/i }).first();
     await expect(certDialog).toBeVisible();
     await expect(certDialog.getByText(/incluir cid/i)).toBeVisible();
     await expect(certDialog.getByPlaceholder(/k04\.7/i)).toHaveCount(0);
-    await certDialog.getByLabel(/incluir cid/i).check();
-    await expect(certDialog.getByPlaceholder(/k04\.7/i)).toBeVisible();
+    await certDialog.locator('label.switch-row').filter({ hasText: /incluir cid/i }).click();
+    await expect(certDialog.getByText(/ex\.: k04\.7/i)).toBeVisible();
     await expect(certDialog.getByText(/autorização do paciente coletada/i)).toBeVisible();
   });
 });

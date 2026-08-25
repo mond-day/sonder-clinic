@@ -64,7 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
           try {
-            const { user: current } = await authApi.refresh();
+            const { user: current } = await authApi.me();
             if (!cancelled) setUser(current);
           } catch {
             if (!cancelled) router.replace(`/login?next=${encodeURIComponent(pathname)}`);

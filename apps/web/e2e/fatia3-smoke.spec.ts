@@ -1,11 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-
-async function openFirstPatient(page: Page) {
-  await page.goto('/pacientes');
-  const link = page.locator('a[href^="/pacientes/"]').first();
-  await expect(link).toBeVisible({ timeout: 15_000 });
-  await link.click();
-}
+import { expect, test } from '@playwright/test';
+import { openFirstPatient, openPatientChartTab } from './helpers';
 
 test.describe('Fatia 3 — smoke UX', () => {
   test('pacientes: lista sem Merge por UUID', async ({ page }) => {
@@ -39,7 +33,7 @@ test.describe('Fatia 3 — smoke UX', () => {
 
   test('evolução: detalhe clicável e ações de rascunho', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /^evolução$/i }).click();
+    await openPatientChartTab(page, /^evolução$/i);
     await page.getByRole('button', { name: /nova evolução/i }).click();
 
     const create = page.getByRole('dialog', { name: /nova evolução/i });
@@ -49,16 +43,17 @@ test.describe('Fatia 3 — smoke UX', () => {
       // SearchableSelect: escolher primeira opção se necessário
     }
     await create.locator('textarea[name="renderedText"]').fill(`E2E fatia3 rascunho ${Date.now()}`);
+    const stamp = await create.locator('textarea[name="renderedText"]').inputValue();
     await create.getByRole('button', { name: /^salvar$/i }).click();
     await expect(create).toHaveCount(0, { timeout: 15_000 });
 
-    const item = page.locator('.clinical-timeline-item.clickable').first();
+    const item = page.locator('.clinical-timeline-item.clickable').filter({ hasText: stamp }).first();
     await expect(item).toBeVisible({ timeout: 10_000 });
     await item.click();
 
     const detail = page.getByRole('dialog', { name: /detalhe da evolução/i });
     await expect(detail).toBeVisible({ timeout: 10_000 });
-    await expect(detail.getByRole('button', { name: /^editar$/i })).toBeVisible();
+    await expect(detail.getByRole('button', { name: /editar rascunho/i })).toBeVisible();
     await expect(detail.getByRole('button', { name: /excluir rascunho/i })).toBeVisible();
     await detail.getByRole('button', { name: /excluir rascunho/i }).click();
     await detail.getByRole('button', { name: /confirmar exclusão/i }).click();
@@ -67,7 +62,7 @@ test.describe('Fatia 3 — smoke UX', () => {
 
   test('odontograma: face L/P e inspetor', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /^odontograma$/i }).click();
+    await openPatientChartTab(page, /^odontograma$/i);
     await expect(page.locator('.odontogram-workspace, .odontogram-board')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('button', { name: /dente .* face l\/p/i }).first()).toBeVisible();
 

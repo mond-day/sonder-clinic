@@ -8,6 +8,7 @@ const {
   sessionCreate,
   passwordResetUpdateMany,
   passwordResetFindFirst,
+  userFindFirst,
   userUpdate,
 } = vi.hoisted(() => ({
   sessionUpdateMany: vi.fn(),
@@ -15,12 +16,14 @@ const {
   sessionCreate: vi.fn(),
   passwordResetUpdateMany: vi.fn(),
   passwordResetFindFirst: vi.fn(),
+  userFindFirst: vi.fn(),
   userUpdate: vi.fn(),
 }));
 
 vi.mock('@sonder/database', () => ({
   Prisma: {},
   prisma: {
+    user: { findFirst: userFindFirst, update: userUpdate },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
       const tx = {
         session: {
@@ -131,5 +134,28 @@ describe('AuthService claims atômicos', () => {
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(BadRequestException);
     expect(userUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('me: retorna usuário ACTIVE sem criar sessão', async () => {
+    userFindFirst.mockResolvedValue(activeUser);
+
+    const result = await service.me('user-1');
+
+    expect(result.user).toEqual({
+      id: 'user-1',
+      name: 'Ana',
+      email: 'ana@example.com',
+      organizationId: 'org-1',
+      permissions: ['patients.view'],
+    });
+    expect(sessionCreate).not.toHaveBeenCalled();
+    expect(sessionUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('me: usuário inexistente ou inativo → 401', async () => {
+    userFindFirst.mockResolvedValue(null);
+
+    await expect(service.me('user-missing')).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(sessionCreate).not.toHaveBeenCalled();
   });
 });

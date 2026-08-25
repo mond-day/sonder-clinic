@@ -1,14 +1,7 @@
-import { expect, test, type Page } from '@playwright/test';
-import { API_URL as API, bearerHeaders } from './helpers';
+import { expect, test } from '@playwright/test';
+import { API_URL as API, bearerHeaders, openFirstPatient, openPatientChartTab } from './helpers';
 
 /** Fatia 4 — CENTER_CLINIC_UX_REFINEMENT_CURSOR.md §§24–30. Skip quando o seed não tem o dado. */
-
-async function openFirstPatient(page: Page) {
-  await page.goto('/pacientes');
-  const link = page.locator('a[href^="/pacientes/"]').first();
-  await expect(link).toBeVisible({ timeout: 15_000 });
-  await link.click();
-}
 
 test.describe('Fatia 4 — E2E Agenda (§24)', () => {
   test('calendário/lista exclusivos + persistência', async ({ page }) => {
@@ -45,7 +38,7 @@ test.describe('Fatia 4 — E2E Agenda (§24)', () => {
 test.describe('Fatia 4 — E2E Evolução (§25)', () => {
   test('draft: criar, abrir, editar, excluir', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /^evolução$/i }).click();
+    await openPatientChartTab(page, /^evolução$/i);
     await page.getByRole('button', { name: /nova evolução/i }).click();
 
     const create = page.getByRole('dialog', { name: /nova evolução/i });
@@ -61,22 +54,19 @@ test.describe('Fatia 4 — E2E Evolução (§25)', () => {
 
     const detail = page.getByRole('dialog', { name: /detalhe da evolução/i });
     await expect(detail).toBeVisible({ timeout: 10_000 });
-    await detail.getByRole('button', { name: /^editar$/i }).click();
-    const edit = page.getByRole('dialog').filter({ has: page.locator('textarea[name="renderedText"]') }).last();
-    await edit.locator('textarea[name="renderedText"]').fill(`${stamp} editado`);
-    await edit.getByRole('button', { name: /^salvar$/i }).click();
-
-    await page.locator('.clinical-timeline-item.clickable').filter({ hasText: `${stamp} editado` }).first().click();
-    const detail2 = page.getByRole('dialog', { name: /detalhe da evolução/i });
-    await expect(detail2).toBeVisible();
-    await detail2.getByRole('button', { name: /excluir rascunho/i }).click();
-    await detail2.getByRole('button', { name: /confirmar exclusão/i }).click();
-    await expect(detail2).toHaveCount(0, { timeout: 15_000 });
+    await detail.getByRole('button', { name: /editar rascunho/i }).click();
+    const edit = page.getByRole('dialog').filter({ has: page.locator('textarea') }).last();
+    await edit.locator('textarea').fill(`${stamp} editado`);
+    await edit.getByRole('button', { name: /salvar rascunho/i }).click();
+    await expect(detail.getByRole('button', { name: /editar rascunho/i })).toBeVisible({ timeout: 15_000 });
+    await detail.getByRole('button', { name: /excluir rascunho/i }).click();
+    await detail.getByRole('button', { name: /confirmar exclusão/i }).click();
+    await expect(detail).toHaveCount(0, { timeout: 15_000 });
   });
 
   test('signed: sem edição direta; adendo se disponível', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /^evolução$/i }).click();
+    await openPatientChartTab(page, /^evolução$/i);
 
     const signed = page.locator('.clinical-timeline-item.clickable').filter({ hasText: /assinad|signed/i }).first();
     if (await signed.count() === 0) {
@@ -97,7 +87,7 @@ test.describe('Fatia 4 — E2E Evolução (§25)', () => {
 test.describe('Fatia 4 — E2E Odontograma (§26)', () => {
   test('dente 26 + face O + inspetor + histórico', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /^odontograma$/i }).click();
+    await openPatientChartTab(page, /^odontograma$/i);
     await expect(page.locator('.odontogram-workspace, .odontogram-board')).toBeVisible({ timeout: 15_000 });
 
     const tooth26 = page.locator('.tooth[data-tooth="26"]');
@@ -115,7 +105,7 @@ test.describe('Fatia 4 — E2E Odontograma (§26)', () => {
 test.describe('Fatia 4 — E2E Tratamentos (§27)', () => {
   test('lista + modal de plano com abas', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /tratamentos/i }).click();
+    await openPatientChartTab(page, /tratamentos/i);
     await expect(page.getByText(/plano|tratamento|procedimento/i).first()).toBeVisible({ timeout: 15_000 });
 
     const planRow = page.locator('[data-testid="treatment-plan-row"], .treatment-plan-card, button, tr').filter({ hasText: /plano|r\$|procedimento/i }).first();
@@ -139,60 +129,57 @@ test.describe('Fatia 4 — E2E Tratamentos (§27)', () => {
 test.describe('Fatia 4 — E2E Documentos (§28)', () => {
   test('prescrição inicia vazia + adicionar item', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /documentos/i }).click();
+    await openPatientChartTab(page, /documentos/i);
     await page.getByRole('button', { name: /novo documento/i }).click();
     const picker = page.getByRole('dialog', { name: /novo documento/i });
     await expect(picker).toBeVisible();
-    await picker.getByRole('option', { name: /^prescrição/i }).click();
+    await picker.getByRole('option', { name: /prescrição/i }).click();
     const rx = page.getByRole('dialog', { name: /prescrição/i });
     await expect(rx).toBeVisible();
     await expect(rx.getByText(/nenhum item adicionado/i)).toBeVisible();
-    await rx.getByRole('button', { name: /adicionar à prescrição/i }).click();
-    await expect(rx.getByRole('button', { name: /^medicamento$/i })).toBeVisible();
+    await rx.getByRole('button', { name: /adicionar medicamento/i }).click();
+    await expect(rx.getByText(/nenhum item adicionado/i)).toHaveCount(0);
   });
 
   test('solicitação de exame inicia sem item vazio', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /documentos/i }).click();
+    await openPatientChartTab(page, /documentos/i);
     await page.getByRole('button', { name: /novo documento/i }).click();
     const picker = page.getByRole('dialog', { name: /novo documento/i });
     await picker.getByRole('option', { name: /solicitação de exame/i }).click();
     const exam = page.getByRole('dialog', { name: /exame|solicit/i }).first();
     await expect(exam).toBeVisible();
     await expect(exam.getByText(/nenhum exame adicionado/i)).toBeVisible();
-    await exam.getByRole('button', { name: /adicionar exame/i }).click();
+    await exam.getByRole('button', { name: /radiografia panorâmica/i }).click();
   });
 
   test('atestado: dias/horas + CID condicional', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /documentos/i }).click();
+    await openPatientChartTab(page, /documentos/i);
     await page.getByRole('button', { name: /novo documento/i }).click();
     const picker = page.getByRole('dialog', { name: /novo documento/i });
     await picker.getByRole('option', { name: /atestado/i }).click();
     const cert = page.getByRole('dialog', { name: /atestado/i });
     await expect(cert).toBeVisible({ timeout: 10_000 });
 
-    const dias = cert.getByRole('radio', { name: /dias/i }).or(cert.getByLabel(/dias/i));
-    if (await dias.count()) await dias.first().click();
-    await expect(cert.getByText(/quantidade|dias/i).first()).toBeVisible();
+    await expect(cert.getByLabel(/quantidade de dias/i)).toBeVisible();
+    await cert.locator('select').filter({ has: page.locator('option[value="hours"]') }).selectOption('hours');
+    await expect(cert.getByLabel(/hora de início/i)).toBeVisible();
 
-    const horas = cert.getByRole('radio', { name: /horas/i }).or(cert.getByLabel(/horas/i));
-    if (await horas.count()) await horas.first().click();
-
-    const cidToggle = cert.getByRole('checkbox', { name: /cid/i }).or(cert.getByLabel(/usar cid|incluir cid/i));
+    const cidToggle = cert.locator('label.switch-row').filter({ hasText: /incluir cid/i });
     if (await cidToggle.count()) {
-      await cidToggle.first().check();
-      await expect(cert.getByLabel(/cid|código/i).or(cert.locator('[name*="cid" i]')).first()).toBeVisible();
+      await cidToggle.click();
+      await expect(cert.getByText(/ex\.: k04\.7/i)).toBeVisible();
     }
   });
 
   test('arquivos: subaba e preview se houver mídia', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /documentos/i }).click();
+    await openPatientChartTab(page, /documentos/i);
     const tabs = page.getByRole('tablist', { name: /documentos e arquivos/i });
     await tabs.getByRole('tab', { name: /^arquivos$/i }).click();
     await expect(page.getByRole('button', { name: /enviar arquivo/i })).toBeVisible({ timeout: 10_000 });
-    const media = page.locator('[data-testid="patient-media-item"], .media-card, button').filter({ hasText: /\.jpg|\.pdf|imagem|pdf/i }).first();
+    const media = page.locator('[data-testid="patient-media-item"], .media-card').first();
     if (await media.count() === 0) {
       test.skip(true, 'Sem arquivos seed para preview inline.');
     }

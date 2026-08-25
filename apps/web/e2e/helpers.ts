@@ -16,6 +16,18 @@ export async function loginViaUi(page: Page) {
   await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 20_000 });
 }
 
+export async function openFirstPatient(page: Page) {
+  await page.goto('/pacientes');
+  const link = page.locator('a[href^="/pacientes/"]').first();
+  await expect(link).toBeVisible({ timeout: 15_000 });
+  await link.click();
+  await expect(page.getByRole('tablist', { name: /abas do prontuário/i })).toBeVisible({ timeout: 15_000 });
+}
+
+export async function openPatientChartTab(page: Page, name: string | RegExp) {
+  await page.getByRole('tablist', { name: /abas do prontuário/i }).getByRole('tab', { name }).click();
+}
+
 export function ensureAuthDir() {
   mkdirSync(dirname(AUTH_FILE), { recursive: true });
 }

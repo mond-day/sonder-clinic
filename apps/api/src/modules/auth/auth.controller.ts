@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Post, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { IsEmail, IsString, MinLength } from 'class-validator';
 import type { CookieOptions, Request, Response } from 'express';
+import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { issueCsrfCookie } from '../../common/csrf';
 import { MIN_PASSWORD_LENGTH } from '../../common/password-policy';
 import { assertRateLimit, RATE_LIMITS } from '../../common/rate-limit';
@@ -71,6 +72,12 @@ export class AuthController {
     this.setCookies(response, result.accessToken, result.refreshToken);
     if (!request.cookies?.csrf_token) issueCsrfCookie(response);
     return { user: result.user };
+  }
+
+  @Get('me')
+  @UseGuards(AuthGuard)
+  me(@Req() request: AuthenticatedRequest) {
+    return this.auth.me(request.auth.userId);
   }
 
   @Post('logout')

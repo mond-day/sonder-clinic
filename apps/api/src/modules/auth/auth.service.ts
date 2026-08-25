@@ -114,6 +114,21 @@ export class AuthService {
     });
   }
 
+  /** Restaura o usuário autenticado sem rotacionar o refresh token. */
+  async me(userId: string): Promise<{ user: LoginResult['user'] }> {
+    const user = await prisma.user.findFirst({
+      where: { id: userId, status: 'ACTIVE' },
+      include: { roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } } },
+    });
+    if (!user) throw new UnauthorizedException('Sessão inválida ou expirada.');
+    const permissions = [...new Set(user.roles.flatMap(({ role }) =>
+      role.permissions.map(({ permission }) => permission.code),
+    ))];
+    return {
+      user: { id: user.id, name: user.name, email: user.email, organizationId: user.organizationId, permissions },
+    };
+  }
+
   async logout(refreshToken: string): Promise<void> {
     await prisma.session.updateMany({
       where: { refreshTokenHash: this.hash(refreshToken), revokedAt: null },

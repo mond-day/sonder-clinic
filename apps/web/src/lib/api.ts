@@ -80,6 +80,7 @@ export const authApi = {
       body: JSON.stringify({ email, password }),
     }, false),
   refresh: () => request<{ user: AuthUser }>('/auth/refresh', { method: 'POST' }, false),
+  me: () => request<{ user: AuthUser }>('/auth/me'),
   logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }, false),
 };
 

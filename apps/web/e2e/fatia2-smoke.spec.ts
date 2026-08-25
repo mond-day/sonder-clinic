@@ -1,16 +1,10 @@
-import { expect, test, type Page } from '@playwright/test';
-
-async function openFirstPatient(page: Page) {
-  await page.goto('/pacientes');
-  const link = page.locator('a[href^="/pacientes/"]').first();
-  await expect(link).toBeVisible({ timeout: 15_000 });
-  await link.click();
-}
+import { expect, test } from '@playwright/test';
+import { openFirstPatient, openPatientChartTab } from './helpers';
 
 test.describe('Fatia 2 — smoke UX', () => {
   test('documentos: subabas + picker + prescrição vazia', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /^documentos$/i }).click();
+    await openPatientChartTab(page, /^documentos$/i);
 
     const homeTabs = page.getByRole('tablist', { name: /documentos e arquivos/i });
     await expect(homeTabs.getByRole('tab', { name: /^documentos$/i })).toBeVisible();
@@ -26,20 +20,19 @@ test.describe('Fatia 2 — smoke UX', () => {
     await page.getByRole('button', { name: /novo documento/i }).click();
     const picker = page.getByRole('dialog', { name: /novo documento/i });
     await expect(picker).toBeVisible();
-    await picker.getByRole('option', { name: /^prescrição/i }).click();
+    await picker.getByRole('option', { name: /prescrição/i }).click();
 
     const rx = page.getByRole('dialog', { name: /prescrição/i });
     await expect(rx).toBeVisible();
     await expect(rx.getByText(/nenhum item adicionado/i)).toBeVisible();
-    await rx.getByRole('button', { name: /adicionar à prescrição/i }).click();
-    await expect(rx.getByRole('button', { name: /^medicamento$/i })).toBeVisible();
-    await expect(rx.getByRole('button', { name: /^exame$/i })).toBeVisible();
-    await expect(rx.getByRole('button', { name: /texto livre/i })).toBeVisible();
+    await rx.getByRole('button', { name: /adicionar medicamento/i }).click();
+    await expect(rx.getByRole('button', { name: /incluir exame nesta receita/i })).toBeVisible();
+    await expect(rx.getByRole('button', { name: /incluir orientação/i })).toBeVisible();
   });
 
   test('tratamentos: KPIs compactos e plano em modal', async ({ page }) => {
     await openFirstPatient(page);
-    await page.getByRole('button', { name: /^tratamentos$/i }).click();
+    await openPatientChartTab(page, /^tratamentos$/i);
 
     const kpis = page.locator('.treatment-mini-kpis');
     await expect(kpis).toBeVisible({ timeout: 15_000 });

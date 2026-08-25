@@ -264,7 +264,7 @@ test.describe('Anamnese E2E', () => {
   test('admin modelos anamnese preview/filtros', async ({ page }) => {
     await page.goto('/configuracoes');
     await dismissAlertsDrawer(page);
-    await page.getByRole('button', { name: /anamnese \(modelos\)/i }).click();
+    await page.getByRole('button', { name: /modelos de anamnese/i }).click();
     await expect(page.getByText(/modelos de anamnese/i).first()).toBeVisible();
     await expect(page.getByPlaceholder(/nome do modelo/i)).toBeVisible();
   });

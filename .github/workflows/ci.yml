@@ -86,6 +86,14 @@ jobs:
           echo "WEB log:"; tail -50 /tmp/web.log || true
           exit 1
       - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-e2e
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
 
   fresh-install:
     runs-on: ubuntu-latest
