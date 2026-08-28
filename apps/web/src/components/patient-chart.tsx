@@ -4,7 +4,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Camera, MessageCircle, Pencil } from 'lucide-react';
-import { api, ApiError, API_URL } from '@/lib/api';
+import { api, ApiError, getApiUrl } from '@/lib/api';
 import {
   ageLabel,
   currency,
@@ -779,7 +779,7 @@ function PatientAvatar({
     }
     let revoked = false;
     let created: string | null = null;
-    void fetch(`${API_URL}/patients/${patientId}/media/${mediaId}/download`, { credentials: 'include' })
+    void fetch(`${getApiUrl()}/patients/${patientId}/media/${mediaId}/download`, { credentials: 'include' })
       .then(async (response) => {
         if (!response.ok) throw new Error('Não foi possível carregar a foto.');
         const blob = await response.blob();

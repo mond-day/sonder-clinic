@@ -1,5 +1,7 @@
 'use client';
 
+import { getPublicEnv } from './runtime-env';
+
 export type AuthUser = {
   id: string;
   name: string;
@@ -8,7 +10,9 @@ export type AuthUser = {
   permissions: string[];
 };
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+export function getApiUrl(): string {
+  return getPublicEnv('NEXT_PUBLIC_API_URL') ?? 'http://localhost:4000/api/v1';
+}
 
 export class ApiError extends Error {
   constructor(
@@ -33,7 +37,7 @@ function csrfHeaders(): HeadersInit {
 async function request<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(`${getApiUrl()}${path}`, {
     ...init,
     credentials: 'include',
     headers: {
@@ -44,7 +48,7 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
   });
 
   if (response.status === 401 && retry && path !== '/auth/refresh') {
-    const refreshed = await fetch(`${API_URL}/auth/refresh`, {
+    const refreshed = await fetch(`${getApiUrl()}/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
       headers: csrfHeaders(),

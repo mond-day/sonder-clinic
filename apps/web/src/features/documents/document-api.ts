@@ -1,4 +1,4 @@
-import { api } from '@/lib/api';
+import { api, getApiUrl } from '@/lib/api';
 import { list } from '@/lib/format';
 import type {
   DocumentEvent,
@@ -10,8 +10,6 @@ import type {
   Prescription,
   PrescriptionProtocol,
 } from './document-types';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
 
 export async function listDocumentLibrary(
   patientId: string,
@@ -84,7 +82,7 @@ export async function archiveDocument(id: string) {
 }
 
 export async function downloadDocumentPdf(id: string, filename: string) {
-  const response = await fetch(`${API_URL}/documents/${id}/pdf`, { credentials: 'include' });
+  const response = await fetch(`${getApiUrl()}/documents/${id}/pdf`, { credentials: 'include' });
   if (!response.ok) throw new Error('Falha ao gerar PDF.');
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
@@ -112,7 +110,7 @@ export async function cancelPrescription(id: string, reason: string) {
 }
 
 export async function downloadPrescriptionPdf(id: string, filename: string) {
-  const response = await fetch(`${API_URL}/prescriptions/${id}/pdf`, { credentials: 'include' });
+  const response = await fetch(`${getApiUrl()}/prescriptions/${id}/pdf`, { credentials: 'include' });
   if (!response.ok) throw new Error('Falha ao gerar PDF da receita.');
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
@@ -150,7 +148,7 @@ export async function archiveMedia(patientId: string, mediaId: string) {
 }
 
 export async function downloadMedia(patientId: string, mediaId: string, filename: string) {
-  const response = await fetch(`${API_URL}/patients/${patientId}/media/${mediaId}/download`, {
+  const response = await fetch(`${getApiUrl()}/patients/${patientId}/media/${mediaId}/download`, {
     credentials: 'include',
   });
   if (!response.ok) throw new Error('Falha ao baixar arquivo.');

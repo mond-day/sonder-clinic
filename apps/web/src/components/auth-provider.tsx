@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { authApi, api, type AuthUser } from '@/lib/api';
+import { authApi, api, getApiUrl, type AuthUser } from '@/lib/api';
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -36,6 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
+  const [bootError, setBootError] = useState('');
   const pathname = usePathname();
   const router = useRouter();
 
@@ -44,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     setLoading(true);
     setStarting(false);
+    setBootError('');
 
     async function resolveAuth() {
       for (let attempt = 0; attempt < 20 && !cancelled; attempt++) {
@@ -84,7 +86,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!cancelled) {
         setStarting(false);
         setLoading(false);
-        if (!publicPath) router.replace('/login');
+        setBootError(
+          `Não foi possível contatar a API em ${getApiUrl()}/setup/status. Confira NEXT_PUBLIC_API_URL no container do serviço web.`,
+        );
       }
     }
 
@@ -105,6 +109,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       router.replace('/login');
     },
   }), [user, loading, router]);
+
+  if (bootError) {
+    return (
+      <AuthContext.Provider value={value}>
+        <main className="login-page">
+          <div className="login-card">
+            <h1>API indisponível</h1>
+            <p className="form-error" role="alert">{bootError}</p>
+          </div>
+        </main>
+      </AuthContext.Provider>
+    );
+  }
 
   if ((loading || starting) && !isPublicPath(pathname)) {
     return (

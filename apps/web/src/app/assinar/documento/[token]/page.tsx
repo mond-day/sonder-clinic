@@ -3,8 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { PublicSigningDocument } from '@/features/documents/public-signing-document';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+import { getApiUrl } from '@/lib/api';
 
 type PublicPayload = {
   requestId?: string;
@@ -41,7 +40,7 @@ export default function PublicDocumentSignPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_URL}/public/document-signatures/${token}`)
+    fetch(`${getApiUrl()}/public/document-signatures/${token}`)
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
         return response.json() as Promise<PublicPayload>;
@@ -54,7 +53,7 @@ export default function PublicDocumentSignPage() {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/public/document-signatures/${token}/sign`, {
+      const response = await fetch(`${getApiUrl()}/public/document-signatures/${token}/sign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

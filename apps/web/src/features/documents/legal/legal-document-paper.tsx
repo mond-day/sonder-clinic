@@ -1,6 +1,6 @@
 'use client';
 
-import { API_URL } from '@/lib/api';
+import { getApiUrl } from '@/lib/api';
 import { publicAppUrl } from '@/lib/public-url';
 import { dateOnly, dateTime, formatBrazilianDateLong, formatCpf, formatCro, text } from '@/lib/format';
 
@@ -120,7 +120,7 @@ export function LegalDocumentPaper({
     ? publicAppUrl(`${VALIDATION_PATH}?codigo=${encodeURIComponent(validationCode)}`)
     : publicAppUrl(VALIDATION_PATH);
   const qrSrc = validationCode
-    ? `${API_URL}/public/documents/${encodeURIComponent(validationCode)}/qr`
+    ? `${getApiUrl()}/public/documents/${encodeURIComponent(validationCode)}/qr`
     : '';
   const accent = accentColor && /^#[0-9a-fA-F]{6}$/.test(accentColor) ? accentColor : '#176B5B';
 

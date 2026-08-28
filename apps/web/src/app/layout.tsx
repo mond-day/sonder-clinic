@@ -6,6 +6,7 @@ import { SelectionProvider } from '@/components/selection-provider';
 import { ThemeProvider } from '@/components/theme-provider';
 import { WorkspaceProvider } from '@/components/workspace-provider';
 import { THEME_BOOTSTRAP_SCRIPT } from '@/lib/theme';
+import { runtimeEnvScript } from '@/lib/runtime-env';
 import './globals.css';
 
 const sans = Manrope({
@@ -25,10 +26,16 @@ export const metadata: Metadata = {
   description: 'ERP odontológico para uma operação clínica segura e eficiente',
 };
 
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="pt-BR" className={`${sans.variable} ${display.variable}`} suppressHydrationWarning>
       <body>
+        <script dangerouslySetInnerHTML={{ __html: runtimeEnvScript({
+          NEXT_PUBLIC_API_URL: process.env['NEXT_PUBLIC_API_URL'],
+          NEXT_PUBLIC_APP_URL: process.env['NEXT_PUBLIC_APP_URL'],
+        }) }} />
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
         <ThemeProvider>
           <AuthProvider>

@@ -3,8 +3,7 @@
 import { FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+import { getApiUrl } from '@/lib/api';
 
 type ValidationResult = {
   authentic?: boolean;
@@ -58,7 +57,7 @@ function ValidateDocumentPageInner() {
     setError(null);
     setResult(null);
     try {
-      const response = await fetch(`${API_URL}/public/documents/${encodeURIComponent(trimmed)}`);
+      const response = await fetch(`${getApiUrl()}/public/documents/${encodeURIComponent(trimmed)}`);
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { message?: string } | null;
         throw new Error(payload?.message ?? 'Documento não encontrado ou código inválido.');

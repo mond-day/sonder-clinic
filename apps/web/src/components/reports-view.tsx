@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, getApiUrl } from '@/lib/api';
 import { currency, dateOnly, list, number, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { printHtmlDocument, escapePrintHtml } from '@/lib/print-document';
 import {
@@ -246,8 +246,7 @@ export function ReportsView() {
         const result = await api.get<{ rows: RecordValue[]; total: number }>(`/reports/by/${selected}?${query}`);
         setRows(list(result.rows ?? result));
       } else {
-        const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
-        const response = await fetch(`${API_URL}/reports/by/${selected}?${query}`, { credentials: 'include' });
+        const response = await fetch(`${getApiUrl()}/reports/by/${selected}?${query}`, { credentials: 'include' });
         if (!response.ok) throw new ApiError('Falha na exportação.', response.status);
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);

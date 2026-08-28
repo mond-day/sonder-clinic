@@ -28,7 +28,7 @@ import {
   Trash2,
   KeyRound,
 } from 'lucide-react';
-import { api, ApiError, API_URL } from '@/lib/api';
+import { api, ApiError, getApiUrl } from '@/lib/api';
 import {
   DEFAULT_BUSINESS_HOURS,
   WEEKDAY_OPTIONS,
@@ -928,7 +928,7 @@ export function SettingsView() {
               <div className="info-item span-2">
                 <small>URL do webhook</small>
                 <strong className="contract-hint" style={{ display: 'block', marginTop: 6 }}>
-                  {`${API_URL}/integrations/abacatepay/webhook`}
+                  {`${getApiUrl()}/integrations/abacatepay/webhook`}
                 </strong>
                 <span>Cadastre esta URL no dashboard da AbacatePay (evento transparent.completed). Inclua o segredo salvo na integração.</span>
               </div>

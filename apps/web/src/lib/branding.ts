@@ -1,4 +1,4 @@
-import { API_URL } from './api';
+import { getApiUrl } from './api';
 
 export type ClinicBranding = {
   name?: string;
@@ -18,11 +18,11 @@ export function notifyBrandingUpdated(clinicId?: string) {
 }
 
 export function apiOrigin(): string {
-  return API_URL.replace(/\/api\/v1\/?$/, '');
+  return getApiUrl().replace(/\/api\/v1\/?$/, '');
 }
 
 export function publicApiDocsUrl(): string {
-  return `${API_URL.replace(/\/$/, '')}/public/docs`;
+  return `${getApiUrl().replace(/\/$/, '')}/public/docs`;
 }
 
 export function resolveMediaUrl(url?: string | null): string | undefined {

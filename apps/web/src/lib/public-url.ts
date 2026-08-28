@@ -1,6 +1,8 @@
+import { getPublicEnv } from './runtime-env';
+
 /** Monta URL absoluta canônica para links públicos (assinatura remota, etc.). */
 export function publicAppUrl(path: string) {
-  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  const configured = getPublicEnv('NEXT_PUBLIC_APP_URL')?.trim();
   const base = configured && configured.length > 0
     ? configured
     : (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');

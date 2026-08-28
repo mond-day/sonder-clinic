@@ -5,8 +5,7 @@ import { useParams } from 'next/navigation';
 import { SignaturePad } from '@/features/anamnesis/signature-pad';
 import { QuestionRenderer } from '@/features/anamnesis/question-renderer';
 import { isGroupVisible, type ConditionGroup } from '@/features/anamnesis/conditions';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+import { getApiUrl } from '@/lib/api';
 
 type PublicPayload = {
   clinic?: { tradeName?: string; legalName?: string };
@@ -59,7 +58,7 @@ export default function PublicAnamnesisSignPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_URL}/public/anamnesis-signatures/${token}`)
+    fetch(`${getApiUrl()}/public/anamnesis-signatures/${token}`)
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
         return response.json() as Promise<PublicPayload>;
@@ -84,7 +83,7 @@ export default function PublicAnamnesisSignPage() {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/public/anamnesis-signatures/${token}/sign`, {
+      const response = await fetch(`${getApiUrl()}/public/anamnesis-signatures/${token}/sign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ evidence: { dataUrl: signature } }),

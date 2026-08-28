@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Archive, Ban, Download, Pencil, Printer, Share2, Stamp } from 'lucide-react';
-import { api, API_URL } from '@/lib/api';
+import { api, getApiUrl } from '@/lib/api';
 
 const PROFESSIONAL_ECPF_REQUIRED_MESSAGE =
   'Vincule o e-CPF deste profissional em Configurações → Certificados';
@@ -501,7 +501,7 @@ function MediaPreviewPanel({
     let created: string | null = null;
     (async () => {
       try {
-        const response = await fetch(`${API_URL}/patients/${patientId}/media/${mediaId}/download`, {
+        const response = await fetch(`${getApiUrl()}/patients/${patientId}/media/${mediaId}/download`, {
           credentials: 'include',
         });
         if (!response.ok) throw new Error('Falha ao carregar prévia autenticada.');

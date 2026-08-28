@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { API_URL } from '@/lib/api';
+import { getApiUrl } from '@/lib/api';
 import { initials, text } from '@/lib/format';
 
 export function PersonAvatar({
@@ -24,7 +24,7 @@ export function PersonAvatar({
       setSrc(photoUrl);
       return;
     }
-    const absolute = photoUrl.startsWith('http') ? photoUrl : `${API_URL}${photoUrl.startsWith('/') ? photoUrl : `/${photoUrl}`}`;
+    const absolute = photoUrl.startsWith('http') ? photoUrl : `${getApiUrl()}${photoUrl.startsWith('/') ? photoUrl : `/${photoUrl}`}`;
     let revoked = false;
     let created: string | null = null;
     void fetch(absolute, { credentials: 'include' })
