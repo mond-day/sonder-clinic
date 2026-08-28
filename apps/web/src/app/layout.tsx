@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Manrope, Source_Serif_4 } from 'next/font/google';
+import { headers } from 'next/headers';
 import { AuthProvider } from '@/components/auth-provider';
 import { PresentationProvider } from '@/components/presentation-provider';
 import { SelectionProvider } from '@/components/selection-provider';
@@ -28,14 +29,21 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+function readPublicEnvFromContainer() {
+  const apiKey = ['NEXT', 'PUBLIC', 'API', 'URL'].join('_');
+  const appKey = ['NEXT', 'PUBLIC', 'APP', 'URL'].join('_');
+  return {
+    NEXT_PUBLIC_API_URL: process.env[apiKey],
+    NEXT_PUBLIC_APP_URL: process.env[appKey],
+  };
+}
+
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  await headers();
   return (
     <html lang="pt-BR" className={`${sans.variable} ${display.variable}`} suppressHydrationWarning>
       <body>
-        <script dangerouslySetInnerHTML={{ __html: runtimeEnvScript({
-          NEXT_PUBLIC_API_URL: process.env['NEXT_PUBLIC_API_URL'],
-          NEXT_PUBLIC_APP_URL: process.env['NEXT_PUBLIC_APP_URL'],
-        }) }} />
+        <script dangerouslySetInnerHTML={{ __html: runtimeEnvScript(readPublicEnvFromContainer()) }} />
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
         <ThemeProvider>
           <AuthProvider>
