@@ -1,10 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { Resource } from '@opentelemetry/resources';
 import { NodeSDK } from '@opentelemetry/sdk-node';
-import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-base';
-import { SEMRESATTRS_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 
 export type ObservabilityStatus = {
   enabled: boolean;
@@ -55,15 +52,22 @@ export async function startObservability(serviceName: string): Promise<Observabi
     diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.INFO);
   }
 
-  const exporter = status.endpoint
-    ? new OTLPTraceExporter({ url: `${status.endpoint.replace(/\/$/, '')}/v1/traces` })
-    : new ConsoleSpanExporter();
+  // serviceName (string) em vez de `new Resource()`: o Resource 1.x não
+  // satisfaz os tipos do SDK 2.x (getRawAttributes). Console via env, não
+  // via ConsoleSpanExporter 1.x — o tipo SpanExporter também divergiu.
+  if (!status.endpoint && !process.env.OTEL_TRACES_EXPORTER) {
+    process.env.OTEL_TRACES_EXPORTER = 'console';
+  }
 
   sdk = new NodeSDK({
-    resource: new Resource({
-      [SEMRESATTRS_SERVICE_NAME]: serviceName,
-    }),
-    traceExporter: exporter,
+    serviceName,
+    ...(status.endpoint
+      ? {
+          traceExporter: new OTLPTraceExporter({
+            url: `${status.endpoint.replace(/\/$/, '')}/v1/traces`,
+          }),
+        }
+      : {}),
   });
 
   await sdk.start();

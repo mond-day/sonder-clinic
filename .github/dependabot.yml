@@ -7,6 +7,15 @@ updates:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
+      # Pacotes 0.x do OTel (sdk-node 0.57 → 0.221) entram como "minor" no
+      # grupo production-deps e quebram se resources/sdk-trace ficarem em 1.x.
+      opentelemetry:
+        patterns:
+          - "@opentelemetry/*"
+        update-types:
+          - patch
+          - minor
+          - major
       production-deps:
         dependency-type: production
         update-types:
