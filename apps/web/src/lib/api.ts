@@ -29,8 +29,24 @@ function readCookie(name: string): string | undefined {
   return match ? decodeURIComponent(match[1]!) : undefined;
 }
 
+/** Cache em memória: cookie csrf_token é host-only na API e não aparece em document.cookie no front. */
+let csrfTokenCache: string | undefined;
+
+export function clearCsrfTokenCache(): void {
+  csrfTokenCache = undefined;
+}
+
+function rememberCsrfFromResponse(response: Response): void {
+  const header = response.headers.get('X-CSRF-Token');
+  if (header) csrfTokenCache = header;
+}
+
+function resolveCsrfToken(): string | undefined {
+  return readCookie('csrf_token') ?? csrfTokenCache;
+}
+
 function csrfHeaders(): HeadersInit {
-  const token = readCookie('csrf_token');
+  const token = resolveCsrfToken();
   return token ? { 'X-CSRF-Token': token } : {};
 }
 
@@ -46,6 +62,7 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
       ...init?.headers,
     },
   });
+  rememberCsrfFromResponse(response);
 
   if (response.status === 401 && retry && path !== '/auth/refresh') {
     const refreshed = await fetch(`${getApiUrl()}/auth/refresh`, {
@@ -53,6 +70,7 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
       credentials: 'include',
       headers: csrfHeaders(),
     });
+    rememberCsrfFromResponse(refreshed);
     if (refreshed.ok) return request<T>(path, init, false);
   }
 
@@ -85,7 +103,13 @@ export const authApi = {
     }, false),
   refresh: () => request<{ user: AuthUser }>('/auth/refresh', { method: 'POST' }, false),
   me: () => request<{ user: AuthUser }>('/auth/me'),
-  logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }, false),
+  logout: async () => {
+    try {
+      return await request<{ success: boolean }>('/auth/logout', { method: 'POST' }, false);
+    } finally {
+      clearCsrfTokenCache();
+    }
+  },
 };
 
 /** Path relativo seguro para redirect pós-login (bloqueia //evil.com). */

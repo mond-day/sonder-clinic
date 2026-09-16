@@ -57,6 +57,11 @@ function cookieBase(): Pick<CookieOptions, 'secure' | 'sameSite'> {
   };
 }
 
+/** Expõe o token no header para o front cross-origin (cookie da API não aparece em document.cookie). */
+export function exposeCsrfHeader(response: Response, token: string): void {
+  response.setHeader('X-CSRF-Token', token);
+}
+
 export function issueCsrfCookie(response: Response): string {
   const token = randomBytes(24).toString('base64url');
   response.cookie('csrf_token', token, {
@@ -65,7 +70,17 @@ export function issueCsrfCookie(response: Response): string {
     path: '/',
     maxAge: 30 * 24 * 60 * 60 * 1000,
   });
+  exposeCsrfHeader(response, token);
   return token;
+}
+
+function ensureCsrfCookie(request: Request, response: Response): void {
+  const existing = request.cookies?.csrf_token;
+  if (existing) {
+    exposeCsrfHeader(response, String(existing));
+    return;
+  }
+  issueCsrfCookie(response);
 }
 
 function isAuthPublicMutation(path: string): boolean {
@@ -76,6 +91,10 @@ function isAuthPublicMutation(path: string): boolean {
  * CSRF para mutações autenticadas por cookie:
  * - Origin/Referer ∈ CORS_ORIGIN / WEB_URL
  * - cookie csrf_token == header X-CSRF-Token
+ *
+ * Em produção web/API costumam ser hosts distintos (app.* / api.*): o cookie
+ * host-only da API não é legível via document.cookie no front. Por isso o
+ * token também vai no header de resposta `X-CSRF-Token` (CORS exposedHeaders).
  *
  * Login/refresh públicos: Origin (obrigatório em produção).
  * Bearer / X-API-Key / sem cookie de sessão: liberados.
@@ -90,7 +109,7 @@ export class CsrfGuard implements CanActivate {
     const isProd = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
 
     if (SAFE_METHODS.has(method)) {
-      if (!request.cookies?.csrf_token) issueCsrfCookie(response);
+      ensureCsrfCookie(request, response);
       return true;
     }
 
@@ -103,7 +122,7 @@ export class CsrfGuard implements CanActivate {
       if (isProd && !isAllowedOrigin(request)) {
         throw new ForbiddenException('Origem da requisição não permitida.');
       }
-      if (!request.cookies?.csrf_token) issueCsrfCookie(response);
+      ensureCsrfCookie(request, response);
       return true;
     }
 
@@ -120,6 +139,7 @@ export class CsrfGuard implements CanActivate {
     if (!cookieToken || !headerToken || !tokensEqual(cookieToken, headerToken)) {
       throw new ForbiddenException('Token CSRF inválido ou ausente.');
     }
+    exposeCsrfHeader(response, cookieToken);
     return true;
   }
 }

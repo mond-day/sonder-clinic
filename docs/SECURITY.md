@@ -6,7 +6,7 @@
 - Refresh tokens aleatórios armazenados somente como SHA-256, rotativos e revogáveis.
 - Bloqueio de usuário revoga todas as sessions; refresh e AuthGuard recusam `status !== ACTIVE` (cache ~30s).
 - Cookies HttpOnly, `SameSite=Lax` e `Secure` em produção; logout limpa cookies com os mesmos atributos.
-- CSRF: Origin/Referer ∈ `CORS_ORIGIN`/`WEB_URL` + double-submit `csrf_token` / `X-CSRF-Token` em mutações cookie.
+- CSRF: Origin/Referer ∈ `CORS_ORIGIN`/`WEB_URL` + double-submit `csrf_token` / `X-CSRF-Token` em mutações cookie. Token também no header de resposta `X-CSRF-Token` (CORS `exposedHeaders`) para o front cross-origin (app.* / api.*) cachear — `document.cookie` não vê cookie host-only da API.
 - Rate limiting (Redis em prod, memória em dev) para login, forgot/reset, convite, setup, links públicos e webhooks.
 - `trust proxy` em produção (Traefik); Helmet na API; headers de segurança no Next.js.
 - Escopo de organização derivado do JWT; clínicas filtradas por `ProfessionalClinic` quando o usuário tem vínculo (admin/recepção sem vínculo permanece org-wide).

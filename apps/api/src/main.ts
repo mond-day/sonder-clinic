@@ -54,6 +54,8 @@ async function bootstrap(): Promise<void> {
   app.enableCors({
     origin: corsOrigin || 'http://localhost:3000',
     credentials: true,
+    // Front cross-origin (app.* → api.*) precisa ler o token; cookie host-only não aparece em document.cookie.
+    exposedHeaders: ['X-CSRF-Token'],
   });
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
