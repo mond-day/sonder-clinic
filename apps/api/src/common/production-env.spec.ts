@@ -42,7 +42,7 @@ describe('production-env', () => {
     })).toThrow(/WEB_URL/);
   });
 
-  it('recusa MOCK implícito ou true em production', () => {
+  it('aceita MOCK ausente em production e recusa MOCK=true', () => {
     const base = {
       NODE_ENV: 'production',
       JWT_ACCESS_SECRET: 'a'.repeat(32),
@@ -56,12 +56,17 @@ describe('production-env', () => {
       CORS_ORIGIN: 'https://app.example.com',
       WEB_URL: 'https://app.example.com',
     } as NodeJS.ProcessEnv;
-    expect(() => assertProductionEnvironment(base)).toThrow(/GOOGLE_CALENDAR_MOCK/);
+    expect(() => assertProductionEnvironment(base)).not.toThrow();
     expect(() => assertProductionEnvironment({
       ...base,
       GOOGLE_CALENDAR_MOCK: 'false',
       NIBO_MOCK: 'true',
     })).toThrow(/NIBO_MOCK/);
+    expect(() => assertProductionEnvironment({
+      ...base,
+      GOOGLE_CALENDAR_MOCK: 'true',
+      NIBO_MOCK: 'false',
+    })).toThrow(/GOOGLE_CALENDAR_MOCK/);
   });
 
   it('swagger default off em production', () => {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { envFlagEnabled, parseEnvFlag, readEnvFlag } from './env-flag';
+import {
+  envFlagEnabled,
+  integrationMockFallback,
+  parseEnvFlag,
+  readEnvFlag,
+  readIntegrationMockFlag,
+} from './env-flag';
 
 describe('parseEnvFlag', () => {
   it('liga só com true/1/yes/y/on (case-insensitive)', () => {
@@ -65,5 +71,18 @@ describe('readEnvFlag / envFlagEnabled', () => {
     });
     expect(envFlagEnabled('NIBO_MOCK', true, { NIBO_MOCK: '0' })).toBe(false);
     expect(envFlagEnabled('NIBO_MOCK', true, { NIBO_MOCK: '1' })).toBe(true);
+  });
+});
+
+describe('integrationMockFallback / readIntegrationMockFlag', () => {
+  it('em production ausência = MOCK off; em dev = on', () => {
+    expect(integrationMockFallback({ NODE_ENV: 'production' })).toBe(false);
+    expect(integrationMockFallback({ NODE_ENV: 'development' })).toBe(true);
+    expect(readIntegrationMockFlag('GOOGLE_CALENDAR_MOCK', {
+      NODE_ENV: 'production',
+    })).toEqual({ value: false, present: false, raw: null });
+    expect(readIntegrationMockFlag('NIBO_MOCK', {
+      NODE_ENV: 'development',
+    })).toEqual({ value: true, present: false, raw: null });
   });
 });

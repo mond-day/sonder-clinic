@@ -49,20 +49,17 @@ export function assertWorkerProductionEnvironment(env: NodeJS.ProcessEnv = proce
     errors.push('ENCRYPTION_MASTER_KEY deve ser 64 hex (credenciais criptografadas no outbox).');
   }
 
-  const googleMock = readEnvFlag('GOOGLE_CALENDAR_MOCK', true, env);
+  // Ausência = MOCK off em prod. Só recusa se MOCK estiver explicitamente ligado.
+  const googleMock = readEnvFlag('GOOGLE_CALENDAR_MOCK', false, env);
   if (googleMock.value) {
     errors.push(
-      googleMock.present
-        ? `GOOGLE_CALENDAR_MOCK=${googleMock.raw} (MOCK ligado). Defina GOOGLE_CALENDAR_MOCK=false no Swarm/.env de produção.`
-        : 'GOOGLE_CALENDAR_MOCK ausente no processo (MOCK implícito). Defina GOOGLE_CALENDAR_MOCK=false no serviço worker do Swarm e redeploy.',
+      `GOOGLE_CALENDAR_MOCK=${googleMock.raw ?? 'true'} (MOCK ligado). Defina GOOGLE_CALENDAR_MOCK=false no Swarm/Portainer (serviço worker) e redeploy.`,
     );
   }
-  const niboMock = readEnvFlag('NIBO_MOCK', true, env);
+  const niboMock = readEnvFlag('NIBO_MOCK', false, env);
   if (niboMock.value) {
     errors.push(
-      niboMock.present
-        ? `NIBO_MOCK=${niboMock.raw} (MOCK ligado). Defina NIBO_MOCK=false no Swarm/.env de produção.`
-        : 'NIBO_MOCK ausente no processo (MOCK implícito). Defina NIBO_MOCK=false no serviço worker do Swarm e redeploy.',
+      `NIBO_MOCK=${niboMock.raw ?? 'true'} (MOCK ligado). Defina NIBO_MOCK=false no Swarm/Portainer (serviço worker) e redeploy.`,
     );
   }
 

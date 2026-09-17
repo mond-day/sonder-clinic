@@ -126,8 +126,10 @@ export {
 
 export {
   envFlagEnabled,
+  integrationMockFallback,
   parseEnvFlag,
   readEnvFlag,
+  readIntegrationMockFlag,
   type EnvFlagInfo,
 } from './env-flag.ts';
 

@@ -94,21 +94,18 @@ export function assertProductionEnvironment(env: NodeJS.ProcessEnv = process.env
   assertPublicHttpsUrl(env.CORS_ORIGIN, 'CORS_ORIGIN', errors);
   assertPublicHttpsUrl(env.WEB_URL, 'WEB_URL', errors);
 
-  // Código trata ausência como MOCK=true (seguro em dev). Em prod exige false explícito.
-  const googleMock = readEnvFlag('GOOGLE_CALENDAR_MOCK', true, env);
+  // Em produção: ausência = MOCK off (boot OK). Só recusa se MOCK estiver explicitamente ligado.
+  // GOOGLE_CLIENT_ID/SECRET NÃO são exigidos aqui — credenciais vão na UI (Integrações).
+  const googleMock = readEnvFlag('GOOGLE_CALENDAR_MOCK', false, env);
   if (googleMock.value) {
     errors.push(
-      googleMock.present
-        ? `GOOGLE_CALENDAR_MOCK=${googleMock.raw} (MOCK ligado). Defina GOOGLE_CALENDAR_MOCK=false no Swarm/.env de produção.`
-        : 'GOOGLE_CALENDAR_MOCK ausente no processo (MOCK implícito). Defina GOOGLE_CALENDAR_MOCK=false no serviço api do Swarm e redeploy.',
+      `GOOGLE_CALENDAR_MOCK=${googleMock.raw ?? 'true'} (MOCK ligado). Defina GOOGLE_CALENDAR_MOCK=false no Swarm/Portainer (serviço api) e redeploy.`,
     );
   }
-  const niboMock = readEnvFlag('NIBO_MOCK', true, env);
+  const niboMock = readEnvFlag('NIBO_MOCK', false, env);
   if (niboMock.value) {
     errors.push(
-      niboMock.present
-        ? `NIBO_MOCK=${niboMock.raw} (MOCK ligado). Defina NIBO_MOCK=false no Swarm/.env de produção.`
-        : 'NIBO_MOCK ausente no processo (MOCK implícito). Defina NIBO_MOCK=false no serviço api do Swarm e redeploy.',
+      `NIBO_MOCK=${niboMock.raw ?? 'true'} (MOCK ligado). Defina NIBO_MOCK=false no Swarm/Portainer (serviço api) e redeploy.`,
     );
   }
 

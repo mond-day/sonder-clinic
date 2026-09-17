@@ -27,14 +27,19 @@ describe('worker production-env', () => {
     } as NodeJS.ProcessEnv)).not.toThrow();
   });
 
-  it('recusa MOCK implícito no worker em production', () => {
-    expect(() => assertWorkerProductionEnvironment({
+  it('aceita MOCK ausente no worker e recusa MOCK=true', () => {
+    const base = {
       NODE_ENV: 'production',
       DATABASE_URL: 'postgresql://app:x@db.internal:5432/sonder_clinic',
       QUEUE_DRIVER: 'redis',
       REDIS_URL: 'redis://redis.internal:6379',
       STORAGE_DRIVER: 's3',
       ENCRYPTION_MASTER_KEY: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
-    } as NodeJS.ProcessEnv)).toThrow(/GOOGLE_CALENDAR_MOCK/);
+    } as NodeJS.ProcessEnv;
+    expect(() => assertWorkerProductionEnvironment(base)).not.toThrow();
+    expect(() => assertWorkerProductionEnvironment({
+      ...base,
+      GOOGLE_CALENDAR_MOCK: 'true',
+    })).toThrow(/GOOGLE_CALENDAR_MOCK/);
   });
 });

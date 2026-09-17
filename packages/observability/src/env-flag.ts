@@ -3,7 +3,7 @@
  *
  * - true / 1 / yes / y / on → ligado
  * - false / 0 / no / n / off → desligado
- * - ausente / vazio → fallback (para *_MOCK o padrão seguro em dev é true)
+ * - ausente / vazio → fallback (dev: true; produção: false — ver integrationMockFallback)
  * - aspas envolventes são removidas (ex.: "false" no Swarm/YAML)
  */
 
@@ -15,6 +15,15 @@ export type EnvFlagInfo = {
   /** Token normalizado (lowercase) ou null se ausente. */
   raw: string | null;
 };
+
+/**
+ * Fallback para flags *_MOCK de integração.
+ * Dev/CI: ausente = ligado (seguro sem credenciais).
+ * Produção: ausente = desligado (Portainer/Swarm sem a var não trava o boot nem silencia integrações).
+ */
+export function integrationMockFallback(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.NODE_ENV ?? '').toLowerCase() !== 'production';
+}
 
 const TRUTHY = new Set(['true', '1', 'yes', 'y', 'on']);
 const FALSY = new Set(['false', '0', 'no', 'n', 'off']);
@@ -66,4 +75,12 @@ export function envFlagEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return readEnvFlag(name, fallbackWhenAbsent, env).value;
+}
+
+/** Lê *_MOCK com fallback sensível a NODE_ENV (prod = false se ausente). */
+export function readIntegrationMockFlag(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+): EnvFlagInfo {
+  return readEnvFlag(name, integrationMockFallback(env), env);
 }

@@ -2,7 +2,7 @@
  * Espelho Sonder → Nibo: cria/atualiza schedules credit (Receivable) e debit (Payable).
  */
 
-import { envelopeDecryptJson } from '@sonder/observability';
+import { envelopeDecryptJson, envFlagEnabled, integrationMockFallback } from '@sonder/observability';
 
 export type NiboPushEntityType = 'Receivable' | 'Payable';
 
@@ -48,7 +48,7 @@ async function fetchJson(url: string, init?: RequestInit) {
 }
 
 export function isNiboMock(): boolean {
-  return (process.env.NIBO_MOCK ?? 'true').toLowerCase() === 'true';
+  return envFlagEnabled('NIBO_MOCK', integrationMockFallback());
 }
 
 export function decryptNiboCredentials(payload: string): Record<string, string> {
