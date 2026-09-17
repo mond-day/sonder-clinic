@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isNiboPullEnabled, niboPullIntervalMs } from './nibo-pull';
-import { readNiboAccountId } from './nibo-sync';
+import { isNiboMock, readNiboAccountId, readNiboIdList } from './nibo-sync';
 
 describe('nibo-pull config', () => {
   it('isNiboPullEnabled respeita env', () => {
@@ -22,12 +22,26 @@ describe('nibo-pull config', () => {
     if (prev === undefined) delete process.env.NIBO_PULL_INTERVAL_MS;
     else process.env.NIBO_PULL_INTERVAL_MS = prev;
   });
+
+  it('isNiboMock trata ausência como true', () => {
+    const prev = process.env.NIBO_MOCK;
+    delete process.env.NIBO_MOCK;
+    expect(isNiboMock()).toBe(true);
+    process.env.NIBO_MOCK = 'false';
+    expect(isNiboMock()).toBe(false);
+    if (prev === undefined) delete process.env.NIBO_MOCK;
+    else process.env.NIBO_MOCK = prev;
+  });
 });
 
-describe('nibo-sync accountId', () => {
+describe('nibo-sync accountId e IDs', () => {
   it('readNiboAccountId', () => {
     expect(readNiboAccountId({ accountId: 'a1' })).toBe('a1');
     expect(readNiboAccountId({ niboAccountId: 'a2' })).toBe('a2');
     expect(readNiboAccountId(undefined)).toBeNull();
+  });
+
+  it('readNiboIdList normaliza casing', () => {
+    expect(readNiboIdList({ receivableCategoryIds: ['Ab', 'ab'] }, 'receivableCategoryIds')).toEqual(['ab']);
   });
 });

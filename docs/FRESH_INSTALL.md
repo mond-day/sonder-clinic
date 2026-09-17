@@ -106,8 +106,25 @@ Recuperação é operacional (SQL consciente / restore de backup), não um backd
 | `COOKIE_SECURE` | obrigatório `true` em produção |
 | `INITIAL_SETUP_TOKEN` | secret do primeiro setup (só na API; o operador informa em `/setup`) |
 | `DATABASE_ADMIN_URL` | só bootstrap, se o database alvo ainda não existir |
+| `GOOGLE_CALENDAR_MOCK` / `NIBO_MOCK` | **obrigatório `false` em produção** (fail-fast + `deploy.sh`). Não copie `true` do `.env.example` |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth Google (env e/ou credenciais da conexão) |
+| `GOOGLE_REDIRECT_URI` | **exato**: `https://<API_HOST>/api/v1/integrations/google/callback` — mesmo valor em Google Cloud Console → Authorized redirect URIs |
+| `NIBO_PULL_ENABLED` | pull automático Nibo→Financeiro no worker (default `true`) |
 
 `APP_URL` foi removido do stack; use `WEB_URL`.
+
+### Google Calendar (produção)
+
+1. No `.env` da VPS: `GOOGLE_CALENDAR_MOCK=false`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI=https://api.<seu-dominio>/api/v1/integrations/google/callback`.
+2. No [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → OAuth 2.0 Client → **Authorized redirect URIs**: cole exatamente o mesmo `GOOGLE_REDIRECT_URI` (incluindo `/api/v1/integrations/google/callback`).
+3. Redeploy (`deploy.sh` recusa `MOCK=true`). Em Configurações → Integrações, use **Conectar / reconectar** e autorize.
+4. A UI mostra o redirect URI em “Detalhes técnicos” da integração Google.
+
+### Nibo (produção)
+
+1. `NIBO_MOCK=false` + API Key na conexão Integrações (status ACTIVE).
+2. Selecione categorias (filtram a receber **e** a pagar) e, se quiser, centros de custo (filtro adicional em a pagar).
+3. **Sincronizar com Nibo** importa na hora; o worker também puxa periodicamente (`NIBO_PULL_*`). Logs: `nibo-pull.tick` / `nibo-pull.enqueued` / `nibo-pull.completed` (ou `skipReason` se MOCK/sem conexão ACTIVE).
 
 ## Deploy manual na VPS (se o GitHub ainda não tem SSH)
 

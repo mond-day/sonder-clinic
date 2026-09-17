@@ -65,6 +65,10 @@ export function readNiboApiKey(credentials: Record<string, string>): string {
   );
 }
 
+export function normalizeNiboId(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
 export function readNiboIdList(
   config: Record<string, unknown> | undefined,
   arrayKey: string,
@@ -73,10 +77,12 @@ export function readNiboIdList(
   if (!config) return [];
   const raw = config[arrayKey];
   if (Array.isArray(raw)) {
-    return [...new Set(raw.map((item) => String(item ?? '').trim()).filter(Boolean))];
+    return [...new Set(
+      raw.map((item) => normalizeNiboId(String(item ?? ''))).filter(Boolean),
+    )];
   }
   if (singularKey) {
-    const single = String(config[singularKey] ?? '').trim();
+    const single = normalizeNiboId(String(config[singularKey] ?? ''));
     return single ? [single] : [];
   }
   return [];

@@ -31,6 +31,24 @@ if [[ "${WEB_URL}" != https://* ]]; then
   exit 1
 fi
 
+# .env.example usa MOCK=true (dev). Em produção isso silencia Nibo/Google e deve ser false.
+if [[ "${GOOGLE_CALENDAR_MOCK:-false}" == "true" ]]; then
+  echo "GOOGLE_CALENDAR_MOCK=true não é permitido em produção. Defina GOOGLE_CALENDAR_MOCK=false no .env da VPS." >&2
+  exit 1
+fi
+if [[ "${NIBO_MOCK:-false}" == "true" ]]; then
+  echo "NIBO_MOCK=true não é permitido em produção. Defina NIBO_MOCK=false no .env da VPS." >&2
+  exit 1
+fi
+
+if [[ -z "${GOOGLE_REDIRECT_URI:-}" ]]; then
+  echo "AVISO: GOOGLE_REDIRECT_URI vazio. OAuth Google exige exatamente:" >&2
+  echo "  https://<API_HOST>/api/v1/integrations/google/callback" >&2
+  echo "Cadastre o mesmo URI em Google Cloud Console → Authorized redirect URIs." >&2
+elif [[ "${GOOGLE_REDIRECT_URI}" != *"/api/v1/integrations/google/callback" ]]; then
+  echo "AVISO: GOOGLE_REDIRECT_URI deve terminar com /api/v1/integrations/google/callback (valor atual pode falhar no OAuth)." >&2
+fi
+
 token="${INITIAL_SETUP_TOKEN:-}"
 if [[ ${#token} -lt 16 ]]; then
   echo "INITIAL_SETUP_TOKEN deve ter ao menos 16 caracteres (secret da API; o operador cola o mesmo valor em /setup)." >&2

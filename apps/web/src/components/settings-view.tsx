@@ -196,6 +196,18 @@ export function SettingsView() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [googleOauthStatus, setGoogleOauthStatus] = useState<RecordValue | null>(null);
+
+  function showSuccess(message: string) {
+    setError('');
+    setNotice(message);
+  }
+
+  function showFailure(message: string) {
+    setNotice('');
+    setError(message);
+  }
 
   const load = useCallback(() => {
     if (!clinicId) return;
@@ -216,8 +228,9 @@ export function SettingsView() {
       api.get<{ professionals?: RecordValue[] }>(`/settings/certificates?clinicId=${clinicId}`).catch(() => ({ professionals: [] })),
       api.get<RecordValue[]>(`/automation-rules?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
       api.get<RecordValue[]>(`/price-tables?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
+      api.get<RecordValue>('/integrations/google-calendar/oauth-status').catch(() => null),
     ])
-      .then(([nextProcedures, nextRules, nextDeliveries, nextIntegrations, nextBranding, nextBusinessHours, nextLegal, nextTags, nextCertificate, nextCertList, nextAutomation, nextPriceTables]) => {
+      .then(([nextProcedures, nextRules, nextDeliveries, nextIntegrations, nextBranding, nextBusinessHours, nextLegal, nextTags, nextCertificate, nextCertList, nextAutomation, nextPriceTables, nextGoogleOauth]) => {
         setProcedures(list(nextProcedures));
         setRules(list(nextRules));
         setDeliveries(list(nextDeliveries));
@@ -227,6 +240,7 @@ export function SettingsView() {
         setBusinessHours(hours);
         setBusinessHoursDraft(hours);
         setLegal(list(nextLegal));
+        setGoogleOauthStatus(nextGoogleOauth);
         setAgendaTags(list(nextTags));
         setCertificate(nextCertificate);
         setProfessionalCertificates(list(nextCertList?.professionals));
@@ -720,32 +734,36 @@ export function SettingsView() {
     try {
       const result = await api.post<{ success?: boolean; message?: string }>(`/integrations/${id}/test-connection`, {});
       if (result.success) {
-        setError('');
+        showSuccess(result.message ?? 'Conexão testada com sucesso.');
         load();
       } else {
-        setError(result.message ?? 'Teste da conexão sem sucesso. Verifique as credenciais.');
+        showFailure(result.message ?? 'Teste da conexão sem sucesso. Verifique as credenciais.');
       }
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Não foi possível testar a integração.');
+      showFailure(cause instanceof ApiError ? cause.message : 'Não foi possível testar a integração.');
     }
   }
 
   async function startGoogleOauth(id: string) {
     setIntegrationMenuId(null);
     try {
-      const result = await api.post<{ authorizeUrl?: string; message?: string }>(
+      const result = await api.post<{ authorizeUrl?: string; message?: string; redirectUri?: string }>(
         `/integrations/${id}/oauth/start`,
         {},
       );
       if (result.authorizeUrl) {
         window.open(result.authorizeUrl, '_blank', 'noopener,noreferrer');
-        setError('');
+        showSuccess(
+          result.redirectUri
+            ? `Autorize no Google. Se falhar, confira no Console o redirect URI: ${result.redirectUri}`
+            : (result.message ?? 'Autorize o acesso no Google na janela aberta.'),
+        );
         return;
       }
-      setError(result.message ?? 'Não foi possível iniciar a conexão com o Google Agenda.');
+      showFailure(result.message ?? 'Não foi possível iniciar a conexão com o Google Agenda.');
     } catch (cause) {
       const message = cause instanceof ApiError ? cause.message : 'Conexão com Google Agenda indisponível.';
-      setError(message);
+      showFailure(message);
     }
   }
 
@@ -756,21 +774,40 @@ export function SettingsView() {
         `/integrations/${id}/calendar/pull-sync`,
         {},
       );
-      setError(result.message ?? 'Sincronização concluída. Eventos pessoais aparecem na Agenda com o toggle “Eventos do Google”.');
+      const counts = [
+        typeof result.updated === 'number' ? `${result.updated} agendamento(s) atualizado(s)` : null,
+        typeof result.personalEvents === 'number' ? `${result.personalEvents} evento(s) pessoal(is)` : null,
+      ].filter(Boolean).join(' · ');
+      showSuccess(
+        result.message
+          ?? (counts
+            ? `Sincronização concluída: ${counts}.`
+            : 'Sincronização concluída. Eventos pessoais aparecem na Agenda com o toggle “Eventos do Google”.'),
+      );
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Sincronização Google Calendar falhou.');
+      showFailure(cause instanceof ApiError ? cause.message : 'Sincronização Google Calendar falhou.');
     }
   }
 
   async function importNiboFinance(id: string) {
     setIntegrationMenuId(null);
     try {
-      const result = await api.post<{ message?: string }>(`/integrations/${id}/nibo/import`, {});
-      setError(result.message ?? 'Importação do Nibo concluída.');
+      const result = await api.post<{
+        message?: string;
+        receivablesCreated?: number;
+        receivablesUpdated?: number;
+        payablesCreated?: number;
+        payablesUpdated?: number;
+        creditFetched?: number;
+        debitFetched?: number;
+        creditMatchedFilters?: number;
+        debitMatchedFilters?: number;
+      }>(`/integrations/${id}/nibo/import`, {});
+      showSuccess(result.message ?? 'Importação do Nibo concluída.');
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Importação Nibo falhou.');
+      showFailure(cause instanceof ApiError ? cause.message : 'Importação Nibo falhou.');
     }
   }
 
@@ -781,10 +818,10 @@ export function SettingsView() {
         `/integrations/${id}/calendar/watch`,
         {},
       );
-      setError(result.message ?? 'Webhook Google registrado.');
+      showSuccess(result.message ?? 'Webhook Google registrado.');
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Não foi possível ativar as atualizações automáticas.');
+      showFailure(cause instanceof ApiError ? cause.message : 'Não foi possível ativar as atualizações automáticas.');
     }
   }
 
@@ -800,6 +837,7 @@ export function SettingsView() {
         }
       />
       {error && <div className="secure-notice form-error" role="alert">{error}</div>}
+      {notice && !error ? <div className="secure-notice" role="status">{notice}</div> : null}
       <DirtyFormModal open={configModal === 'branding'} title="Identidade visual" description="Alterações auditadas e aplicadas à clínica. O logotipo é enviado por este formulário." onClose={closeConfigModal}>
         <ModuleActions module="integracoes" configurationKind="branding" clinicId={clinicId} clinics={clinics} professionals={professionals} patients={[]} selectedPatientId="" onPatientChange={() => undefined} onSaved={() => { load(); closeConfigModal(); }} />
       </DirtyFormModal>
@@ -1964,6 +2002,9 @@ export function SettingsView() {
                                 const expiration = cfg.webhookExpiration;
                                 const calendarId = text(cfg.calendarId, 'primary');
                                 const lastError = text(cfg.webhookWatchLastError);
+                                const redirectUri = text(googleOauthStatus?.redirectUri)
+                                  || text(googleOauthStatus?.expectedRedirectPath, '/api/v1/integrations/google/callback');
+                                const oauthMessage = text(googleOauthStatus?.message);
                                 const expLabel = (() => {
                                   if (!expiration) return 'não configuradas — use sincronização manual';
                                   const expMs = Number(expiration);
@@ -1975,7 +2016,49 @@ export function SettingsView() {
                                     <span>Provedor: Google Agenda</span>
                                     <span>Calendário: {calendarId}</span>
                                     <span>Atualizações automáticas: {expLabel}</span>
+                                    <span>
+                                      Redirect URI (cole no Google Cloud Console):
+                                      {' '}
+                                      <code style={{ wordBreak: 'break-all' }}>{redirectUri}</code>
+                                    </span>
+                                    {oauthMessage ? <span>Status OAuth: {oauthMessage}</span> : null}
                                     {lastError ? <span>Última falha: {lastError}</span> : null}
+                                  </div>
+                                );
+                              })()}
+                            </Disclosure>
+                          ) : null}
+                          {text(item.provider) === 'NIBO' ? (
+                            <Disclosure title="Última sincronização Nibo" description="Resultado do import/pull" defaultOpen={false}>
+                              {(() => {
+                                const cfg = item.configuration && typeof item.configuration === 'object'
+                                  ? item.configuration as RecordValue
+                                  : {};
+                                const last = cfg.lastNiboImport && typeof cfg.lastNiboImport === 'object'
+                                  ? cfg.lastNiboImport as RecordValue
+                                  : null;
+                                const at = text(cfg.lastNiboImportAt) || text(cfg.lastNiboPullAt);
+                                if (!last && !at) {
+                                  return <div className="muted-note">Ainda sem sincronização registrada. Use “Sincronizar com Nibo”.</div>;
+                                }
+                                return (
+                                  <div className="muted-note" style={{ display: 'grid', gap: 4 }}>
+                                    {at ? <span>Quando: {dateOnly(at)}</span> : null}
+                                    {last ? (
+                                      <span>
+                                        Recebíveis: {text(last.receivablesCreated, '0')} criados / {text(last.receivablesUpdated, '0')} atualizados
+                                        {' · '}
+                                        Despesas: {text(last.payablesCreated, '0')} criadas / {text(last.payablesUpdated, '0')} atualizadas
+                                      </span>
+                                    ) : null}
+                                    {last ? (
+                                      <span>
+                                        Nibo retornou {text(last.creditFetched, '?')} a receber / {text(last.debitFetched, '?')} a pagar
+                                        {last.creditMatchedFilters != null || last.debitMatchedFilters != null
+                                          ? ` · após filtros: ${text(last.creditMatchedFilters, '?')} / ${text(last.debitMatchedFilters, '?')}`
+                                          : ''}
+                                      </span>
+                                    ) : null}
                                   </div>
                                 );
                               })()}

@@ -38,10 +38,10 @@ Estados: `GO` | `PARTIAL` | `NO-GO` | `DISABLED` | `LEGACY` | `FUTURE`
 ## Gaps produto — Nibo sync bidirecional + paciente Calendar + MOCK prod (2026-09)
 
 ### DONE (código)
-- **Nibo ↔ Financeiro (A50):** pull manual + pull periódico worker (`finance.nibo-pull.requested`); create/update por `externalId`; push create/update schedule, PAY (baixa) e DELETE (cancel Payable); UI com `accountId` e copy de sync bidirecional
+- **Nibo ↔ Financeiro (A50):** pull manual + pull periódico worker (`finance.nibo-pull.requested`); create/update por `externalId`; categorias filtram a receber e a pagar; centros de custo filtram a pagar; logs de tick/skip no worker; push create/update schedule, PAY (baixa) e DELETE (cancel Payable); UI com `accountId`, lastNiboImport e feedback de sync
 - **Paciente → Google (A51):** cadastro enfileira `patient.calendar-sync.requested`; evento all-day + `Patient.externalCalendarEventId`; soft-fail no outbox
-- **Google personal pull (A38):** pull-sync + overlay; mensagens MOCK orientam `GOOGLE_CALENDAR_MOCK=false` no Swarm
-- **Produção MOCK:** `stack.production.yml` defaulta `GOOGLE_CALENDAR_MOCK=false` e `NIBO_MOCK=false` (api/worker); fail-fast se MOCK true/ausente
+- **Google personal pull (A38):** pull-sync + overlay; oauth-status expõe `redirectUri`; mensagens MOCK orientam `GOOGLE_CALENDAR_MOCK=false` no Swarm
+- **Produção MOCK:** `stack.production.yml` defaulta `GOOGLE_CALENDAR_MOCK=false` e `NIBO_MOCK=false` (api/worker); fail-fast + `deploy.sh` se MOCK true; `NIBO_PULL_*` injetados
 - **Migrations:** `20260917120000_nibo_external_ids`; `20260917130000_patient_calendar_event`
 
 ### Fora de escopo (follow-up)

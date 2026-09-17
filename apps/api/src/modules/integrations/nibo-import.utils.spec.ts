@@ -56,6 +56,13 @@ describe('nibo-import.utils', () => {
     );
   });
 
+  it('compara IDs de categoria/centro sem diferenciar maiúsculas', () => {
+    expect(
+      matchesNiboFilters(baseItem({ categoryId: 'Cat-A' }), { categoryIds: ['cat-a'], costCenterIds: [] }),
+    ).toBe(true);
+    expect(readNiboIdList({ receivableCategoryIds: ['AbC', 'abc'] }, 'receivableCategoryIds')).toEqual(['abc']);
+  });
+
   it('mapeia status e textos', () => {
     expect(niboScheduleStatus(baseItem())).toBe('OPEN');
     expect(niboScheduleStatus(baseItem({ paidValue: 40 }))).toBe('PARTIALLY_PAID');

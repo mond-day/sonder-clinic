@@ -1168,7 +1168,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
               />
               <span className="field-hint">
                 {niboCatalog?.message
-                  || 'Filtro na importação de títulos a receber e categoria padrão do espelho Sonder→Nibo (primeira selecionada).'}
+                  || 'Filtro na importação de títulos a receber e a pagar (mesmas categorias) e categoria padrão do espelho Sonder→Nibo (primeira selecionada).'}
               </span>
             </div>
             <div className="span-2">
@@ -1182,7 +1182,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
                 placeholder={niboCatalog?.costCenters.length ? 'Selecionar centros de custo…' : 'Teste a conexão para carregar centros de custo'}
               />
               <span className="field-hint">
-                Filtro na importação de despesas (a pagar) e centro de custo padrão do espelho Sonder→Nibo (primeira selecionada).
+                Filtro adicional na importação de despesas (a pagar) e centro de custo padrão do espelho Sonder→Nibo (primeira selecionada).
               </span>
             </div>
             <label className="span-2">

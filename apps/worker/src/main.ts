@@ -4,6 +4,7 @@ import { materializeExpiredAnamneses } from './anamnesis-expire';
 import { processDueFinanceRecurrences } from './finance-recurrences';
 import { renewExpiringGoogleCalendarWatches, isGoogleWatchAutoRenewEnabled } from './google-calendar-watch-renew';
 import { enqueueDueNiboPulls, isNiboPullEnabled } from './nibo-pull';
+import { isNiboMock } from './nibo-sync';
 import { processDueTaskRecurrences } from './task-recurrences';
 import { processOutbox } from './outbox';
 
@@ -88,17 +89,15 @@ async function tick(): Promise<void> {
       }
     }
 
-    if (isNiboPullEnabled() && now - lastNiboPullEnqueueAt >= niboPullEveryMs) {
+    if (now - lastNiboPullEnqueueAt >= niboPullEveryMs) {
       lastNiboPullEnqueueAt = now;
       try {
         const result = await enqueueDueNiboPulls();
-        if (result.enqueued > 0) {
-          console.info(JSON.stringify({
-            service: 'sonder-worker',
-            event: 'nibo-pull.enqueued',
-            ...result,
-          }));
-        }
+        console.info(JSON.stringify({
+          service: 'sonder-worker',
+          event: result.enqueued > 0 ? 'nibo-pull.enqueued' : 'nibo-pull.tick',
+          ...result,
+        }));
       } catch (error) {
         console.warn(JSON.stringify({
           service: 'sonder-worker',
@@ -122,6 +121,8 @@ async function main(): Promise<void> {
     driver: process.env.QUEUE_DRIVER ?? 'memory',
     googleWatchAutoRenew: isGoogleWatchAutoRenewEnabled(),
     niboPullEnabled: isNiboPullEnabled(),
+    niboMock: isNiboMock(),
+    niboPullTickMs: niboPullEveryMs,
   }));
   setInterval(() => void tick(), intervalMs);
   void tick();

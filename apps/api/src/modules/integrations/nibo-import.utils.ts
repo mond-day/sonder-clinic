@@ -32,6 +32,11 @@ export function niboScheduleStatus(item: NiboScheduleItem): 'OPEN' | 'PARTIALLY_
   return 'OPEN';
 }
 
+/** Normaliza IDs Nibo para comparação (GUID pode vir com casing diferente no catálogo vs schedule). */
+export function normalizeNiboId(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
 export function readNiboIdList(
   config: Record<string, unknown> | undefined,
   arrayKey: string,
@@ -40,10 +45,12 @@ export function readNiboIdList(
   if (!config) return [];
   const raw = config[arrayKey];
   if (Array.isArray(raw)) {
-    return [...new Set(raw.map((item) => String(item ?? '').trim()).filter(Boolean))];
+    return [...new Set(
+      raw.map((item) => normalizeNiboId(String(item ?? ''))).filter(Boolean),
+    )];
   }
   if (singularKey) {
-    const single = String(config[singularKey] ?? '').trim();
+    const single = normalizeNiboId(String(config[singularKey] ?? ''));
     return single ? [single] : [];
   }
   return [];
@@ -54,10 +61,12 @@ export function matchesNiboFilters(
   filters: { categoryIds: string[]; costCenterIds: string[] },
 ): boolean {
   if (filters.categoryIds.length) {
-    if (!item.categoryId || !filters.categoryIds.includes(item.categoryId)) return false;
+    const categoryId = normalizeNiboId(item.categoryId);
+    if (!categoryId || !filters.categoryIds.includes(categoryId)) return false;
   }
   if (filters.costCenterIds.length) {
-    if (!item.costCenterId || !filters.costCenterIds.includes(item.costCenterId)) return false;
+    const costCenterId = normalizeNiboId(item.costCenterId);
+    if (!costCenterId || !filters.costCenterIds.includes(costCenterId)) return false;
   }
   return true;
 }

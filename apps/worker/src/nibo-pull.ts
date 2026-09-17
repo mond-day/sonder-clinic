@@ -173,10 +173,12 @@ function matchesFilters(
   filters: { categoryIds: string[]; costCenterIds: string[] },
 ): boolean {
   if (filters.categoryIds.length) {
-    if (!item.categoryId || !filters.categoryIds.includes(item.categoryId)) return false;
+    const categoryId = (item.categoryId ?? '').trim().toLowerCase();
+    if (!categoryId || !filters.categoryIds.includes(categoryId)) return false;
   }
   if (filters.costCenterIds.length) {
-    if (!item.costCenterId || !filters.costCenterIds.includes(item.costCenterId)) return false;
+    const costCenterId = (item.costCenterId ?? '').trim().toLowerCase();
+    if (!costCenterId || !filters.costCenterIds.includes(costCenterId)) return false;
   }
   return true;
 }
@@ -204,28 +206,73 @@ function normalizeDocument(value: string | null | undefined): string {
   return (value ?? '').replace(/\D/g, '');
 }
 
+export type NiboPullEnqueueResult = {
+  checked: number;
+  enqueued: number;
+  skipped: number;
+  niboMock: boolean;
+  pullEnabled: boolean;
+  skipReason?: string;
+  inactiveOrMissingCred?: number;
+};
+
 /**
  * Enfileira pull para conexões Nibo ACTIVE cujo lastNiboPullAt passou do intervalo.
  * Lease atômico em configuration.niboPullLeaseUntil.
  */
-export async function enqueueDueNiboPulls(now = new Date()): Promise<{
-  checked: number;
-  enqueued: number;
-  skipped: number;
-}> {
-  if (!isNiboPullEnabled() || isNiboMock()) {
-    return { checked: 0, enqueued: 0, skipped: 0 };
+export async function enqueueDueNiboPulls(now = new Date()): Promise<NiboPullEnqueueResult> {
+  const pullEnabled = isNiboPullEnabled();
+  const niboMock = isNiboMock();
+  if (!pullEnabled) {
+    return {
+      checked: 0,
+      enqueued: 0,
+      skipped: 0,
+      niboMock,
+      pullEnabled: false,
+      skipReason: 'NIBO_PULL_ENABLED=false',
+    };
+  }
+  if (niboMock) {
+    return {
+      checked: 0,
+      enqueued: 0,
+      skipped: 0,
+      niboMock: true,
+      pullEnabled: true,
+      skipReason: 'NIBO_MOCK=true (pull automático desligado)',
+    };
   }
 
   const intervalMs = niboPullIntervalMs();
-  const connections = await prisma.integrationConnection.findMany({
-    where: {
-      provider: 'NIBO',
-      status: 'ACTIVE',
-      encryptedCredentials: { not: null },
+  const allNibo = await prisma.integrationConnection.findMany({
+    where: { provider: 'NIBO' },
+    select: {
+      id: true,
+      status: true,
+      encryptedCredentials: true,
+      configuration: true,
     },
     take: 50,
   });
+  const connections = allNibo.filter(
+    (row) => row.status === 'ACTIVE' && Boolean(row.encryptedCredentials),
+  );
+  const inactiveOrMissingCred = allNibo.length - connections.length;
+
+  if (!connections.length) {
+    return {
+      checked: 0,
+      enqueued: 0,
+      skipped: 0,
+      niboMock: false,
+      pullEnabled: true,
+      inactiveOrMissingCred,
+      skipReason: allNibo.length
+        ? `nenhuma conexão Nibo ACTIVE com credenciais (${allNibo.length} existente(s), status≠ACTIVE ou sem key)`
+        : 'nenhuma conexão Nibo cadastrada',
+    };
+  }
 
   let enqueued = 0;
   let skipped = 0;
@@ -278,7 +325,17 @@ export async function enqueueDueNiboPulls(now = new Date()): Promise<{
     enqueued += 1;
   }
 
-  return { checked: connections.length, enqueued, skipped };
+  return {
+    checked: connections.length,
+    enqueued,
+    skipped,
+    niboMock: false,
+    pullEnabled: true,
+    inactiveOrMissingCred,
+    skipReason: enqueued === 0 && skipped > 0
+      ? 'todas as conexões ACTIVE ainda dentro do intervalo ou com lease ativo'
+      : undefined,
+  };
 }
 
 async function ensureFallbackPatient(organizationId: string, clinicId: string): Promise<string> {
@@ -319,6 +376,10 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
   receivablesUpdated: number;
   payablesCreated: number;
   payablesUpdated: number;
+  creditFetched?: number;
+  debitFetched?: number;
+  creditMatchedFilters?: number;
+  debitMatchedFilters?: number;
   message: string;
 }> {
   const connection = await prisma.integrationConnection.findFirst({
@@ -355,18 +416,17 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
       : {};
   const categoryIds = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId');
   const costCenterIds = readNiboIdList(config, 'costCenterIds', 'costCenterId');
+  // Categorias filtram crédito e débito; centros de custo filtram só débito (a pagar).
+  const creditFilters = { categoryIds, costCenterIds: [] as string[] };
+  const debitFilters = { categoryIds, costCenterIds };
 
   const [creditItems, debitItems] = await Promise.all([
     fetchSchedules(apiKey, 'credit'),
     fetchSchedules(apiKey, 'debit'),
   ]);
 
-  const credits = creditItems.filter((item) =>
-    matchesFilters(item, { categoryIds, costCenterIds: [] }),
-  );
-  const debits = debitItems.filter((item) =>
-    matchesFilters(item, { categoryIds: [], costCenterIds }),
-  );
+  const credits = creditItems.filter((item) => matchesFilters(item, creditFilters));
+  const debits = debitItems.filter((item) => matchesFilters(item, debitFilters));
 
   const fallbackPatientId = await ensureFallbackPatient(organizationId, clinicId);
   const patients = await prisma.patient.findMany({
@@ -507,6 +567,8 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
           payablesUpdated,
           creditFetched: creditItems.length,
           debitFetched: debitItems.length,
+          creditMatchedFilters: credits.length,
+          debitMatchedFilters: debits.length,
           source: 'worker-pull',
         },
       } as Prisma.InputJsonValue,
@@ -518,7 +580,17 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
     receivablesUpdated,
     payablesCreated,
     payablesUpdated,
-    message: `Pull Nibo: R ${receivablesCreated}+${receivablesUpdated} / P ${payablesCreated}+${payablesUpdated}`,
+    creditFetched: creditItems.length,
+    debitFetched: debitItems.length,
+    creditMatchedFilters: credits.length,
+    debitMatchedFilters: debits.length,
+    message: [
+      `Pull Nibo: R ${receivablesCreated}+${receivablesUpdated} / P ${payablesCreated}+${payablesUpdated}`,
+      `(fetched C${creditItems.length}/D${debitItems.length}, matched C${credits.length}/D${debits.length})`,
+      categoryIds.length || costCenterIds.length
+        ? `filtros: ${categoryIds.length} cat, ${costCenterIds.length} CC`
+        : 'sem filtros de categoria/CC',
+    ].join(' '),
   };
 }
 

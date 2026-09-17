@@ -80,9 +80,13 @@ services:
       INTEGRATION_SCOPE_DEFAULT: ${INTEGRATION_SCOPE_DEFAULT:-CLINIC}
       AI_PROVIDER: ${AI_PROVIDER:-OPENAI}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-      # Produção não pode herdar default MOCK=true do código (dev/CI).
+      # Produção: MOCK deve ser false. Se o .env da VPS copiou .env.example (MOCK=true),
+      # o fail-fast da API/worker e o deploy.sh recusam o start/deploy.
       GOOGLE_CALENDAR_MOCK: ${GOOGLE_CALENDAR_MOCK:-false}
       NIBO_MOCK: ${NIBO_MOCK:-false}
+      # OAuth Google — obrigatório para sair de OAUTH_PENDING. Redirect URI exato:
+      # https://<API_HOST>/api/v1/integrations/google/callback
+      # (mesmo valor em Google Cloud Console → Authorized redirect URIs)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
@@ -90,6 +94,9 @@ services:
       GOOGLE_CALENDAR_WEBHOOK_URL: ${GOOGLE_CALENDAR_WEBHOOK_URL:-}
       GOOGLE_CALENDAR_WATCH_AUTO_RENEW: ${GOOGLE_CALENDAR_WATCH_AUTO_RENEW:-true}
       NIBO_BASE_URL: ${NIBO_BASE_URL:-https://api.nibo.com.br/empresas/v1}
+      NIBO_PULL_ENABLED: ${NIBO_PULL_ENABLED:-true}
+      NIBO_PULL_INTERVAL_MS: ${NIBO_PULL_INTERVAL_MS:-1800000}
+      NIBO_PULL_TICK_MS: ${NIBO_PULL_TICK_MS:-300000}
     secrets:
       - jwt_access_secret
       - jwt_refresh_secret
@@ -147,6 +154,9 @@ services:
       GOOGLE_CALENDAR_WEBHOOK_URL: ${GOOGLE_CALENDAR_WEBHOOK_URL:-}
       GOOGLE_CALENDAR_WATCH_AUTO_RENEW: ${GOOGLE_CALENDAR_WATCH_AUTO_RENEW:-true}
       NIBO_BASE_URL: ${NIBO_BASE_URL:-https://api.nibo.com.br/empresas/v1}
+      NIBO_PULL_ENABLED: ${NIBO_PULL_ENABLED:-true}
+      NIBO_PULL_INTERVAL_MS: ${NIBO_PULL_INTERVAL_MS:-1800000}
+      NIBO_PULL_TICK_MS: ${NIBO_PULL_TICK_MS:-300000}
     secrets:
       - encryption_master_key
       - s3_access_key

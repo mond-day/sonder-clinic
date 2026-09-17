@@ -15,7 +15,8 @@
 - Docker secrets para JWT, encryption, S3, `DATABASE_URL` e `INITIAL_SETUP_TOKEN`.
 - Setup inicial: token informado no formulário; API exige `X-Setup-Token`; Next não injeta o secret.
 - Webhook AbacatePay: HMAC obrigatório (sem segredo na query). Google Calendar: token do canal obrigatório.
-- Import Nibo: API Key só via conexão criptografada; respostas de erro não ecoam o token; pull create/update por `externalId` (cancelados locais preservados); push soft-fail no outbox.
+- Import Nibo: API Key só via conexão criptografada; respostas de erro não ecoam o token; pull create/update por `externalId` (cancelados locais preservados); push soft-fail no outbox; logs estruturados no worker sem credenciais.
+- Google Calendar OAuth: `GOOGLE_REDIRECT_URI` deve ser HTTPS público idêntico ao cadastrado no Google Cloud Console (`…/api/v1/integrations/google/callback`); client secret só em env/conexão criptografada.
 - Upload clínico: allowlist MIME; download só com antivírus `CLEAN`; S3 com `ServerSideEncryption: AES256`.
 - Exclusion constraints PostgreSQL (`btree_gist`) para sobreposição de profissional/cadeira na agenda.
 - Credenciais de integrações somente por variáveis de ambiente / secrets.

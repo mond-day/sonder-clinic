@@ -450,13 +450,48 @@ async function processNiboPull(event: OutboxEvent): Promise<void> {
   const payload = (event.payload ?? {}) as { connectionId?: string };
   const connectionId = payload.connectionId ?? event.aggregateId;
   if (isNiboMock()) {
+    console.info(JSON.stringify({
+      service: 'sonder-worker',
+      event: 'nibo-pull.skipped',
+      reason: 'NIBO_MOCK=true',
+      connectionId,
+      outboxEventId: event.id,
+    }));
     await markOutboxDone(event.id, 'Nibo MOCK=true; pull Nibo→Sonder não executado.');
     return;
   }
   try {
+    console.info(JSON.stringify({
+      service: 'sonder-worker',
+      event: 'nibo-pull.started',
+      connectionId,
+      outboxEventId: event.id,
+    }));
     const result = await processNiboPullConnection(connectionId);
+    console.info(JSON.stringify({
+      service: 'sonder-worker',
+      event: 'nibo-pull.completed',
+      connectionId,
+      outboxEventId: event.id,
+      receivablesCreated: result.receivablesCreated,
+      receivablesUpdated: result.receivablesUpdated,
+      payablesCreated: result.payablesCreated,
+      payablesUpdated: result.payablesUpdated,
+      creditFetched: result.creditFetched,
+      debitFetched: result.debitFetched,
+      creditMatchedFilters: result.creditMatchedFilters,
+      debitMatchedFilters: result.debitMatchedFilters,
+      message: result.message,
+    }));
     await markOutboxDone(event.id, result.message);
   } catch (error) {
+    console.warn(JSON.stringify({
+      service: 'sonder-worker',
+      event: 'nibo-pull.failed',
+      connectionId,
+      outboxEventId: event.id,
+      error: error instanceof Error ? error.message : 'unknown',
+    }));
     throw error;
   }
 }
@@ -475,6 +510,14 @@ async function processNiboSync(event: OutboxEvent): Promise<void> {
     payload.action === 'DELETE' ? 'DELETE' : payload.action === 'PAY' ? 'PAY' : 'UPSERT';
 
   if (isNiboMock()) {
+    console.info(JSON.stringify({
+      service: 'sonder-worker',
+      event: 'nibo-sync.skipped',
+      reason: 'NIBO_MOCK=true',
+      entityType,
+      entityId,
+      outboxEventId: event.id,
+    }));
     await markOutboxDone(event.id, 'Nibo MOCK=true; espelho Sonder→Nibo não executado.');
     return;
   }

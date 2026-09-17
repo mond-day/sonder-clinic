@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
 import { envelopeDecryptJson, envelopeEncryptJson } from '@sonder/observability';
@@ -108,6 +108,7 @@ export type SaveConnectionInput = {
 
 @Injectable()
 export class IntegrationsService {
+  private readonly logger = new Logger(IntegrationsService.name);
   private readonly env = envSchema.parse(process.env);
 
   async list(organizationId?: string) {
@@ -308,9 +309,16 @@ export class IntegrationsService {
         : {};
     const categoryIds = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId');
     const costCenterIds = readNiboIdList(config, 'costCenterIds', 'costCenterId');
-    // Categorias filtram crédito (a receber); centros de custo filtram débito (a pagar).
+    // Categorias filtram crédito e débito; centros de custo reforçam o filtro só no débito (a pagar).
     const creditFilters = { categoryIds, costCenterIds: [] as string[] };
-    const debitFilters = { categoryIds: [] as string[], costCenterIds };
+    const debitFilters = { categoryIds, costCenterIds };
+
+    this.logger.log({
+      event: 'nibo.import.started',
+      connectionId,
+      categoryFilterCount: categoryIds.length,
+      costCenterFilterCount: costCenterIds.length,
+    });
 
     const { fetchNiboSchedules } = await import('../../integrations/nibo-schedules.js');
     const [creditResult, debitResult] = await Promise.all([
@@ -319,6 +327,12 @@ export class IntegrationsService {
     ]);
 
     if (creditResult.source === 'unavailable' && debitResult.source === 'unavailable') {
+      this.logger.warn({
+        event: 'nibo.import.unavailable',
+        connectionId,
+        creditMessage: creditResult.message,
+        debitMessage: debitResult.message,
+      });
       throw new BadRequestException(
         creditResult.message || debitResult.message || 'Não foi possível consultar o Nibo.',
       );
@@ -437,6 +451,30 @@ export class IntegrationsService {
     });
 
     const warnings = [creditResult.message, debitResult.message].filter(Boolean);
+    const filterMiss =
+      (creditResult.items.length > 0 && creditItems.length === 0 && categoryIds.length > 0)
+      || (debitResult.items.length > 0 && debitItems.length === 0 && (categoryIds.length > 0 || costCenterIds.length > 0));
+    const sampleCreditCategories = [...new Set(
+      creditResult.items.map((item) => item.categoryId).filter(Boolean),
+    )].slice(0, 5) as string[];
+    const sampleDebitCategories = [...new Set(
+      debitResult.items.map((item) => item.categoryId).filter(Boolean),
+    )].slice(0, 5) as string[];
+
+    this.logger.log({
+      event: 'nibo.import.completed',
+      connectionId,
+      receivablesCreated,
+      receivablesUpdated,
+      payablesCreated,
+      payablesUpdated,
+      creditFetched: creditResult.items.length,
+      debitFetched: debitResult.items.length,
+      creditMatchedFilters: creditItems.length,
+      debitMatchedFilters: debitItems.length,
+      filterMiss,
+    });
+
     return {
       success: true,
       connectionId,
@@ -456,12 +494,17 @@ export class IntegrationsService {
         receivablesSkipped + payablesSkipped
           ? `(${receivablesSkipped + payablesSkipped} cancelado(s) locais preservados).`
           : '.',
+        `Nibo retornou ${creditResult.items.length} a receber / ${debitResult.items.length} a pagar;`,
+        `após filtros: ${creditItems.length} / ${debitItems.length}.`,
         categoryIds.length
-          ? `Filtro de ${categoryIds.length} categoria(s) nos recebíveis.`
-          : 'Sem filtro de categoria — todos os recebíveis elegíveis.',
+          ? `Filtro de ${categoryIds.length} categoria(s) em recebíveis e despesas.`
+          : 'Sem filtro de categoria.',
         costCenterIds.length
-          ? `Filtro de ${costCenterIds.length} centro(s) de custo nas despesas.`
-          : 'Sem filtro de centro de custo — todas as despesas elegíveis.',
+          ? `Filtro adicional de ${costCenterIds.length} centro(s) de custo nas despesas.`
+          : '',
+        filterMiss
+          ? `Atenção: filtros não casaram com os IDs do Nibo. Exemplos de categoryId no Nibo (crédito): ${sampleCreditCategories.join(', ') || 'nenhum'}; (débito): ${sampleDebitCategories.join(', ') || 'nenhum'}. Revise as categorias salvas na integração.`
+          : '',
         warnings.length ? warnings.join(' ') : '',
       ].filter(Boolean).join(' '),
     };
@@ -526,6 +569,16 @@ export class IntegrationsService {
     const oauth = resolveGoogleOAuthCredentials(connectionCredentials);
     const tokens = connectionCredentials ? tokensFromCredentials(connectionCredentials) : null;
     const calendarId = readCalendarId(configuration);
+    const redirectUri = (process.env.GOOGLE_REDIRECT_URI ?? '').trim() || null;
+    const envHints = {
+      mock: envMock,
+      hasEnvClientId: Boolean((process.env.GOOGLE_CLIENT_ID ?? '').trim()),
+      hasEnvClientSecret: Boolean((process.env.GOOGLE_CLIENT_SECRET ?? '').trim()),
+      redirectUri,
+      expectedRedirectPath: '/api/v1/integrations/google/callback',
+      redirectUriHint:
+        'Cadastre exatamente este URI no Google Cloud Console (OAuth client → Authorized redirect URIs). Ex.: https://api.seudominio.com/api/v1/integrations/google/callback',
+    };
 
     if (envMock) {
       return {
@@ -538,8 +591,9 @@ export class IntegrationsService {
         calendarId,
         status: 'DISABLED_MOCK',
         mode: 'mock',
+        ...envHints,
         message:
-          'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). Defina MOCK=false + GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI e conclua OAuth para habilitar.',
+          'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). No .env da VPS / Swarm defina GOOGLE_CALENDAR_MOCK=false (api e worker), GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET e GOOGLE_REDIRECT_URI=https://<API_HOST>/api/v1/integrations/google/callback; reinicie e conclua o OAuth.',
       };
     }
 
@@ -554,8 +608,9 @@ export class IntegrationsService {
         calendarId,
         status: 'MISSING_CREDENTIALS',
         mode: 'missing_credentials',
+        ...envHints,
         message:
-          'Google Calendar sem credenciais. Configure clientId/clientSecret na conexão e GOOGLE_REDIRECT_URI (ou GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI no env).',
+          'Google Calendar sem credenciais. Configure clientId/clientSecret na conexão (ou GOOGLE_CLIENT_ID/SECRET no env) e GOOGLE_REDIRECT_URI apontando para /api/v1/integrations/google/callback.',
       };
     }
 
@@ -570,8 +625,9 @@ export class IntegrationsService {
         calendarId,
         status: 'OAUTH_PENDING',
         mode: 'credentials_present',
+        ...envHints,
         message:
-          'Credenciais OAuth presentes, mas falta consentimento (refresh_token). Use "Iniciar OAuth" e autorize no Google.',
+          'Credenciais OAuth presentes, mas falta consentimento (refresh_token). Use "Conectar / reconectar" e autorize no Google. O redirect URI no Console deve ser idêntico ao GOOGLE_REDIRECT_URI.',
       };
     }
 
@@ -585,6 +641,7 @@ export class IntegrationsService {
       calendarId,
       status: 'READY',
       mode: 'live',
+      ...envHints,
       message:
         'Google Calendar OAuth pronto. Sync: clinic→Google (outbox); Google→clinic via pull-sync e webhook push se GOOGLE_CALENDAR_WEBHOOK_URL estiver configurada.',
       webhookConfigured: Boolean(resolveGoogleCalendarWebhookUrl()),
@@ -634,7 +691,8 @@ export class IntegrationsService {
       provider: 'GOOGLE_CALENDAR' as const,
       connectionId,
       authorizeUrl,
-      message: 'Abra authorizeUrl para conceder acesso ao Google Calendar.',
+      redirectUri: oauth.redirectUri,
+      message: `Abra authorizeUrl para conceder acesso. Redirect URI (cole no Google Cloud Console): ${oauth.redirectUri}`,
     };
   }
 
