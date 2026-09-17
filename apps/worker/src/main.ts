@@ -3,6 +3,7 @@ import { assertWorkerProductionEnvironment } from './production-env';
 import { materializeExpiredAnamneses } from './anamnesis-expire';
 import { processDueFinanceRecurrences } from './finance-recurrences';
 import { renewExpiringGoogleCalendarWatches, isGoogleWatchAutoRenewEnabled } from './google-calendar-watch-renew';
+import { enqueueDueNiboPulls, isNiboPullEnabled } from './nibo-pull';
 import { processDueTaskRecurrences } from './task-recurrences';
 import { processOutbox } from './outbox';
 
@@ -11,9 +12,11 @@ const anamnesisExpireEveryMs = Number(process.env.ANAMNESIS_EXPIRE_INTERVAL_MS ?
 const googleWatchRenewEveryMs = Number(
   process.env.GOOGLE_CALENDAR_WATCH_RENEW_INTERVAL_MS ?? 6 * 3600_000,
 );
+const niboPullEveryMs = Number(process.env.NIBO_PULL_TICK_MS ?? 5 * 60_000);
 
 let lastAnamnesisExpireAt = 0;
 let lastGoogleWatchRenewAt = 0;
+let lastNiboPullEnqueueAt = 0;
 let tickRunning = false;
 
 async function tick(): Promise<void> {
@@ -84,6 +87,26 @@ async function tick(): Promise<void> {
         }));
       }
     }
+
+    if (isNiboPullEnabled() && now - lastNiboPullEnqueueAt >= niboPullEveryMs) {
+      lastNiboPullEnqueueAt = now;
+      try {
+        const result = await enqueueDueNiboPulls();
+        if (result.enqueued > 0) {
+          console.info(JSON.stringify({
+            service: 'sonder-worker',
+            event: 'nibo-pull.enqueued',
+            ...result,
+          }));
+        }
+      } catch (error) {
+        console.warn(JSON.stringify({
+          service: 'sonder-worker',
+          event: 'nibo-pull.enqueue.failed',
+          error: error instanceof Error ? error.message : 'unknown',
+        }));
+      }
+    }
   } finally {
     tickRunning = false;
   }
@@ -98,6 +121,7 @@ async function main(): Promise<void> {
     status: 'started',
     driver: process.env.QUEUE_DRIVER ?? 'memory',
     googleWatchAutoRenew: isGoogleWatchAutoRenewEnabled(),
+    niboPullEnabled: isNiboPullEnabled(),
   }));
   setInterval(() => void tick(), intervalMs);
   void tick();

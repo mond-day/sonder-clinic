@@ -92,6 +92,18 @@ export function assertProductionEnvironment(env: NodeJS.ProcessEnv = process.env
   assertPublicHttpsUrl(env.CORS_ORIGIN, 'CORS_ORIGIN', errors);
   assertPublicHttpsUrl(env.WEB_URL, 'WEB_URL', errors);
 
+  // Código trata ausência como MOCK=true (seguro em dev). Em prod exige false explícito.
+  if ((env.GOOGLE_CALENDAR_MOCK ?? 'true').toLowerCase() === 'true') {
+    errors.push(
+      'GOOGLE_CALENDAR_MOCK=true (ou ausente). Defina GOOGLE_CALENDAR_MOCK=false no Swarm/.env de produção.',
+    );
+  }
+  if ((env.NIBO_MOCK ?? 'true').toLowerCase() === 'true') {
+    errors.push(
+      'NIBO_MOCK=true (ou ausente). Defina NIBO_MOCK=false no Swarm/.env de produção.',
+    );
+  }
+
   if (errors.length) {
     throw new Error(
       `Ambiente de produção inválido — recusando startup:\n- ${errors.join('\n- ')}`,

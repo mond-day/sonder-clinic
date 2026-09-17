@@ -47,6 +47,12 @@ export class IntegrationsController {
     return this.integrations.niboCatalog(request.auth.organizationId, id);
   }
 
+  @Post(':id/nibo/import')
+  @RequirePermissions('integration.manage')
+  importNibo(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    return this.integrations.importNiboFinance(request.auth.organizationId, id);
+  }
+
   @Post(':id/oauth/start')
   @RequirePermissions('integration.manage')
   startOauth(@Req() request: AuthenticatedRequest, @Param('id') id: string) {

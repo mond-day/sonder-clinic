@@ -35,6 +35,15 @@ import {
   mergePersonalGoogleEvents,
   selectGoogleCalendarsToLoad,
 } from './google-calendar-events';
+import {
+  NIBO_FALLBACK_PATIENT_NAME,
+  NIBO_FALLBACK_PATIENT_PHONE,
+  matchesNiboFilters,
+  normalizeDocument,
+  payableFieldsFromNibo,
+  readNiboIdList,
+  receivableFieldsFromNibo,
+} from './nibo-import.utils';
 
 export type PersonalCalendarWarning = {
   type: 'personal_calendar';
@@ -272,6 +281,237 @@ export class IntegrationsService {
   }
 
   /**
+   * Importa schedules Nibo → Receivable (credit) e Payable (debit).
+   * Cria novos e atualiza existentes (externalId); filtros de categoria/centro da configuration.
+   * Não enfileira push (evita loop). Pull automático: worker `finance.nibo-pull.requested`.
+   */
+  async importNiboFinance(organizationId: string, connectionId: string) {
+    const connection = await prisma.integrationConnection.findFirst({
+      where: { id: connectionId, clinic: { organizationId }, provider: 'NIBO' },
+    });
+    if (!connection) throw new NotFoundException('Conexão Nibo não encontrada.');
+    if (connection.status !== 'ACTIVE') {
+      throw new BadRequestException('Ative a conexão Nibo antes de importar.');
+    }
+    if (!connection.encryptedCredentials) {
+      throw new BadRequestException('Salve a API Key do Nibo antes de importar.');
+    }
+    const credentials = this.decryptForAdapter(connection.encryptedCredentials);
+    const apiKey = credentials.apiKey || credentials.token;
+    if (!apiKey) {
+      throw new BadRequestException('API Key do Nibo ausente nesta conexão.');
+    }
+
+    const config =
+      connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
+        ? (connection.configuration as Record<string, unknown>)
+        : {};
+    const categoryIds = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId');
+    const costCenterIds = readNiboIdList(config, 'costCenterIds', 'costCenterId');
+    // Categorias filtram crédito (a receber); centros de custo filtram débito (a pagar).
+    const creditFilters = { categoryIds, costCenterIds: [] as string[] };
+    const debitFilters = { categoryIds: [] as string[], costCenterIds };
+
+    const { fetchNiboSchedules } = await import('../../integrations/nibo-schedules.js');
+    const [creditResult, debitResult] = await Promise.all([
+      fetchNiboSchedules(apiKey, 'credit'),
+      fetchNiboSchedules(apiKey, 'debit'),
+    ]);
+
+    if (creditResult.source === 'unavailable' && debitResult.source === 'unavailable') {
+      throw new BadRequestException(
+        creditResult.message || debitResult.message || 'Não foi possível consultar o Nibo.',
+      );
+    }
+
+    const creditItems = creditResult.items.filter((item) => matchesNiboFilters(item, creditFilters));
+    const debitItems = debitResult.items.filter((item) => matchesNiboFilters(item, debitFilters));
+
+    const fallbackPatientId = await this.ensureNiboFallbackPatient(organizationId, connection.clinicId);
+    const patientsByCpf = await this.niboPatientsByCpf(organizationId);
+
+    let receivablesCreated = 0;
+    let receivablesUpdated = 0;
+    let receivablesSkipped = 0;
+    let payablesCreated = 0;
+    let payablesUpdated = 0;
+    let payablesSkipped = 0;
+
+    for (const item of creditItems) {
+      const fields = receivableFieldsFromNibo(item);
+      const existing = await prisma.receivable.findFirst({
+        where: {
+          organizationId,
+          clinicId: connection.clinicId,
+          externalId: item.scheduleId,
+        },
+        select: { id: true, status: true },
+      });
+      if (existing) {
+        if (existing.status === 'CANCELLED') {
+          receivablesSkipped += 1;
+          continue;
+        }
+        await prisma.receivable.update({
+          where: { id: existing.id },
+          data: {
+            ...fields,
+            provider: 'NIBO',
+          },
+        });
+        receivablesUpdated += 1;
+        continue;
+      }
+      const doc = normalizeDocument(item.stakeholderDocument);
+      const patientId = (doc && patientsByCpf.get(doc)) || fallbackPatientId;
+      await prisma.receivable.create({
+        data: {
+          organizationId,
+          clinicId: connection.clinicId,
+          patientId,
+          ...fields,
+          provider: 'NIBO',
+          externalId: item.scheduleId,
+        },
+      });
+      receivablesCreated += 1;
+    }
+
+    for (const item of debitItems) {
+      const fields = payableFieldsFromNibo(item);
+      const existing = await prisma.payable.findFirst({
+        where: {
+          organizationId,
+          clinicId: connection.clinicId,
+          externalId: item.scheduleId,
+        },
+        select: { id: true, status: true },
+      });
+      if (existing) {
+        if (existing.status === 'CANCELLED') {
+          payablesSkipped += 1;
+          continue;
+        }
+        await prisma.payable.update({
+          where: { id: existing.id },
+          data: {
+            ...fields,
+            provider: 'NIBO',
+          },
+        });
+        payablesUpdated += 1;
+        continue;
+      }
+      await prisma.payable.create({
+        data: {
+          organizationId,
+          clinicId: connection.clinicId,
+          ...fields,
+          provider: 'NIBO',
+          externalId: item.scheduleId,
+        },
+      });
+      payablesCreated += 1;
+    }
+
+    await prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: {
+        lastSyncAt: new Date(),
+        configuration: {
+          ...config,
+          lastNiboImportAt: new Date().toISOString(),
+          lastNiboPullAt: new Date().toISOString(),
+          lastNiboImport: {
+            receivablesCreated,
+            receivablesUpdated,
+            receivablesSkipped,
+            payablesCreated,
+            payablesUpdated,
+            payablesSkipped,
+            creditFetched: creditResult.items.length,
+            debitFetched: debitResult.items.length,
+          },
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    const warnings = [creditResult.message, debitResult.message].filter(Boolean);
+    return {
+      success: true,
+      connectionId,
+      receivablesCreated,
+      receivablesUpdated,
+      receivablesSkipped,
+      payablesCreated,
+      payablesUpdated,
+      payablesSkipped,
+      creditFetched: creditResult.items.length,
+      debitFetched: debitResult.items.length,
+      creditMatchedFilters: creditItems.length,
+      debitMatchedFilters: debitItems.length,
+      message: [
+        `Sincronização Nibo→Sonder: ${receivablesCreated} recebível(is) criado(s), ${receivablesUpdated} atualizado(s);`,
+        `${payablesCreated} despesa(s) criada(s), ${payablesUpdated} atualizada(s)`,
+        receivablesSkipped + payablesSkipped
+          ? `(${receivablesSkipped + payablesSkipped} cancelado(s) locais preservados).`
+          : '.',
+        categoryIds.length
+          ? `Filtro de ${categoryIds.length} categoria(s) nos recebíveis.`
+          : 'Sem filtro de categoria — todos os recebíveis elegíveis.',
+        costCenterIds.length
+          ? `Filtro de ${costCenterIds.length} centro(s) de custo nas despesas.`
+          : 'Sem filtro de centro de custo — todas as despesas elegíveis.',
+        warnings.length ? warnings.join(' ') : '',
+      ].filter(Boolean).join(' '),
+    };
+  }
+
+  private async niboPatientsByCpf(organizationId: string): Promise<Map<string, string>> {
+    const patients = await prisma.patient.findMany({
+      where: { organizationId, status: { not: 'ARCHIVED' }, cpf: { not: null } },
+      select: { id: true, cpf: true },
+      take: 5000,
+    });
+    const map = new Map<string, string>();
+    for (const patient of patients) {
+      const doc = normalizeDocument(patient.cpf);
+      if (doc) map.set(doc, patient.id);
+    }
+    return map;
+  }
+
+  private async ensureNiboFallbackPatient(organizationId: string, clinicId: string): Promise<string> {
+    const existing = await prisma.patient.findFirst({
+      where: {
+        organizationId,
+        fullName: NIBO_FALLBACK_PATIENT_NAME,
+        status: { not: 'ARCHIVED' },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.patientClinic.upsert({
+        where: { patientId_clinicId: { patientId: existing.id, clinicId } },
+        create: { patientId: existing.id, clinicId, status: 'ACTIVE' },
+        update: { status: 'ACTIVE' },
+      });
+      return existing.id;
+    }
+    const created = await prisma.patient.create({
+      data: {
+        organizationId,
+        fullName: NIBO_FALLBACK_PATIENT_NAME,
+        primaryPhone: NIBO_FALLBACK_PATIENT_PHONE,
+        status: 'ACTIVE',
+        clinics: { create: { clinicId, status: 'ACTIVE' } },
+      },
+      select: { id: true },
+    });
+    return created.id;
+  }
+
+  /**
    * Status honesto do OAuth Google Calendar (A38 / Fatia 4).
    * Sem clientId/secret/redirect → disabled. Com OAuth (refresh_token) → ready para sync.
    */
@@ -299,7 +539,7 @@ export class IntegrationsService {
         status: 'DISABLED_MOCK',
         mode: 'mock',
         message:
-          'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true). Defina MOCK=false + GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI e conclua OAuth para habilitar.',
+          'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). Defina MOCK=false + GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI e conclua OAuth para habilitar.',
       };
     }
 
@@ -364,7 +604,7 @@ export class IntegrationsService {
       : {};
     if (isGoogleCalendarMock()) {
       throw new BadRequestException(
-        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true). Defina MOCK=false para iniciar OAuth.',
+        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). Defina MOCK=false para iniciar OAuth.',
       );
     }
     const oauth = resolveGoogleOAuthCredentials(credentials);
@@ -460,15 +700,19 @@ export class IntegrationsService {
     });
     if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
     if (isGoogleCalendarMock()) {
-      throw new BadRequestException('Google Calendar em MOCK — pull-sync desabilitado.');
+      throw new BadRequestException(
+        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente) — sincronização desabilitada. Em produção defina GOOGLE_CALENDAR_MOCK=false no Swarm (api e worker), reinicie os serviços e conclua o OAuth.',
+      );
     }
     if (!connection.encryptedCredentials) {
-      throw new BadRequestException('Conexão sem credenciais.');
+      throw new BadRequestException('Conexão sem credenciais. Salve clientId/clientSecret e conclua o OAuth.');
     }
     let credentials = this.decryptForAdapter(connection.encryptedCredentials);
     const oauth = resolveGoogleOAuthCredentials(credentials);
     if (!oauth || !tokensFromCredentials(credentials)) {
-      throw new BadRequestException('Conclua o OAuth antes do pull-sync.');
+      throw new BadRequestException(
+        'OAuth incompleto: falta refresh_token. Use “Conectar / reconectar” e autorize no Google.',
+      );
     }
     const fresh = await ensureFreshAccessToken(oauth, credentials);
     if (fresh.refreshed) {
@@ -491,6 +735,7 @@ export class IntegrationsService {
     });
     let updated = 0;
     let checked = 0;
+    let remoteMissing = 0;
     for (const appointment of appointments) {
       if (!appointment.externalCalendarEventId) continue;
       checked += 1;
@@ -499,7 +744,10 @@ export class IntegrationsService {
         calendarId,
         appointment.externalCalendarEventId,
       );
-      if (!remote) continue;
+      if (!remote) {
+        remoteMissing += 1;
+        continue;
+      }
       const startChanged = remote.startAt.getTime() !== appointment.startAt.getTime();
       const endChanged = remote.endAt.getTime() !== appointment.endAt.getTime();
       if (!startChanged && !endChanged) continue;
@@ -515,16 +763,65 @@ export class IntegrationsService {
       });
       updated += 1;
     }
+
+    const timeMin = new Date();
+    timeMin.setUTCDate(timeMin.getUTCDate() - 7);
+    const timeMax = new Date();
+    timeMax.setUTCDate(timeMax.getUTCDate() + 30);
+    let personalEvents = 0;
+    let personalListError: string | undefined;
+    try {
+      const remoteEvents = await listGoogleCalendarEvents(fresh.accessToken, calendarId, { timeMin, timeMax });
+      const clinicSyncedIds = await this.clinicSyncedExternalEventIds(
+        organizationId,
+        connection.clinicId,
+        timeMin,
+        timeMax,
+      );
+      personalEvents = remoteEvents.filter((event) => this.isPersonalGoogleEvent(event, clinicSyncedIds)).length;
+    } catch (error) {
+      personalListError = error instanceof Error
+        ? error.message.replace(/\s+/g, ' ').slice(0, 200)
+        : 'Falha ao listar eventos pessoais do Google.';
+    }
+
+    const prevConfig =
+      connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
+        ? { ...(connection.configuration as Record<string, unknown>) }
+        : {};
     await prisma.integrationConnection.update({
       where: { id: connection.id },
-      data: { lastSyncAt: new Date() },
+      data: {
+        lastSyncAt: new Date(),
+        configuration: {
+          ...prevConfig,
+          calendarId,
+          lastPullSyncAt: new Date().toISOString(),
+          lastPersonalEventsCount: personalEvents,
+          lastPersonalEventsRefreshAt: new Date().toISOString(),
+          ...(personalListError ? { lastPersonalEventsError: personalListError } : { lastPersonalEventsError: null }),
+        } as Prisma.InputJsonValue,
+      },
     });
+
+    const parts = [
+      `Agendamentos vinculados: ${updated} atualizado(s) de ${checked} verificado(s)`,
+      remoteMissing ? `(${remoteMissing} evento(s) não encontrado(s) no Google)` : null,
+      personalListError
+        ? `Eventos pessoais: falha ao listar (${personalListError}).`
+        : `Eventos pessoais no calendário (${calendarId}): ${personalEvents} no intervalo de 7 dias atrás a 30 dias à frente — aparecem na Agenda com o toggle “Eventos do Google”.`,
+    ].filter(Boolean);
+
     return {
       success: true,
       connectionId,
       checked,
       updated,
-      message: `Pull-sync: ${updated} agendamento(s) atualizado(s) de ${checked} evento(s) vinculados.`,
+      remoteMissing,
+      personalEvents,
+      calendarId,
+      personalListError: personalListError ?? null,
+      message: parts.join(' '),
     };
   }
 
@@ -534,7 +831,9 @@ export class IntegrationsService {
     });
     if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
     if (isGoogleCalendarMock()) {
-      throw new BadRequestException('Google Calendar em MOCK — webhook watch desabilitado.');
+      throw new BadRequestException(
+        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente) — webhook watch desabilitado. Em produção defina GOOGLE_CALENDAR_MOCK=false no Swarm (api e worker), reinicie e conclua o OAuth antes de ativar atualizações automáticas.',
+      );
     }
     const webhookUrl = resolveGoogleCalendarWebhookUrl();
     if (!webhookUrl) {
@@ -780,7 +1079,7 @@ export class IntegrationsService {
 
   /**
    * Lista eventos pessoais (não sincronizados pela clínica) no intervalo.
-   * Falhas de OAuth/API retornam lista vazia — nunca derruba a agenda.
+   * Falhas de OAuth/API retornam lista vazia com message explícita — nunca derruba a agenda.
    */
   async listPersonalGoogleEvents(
     organizationId: string,
@@ -788,7 +1087,7 @@ export class IntegrationsService {
     from: string,
     to: string,
     professionalId?: string,
-  ): Promise<{ available: boolean; events: PersonalCalendarEventDto[]; message?: string }> {
+  ): Promise<{ available: boolean; events: PersonalCalendarEventDto[]; message?: string; errors?: string[] }> {
     const timeMin = new Date(from);
     const timeMax = new Date(to);
     if (!Number.isFinite(timeMin.getTime()) || !Number.isFinite(timeMax.getTime()) || timeMin >= timeMax) {
@@ -804,6 +1103,14 @@ export class IntegrationsService {
       await this.listGoogleCalendarConnections(clinicId),
       professionalId,
     );
+    if (!connections.length) {
+      return {
+        available: false,
+        events: [],
+        message: 'Nenhuma conexão Google Calendar ativa nesta clínica para o filtro atual.',
+      };
+    }
+
     const ownerNames = await this.googleCalendarOwnerNames(connections);
     const clinicSyncedIds = await this.clinicSyncedExternalEventIds(organizationId, clinicId, timeMin, timeMax);
 
@@ -813,11 +1120,17 @@ export class IntegrationsService {
       events: Array<{ id: string; summary: string; startAt: string; endAt: string; allDay: boolean }>;
     }> = [];
     let loaded = 0;
+    const errors: string[] = [];
 
     for (const connection of connections) {
       try {
         const ctx = await this.openGoogleCalendarContextForConnection(connection);
-        if (!ctx) continue;
+        if (!ctx) {
+          errors.push(
+            `Calendário ${ownerNames.get(connection.id) ?? connection.id}: OAuth incompleto ou MOCK — não foi possível abrir a sessão.`,
+          );
+          continue;
+        }
         const remote = await listGoogleCalendarEvents(ctx.accessToken, ctx.calendarId, { timeMin, timeMax });
         const calendarOwner = isClinicScopedGoogleCalendar(connection.scopeType) ? 'clinic' as const : 'professional' as const;
         batches.push({
@@ -834,8 +1147,11 @@ export class IntegrationsService {
             })),
         });
         loaded += 1;
-      } catch {
-        /* um calendário falhou: os outros ainda entram na grade */
+      } catch (error) {
+        const detail = error instanceof Error
+          ? error.message.replace(/\s+/g, ' ').slice(0, 160)
+          : 'erro desconhecido';
+        errors.push(`Calendário ${ownerNames.get(connection.id) ?? connection.id}: ${detail}`);
       }
     }
 
@@ -843,11 +1159,22 @@ export class IntegrationsService {
       return {
         available: true,
         events: [],
-        message: 'Não foi possível carregar eventos do Google agora.',
+        errors,
+        message: errors[0] ?? 'Não foi possível carregar eventos do Google agora. Verifique OAuth, calendarId e GOOGLE_CALENDAR_MOCK.',
       };
     }
 
-    return { available: true, events: mergePersonalGoogleEvents(batches) };
+    const events = mergePersonalGoogleEvents(batches);
+    return {
+      available: true,
+      events,
+      ...(errors.length ? { errors } : {}),
+      ...(events.length === 0
+        ? { message: 'Nenhum evento pessoal no período (eventos já sincronizados pela clínica são ocultados).' }
+        : errors.length
+          ? { message: `Alguns calendários falharam: ${errors.join(' · ')}` }
+          : {}),
+    };
   }
 
   /**

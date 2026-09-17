@@ -32,12 +32,36 @@ describe('production-env', () => {
       STORAGE_DRIVER: 's3',
       CORS_ORIGIN: 'https://app.example.com',
       WEB_URL: 'https://app.example.com',
+      GOOGLE_CALENDAR_MOCK: 'false',
+      NIBO_MOCK: 'false',
     } as NodeJS.ProcessEnv;
     expect(() => assertProductionEnvironment(valid)).not.toThrow();
     expect(() => assertProductionEnvironment({
       ...valid,
       WEB_URL: 'http://localhost:3000',
     })).toThrow(/WEB_URL/);
+  });
+
+  it('recusa MOCK implícito ou true em production', () => {
+    const base = {
+      NODE_ENV: 'production',
+      JWT_ACCESS_SECRET: 'a'.repeat(32),
+      JWT_REFRESH_SECRET: 'b'.repeat(32),
+      ENCRYPTION_MASTER_KEY: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+      COOKIE_SECURE: 'true',
+      DATABASE_URL: 'postgresql://app:x@db.internal:5432/sonder_clinic',
+      QUEUE_DRIVER: 'redis',
+      REDIS_URL: 'redis://redis.internal:6379',
+      STORAGE_DRIVER: 's3',
+      CORS_ORIGIN: 'https://app.example.com',
+      WEB_URL: 'https://app.example.com',
+    } as NodeJS.ProcessEnv;
+    expect(() => assertProductionEnvironment(base)).toThrow(/GOOGLE_CALENDAR_MOCK/);
+    expect(() => assertProductionEnvironment({
+      ...base,
+      GOOGLE_CALENDAR_MOCK: 'false',
+      NIBO_MOCK: 'true',
+    })).toThrow(/NIBO_MOCK/);
   });
 
   it('swagger default off em production', () => {

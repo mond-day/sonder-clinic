@@ -752,14 +752,25 @@ export function SettingsView() {
   async function pullGoogleCalendarSync(id: string) {
     setIntegrationMenuId(null);
     try {
-      const result = await api.post<{ message?: string; updated?: number }>(
+      const result = await api.post<{ message?: string; updated?: number; personalEvents?: number }>(
         `/integrations/${id}/calendar/pull-sync`,
         {},
       );
-      setError(result.message ?? 'Pull-sync concluído.');
+      setError(result.message ?? 'Sincronização concluída. Eventos pessoais aparecem na Agenda com o toggle “Eventos do Google”.');
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Pull-sync Google Calendar falhou.');
+      setError(cause instanceof ApiError ? cause.message : 'Sincronização Google Calendar falhou.');
+    }
+  }
+
+  async function importNiboFinance(id: string) {
+    setIntegrationMenuId(null);
+    try {
+      const result = await api.post<{ message?: string }>(`/integrations/${id}/nibo/import`, {});
+      setError(result.message ?? 'Importação do Nibo concluída.');
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Importação Nibo falhou.');
     }
   }
 
@@ -2027,8 +2038,9 @@ export function SettingsView() {
                                         type="button"
                                         role="menuitem"
                                         onClick={() => void pullGoogleCalendarSync(String(item.id))}
+                                        title="Atualiza horários de agendamentos vinculados e conta eventos pessoais do Google (visível na Agenda)"
                                       >
-                                        Sincronizar agora
+                                        Sincronizar agenda Google
                                       </button>
                                       <button
                                         type="button"
@@ -2038,6 +2050,15 @@ export function SettingsView() {
                                         Ativar atualizações automáticas
                                       </button>
                                     </>
+                                  ) : null}
+                                  {text(item.provider) === 'NIBO' ? (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => void importNiboFinance(String(item.id))}
+                                    >
+                                      Sincronizar com Nibo
+                                    </button>
                                   ) : null}
                                   <button
                                     type="button"

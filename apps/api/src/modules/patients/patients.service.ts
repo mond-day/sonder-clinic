@@ -175,29 +175,41 @@ export class PatientsService {
       });
       if (duplicatePassport) throw new ConflictException('Já existe um paciente com este passaporte.');
     }
-    return prisma.patient.create({
-      data: {
-        organizationId,
-        fullName: parsed.fullName,
-        preferredName: parsed.preferredName,
-        cpf: parsed.cpf,
-        passportNumber: parsed.passportNumber,
-        birthDate: parsed.birthDate ? new Date(`${parsed.birthDate}T00:00:00.000Z`) : undefined,
-        email: parsed.email,
-        primaryPhone: parsed.primaryPhone,
-        secondaryPhone: parsed.secondaryPhone,
-        isMinor: parsed.isMinor ?? false,
-        status: parsed.status ?? 'ACTIVE',
-        postalCode: parsed.postalCode || null,
-        street: parsed.street || null,
-        number: parsed.number || null,
-        complement: parsed.complement || null,
-        district: parsed.district || null,
-        city: parsed.city || null,
-        state: parsed.state || null,
-        country: parsed.country || 'Brasil',
-        clinics: { create: { clinicId: input.clinicId } },
-      },
+    return prisma.$transaction(async (tx) => {
+      const created = await tx.patient.create({
+        data: {
+          organizationId,
+          fullName: parsed.fullName,
+          preferredName: parsed.preferredName,
+          cpf: parsed.cpf,
+          passportNumber: parsed.passportNumber,
+          birthDate: parsed.birthDate ? new Date(`${parsed.birthDate}T00:00:00.000Z`) : undefined,
+          email: parsed.email,
+          primaryPhone: parsed.primaryPhone,
+          secondaryPhone: parsed.secondaryPhone,
+          isMinor: parsed.isMinor ?? false,
+          status: parsed.status ?? 'ACTIVE',
+          postalCode: parsed.postalCode || null,
+          street: parsed.street || null,
+          number: parsed.number || null,
+          complement: parsed.complement || null,
+          district: parsed.district || null,
+          city: parsed.city || null,
+          state: parsed.state || null,
+          country: parsed.country || 'Brasil',
+          clinics: { create: { clinicId: input.clinicId } },
+        },
+      });
+      // Soft-fail via outbox: cadastro não quebra se Google falhar (A51).
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: 'Patient',
+          aggregateId: created.id,
+          eventType: 'patient.calendar-sync.requested',
+          payload: { patientId: created.id, clinicId: input.clinicId, action: 'UPSERT' },
+        },
+      });
+      return created;
     });
   }
 

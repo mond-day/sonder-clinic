@@ -47,6 +47,17 @@ export function assertWorkerProductionEnvironment(env: NodeJS.ProcessEnv = proce
     errors.push('ENCRYPTION_MASTER_KEY deve ser 64 hex (credenciais criptografadas no outbox).');
   }
 
+  if ((env.GOOGLE_CALENDAR_MOCK ?? 'true').toLowerCase() === 'true') {
+    errors.push(
+      'GOOGLE_CALENDAR_MOCK=true (ou ausente). Defina GOOGLE_CALENDAR_MOCK=false no Swarm/.env de produção.',
+    );
+  }
+  if ((env.NIBO_MOCK ?? 'true').toLowerCase() === 'true') {
+    errors.push(
+      'NIBO_MOCK=true (ou ausente). Defina NIBO_MOCK=false no Swarm/.env de produção.',
+    );
+  }
+
   if (errors.length) {
     throw new Error(
       `Ambiente de produção inválido no worker — recusando startup:\n- ${errors.join('\n- ')}`,

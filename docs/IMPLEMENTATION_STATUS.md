@@ -11,12 +11,13 @@ Estados: `GO` | `PARTIAL` | `NO-GO` | `DISABLED` | `LEGACY` | `FUTURE`
 | Agenda | ✅ | ✅ | ✅ | n/a | ✅ | GO |
 | Pacientes / prontuário | ✅ | ✅ | ✅ | n/a | ✅ | GO |
 | Tratamentos | ✅ | ✅ | ✅ | n/a | ✅ | GO |
-| Financeiro (Payable/Receivable) | ✅ | ✅ | ✅ | n/a | ✅ | GO |
+| Financeiro (Payable/Receivable) | ✅ | ✅ | ✅ | Nibo sync bi (A50) | ✅ | GO |
+| Nibo sync (schedules) | ✅ | ✅ | ✅ | API key live | unit | GO |
 | Setup inicial | ✅ | ✅ | ✅ | n/a | ✅ | GO |
 | Bootstrap DB + migrate deploy | ✅ | n/a | ✅ | n/a | CI | GO |
 | SMS | parcial | oculto | ✅ | ❌ stub | ❌ | NO-GO |
 | Webhooks API pública | ❌ | n/a | ❌ | ❌ | ❌ | FUTURE |
-| Google Calendar | ✅ | ✅ | ✅ | depende OAuth HTTPS | ✅ | PARTIAL |
+| Google Calendar | ✅ | ✅ | ✅ | OAuth + pull/personal overlay | ✅ | PARTIAL |
 | Codental import | flag | sem UI | n/a | arquivos ausentes | ❌ | DISABLED |
 | Integrações MOCK | superfície existe | status honesto | ✅ | só com credencial | parcial | PARTIAL |
 | CommissionEntry | leitura/seed | n/a | legado | n/a | n/a | LEGACY |
@@ -33,6 +34,20 @@ Estados: `GO` | `PARTIAL` | `NO-GO` | `DISABLED` | `LEGACY` | `FUTURE`
 - Worker valida ambiente de produção (fail-fast)
 - Traefik usa `/api/v1/health/ready`; Docker healthcheck permanece liveness
 - Detalhes: `docs/FRESH_INSTALL.md`
+
+## Gaps produto — Nibo sync bidirecional + paciente Calendar + MOCK prod (2026-09)
+
+### DONE (código)
+- **Nibo ↔ Financeiro (A50):** pull manual + pull periódico worker (`finance.nibo-pull.requested`); create/update por `externalId`; push create/update schedule, PAY (baixa) e DELETE (cancel Payable); UI com `accountId` e copy de sync bidirecional
+- **Paciente → Google (A51):** cadastro enfileira `patient.calendar-sync.requested`; evento all-day + `Patient.externalCalendarEventId`; soft-fail no outbox
+- **Google personal pull (A38):** pull-sync + overlay; mensagens MOCK orientam `GOOGLE_CALENDAR_MOCK=false` no Swarm
+- **Produção MOCK:** `stack.production.yml` defaulta `GOOGLE_CALENDAR_MOCK=false` e `NIBO_MOCK=false` (api/worker); fail-fast se MOCK true/ausente
+- **Migrations:** `20260917120000_nibo_external_ids`; `20260917130000_patient_calendar_event`
+
+### Fora de escopo (follow-up)
+- Estorno de baixa (receipt/payment) no Nibo
+- Cancel de Receivable → DELETE schedule (não há endpoint de cancel de recebível na API hoje)
+- Materializar eventos pessoais Google como Appointment de primeira classe
 
 ## Remessa RC — estabilização final
 
@@ -55,6 +70,8 @@ Estados: `GO` | `PARTIAL` | `NO-GO` | `DISABLED` | `LEGACY` | `FUTURE`
 | Knip / dead code | Varredura pontual; não apagar entrypoints/migrations automaticamente |
 
 ### Migration
+- `20260917130000_patient_calendar_event` — `Patient.externalCalendarEventId`
+- `20260917120000_nibo_external_ids` — externalId Receivable/Payable + provider Payable
 - `20260819120000_system_installation` — singleton de setup inicial
 - `20260810020000_anamnesis_source_response` — coluna `sourceResponseId` + índices
 

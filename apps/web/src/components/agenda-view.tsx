@@ -218,6 +218,7 @@ export function AgendaView() {
   const [showPersonalCalendar, setShowPersonalCalendar] = useState(false);
   const [personalCalendarAvailable, setPersonalCalendarAvailable] = useState(false);
   const [personalEvents, setPersonalEvents] = useState<RecordValue[]>([]);
+  const [personalCalendarMessage, setPersonalCalendarMessage] = useState('');
   const [personalWarning, setPersonalWarning] = useState('');
   const [acknowledgePersonalWarning, setAcknowledgePersonalWarning] = useState(false);
   const skipNextEventClickRef = useRef(false);
@@ -331,6 +332,7 @@ export function AgendaView() {
   useEffect(() => {
     if (!clinicId || !showPersonalCalendar || !personalCalendarAvailable) {
       setPersonalEvents([]);
+      setPersonalCalendarMessage('');
       return;
     }
     const query = new URLSearchParams({
@@ -339,9 +341,17 @@ export function AgendaView() {
       to: range.to.toISOString(),
     });
     if (professionalFilter) query.set('professionalId', professionalFilter);
-    api.get<{ events?: RecordValue[] }>(`/appointments/personal-calendar?${query}`)
-      .then((result) => setPersonalEvents(list(result.events)))
-      .catch(() => setPersonalEvents([]));
+    api.get<{ events?: RecordValue[]; message?: string; available?: boolean }>(`/appointments/personal-calendar?${query}`)
+      .then((result) => {
+        setPersonalEvents(list(result.events));
+        setPersonalCalendarMessage(result.message ?? '');
+      })
+      .catch((cause) => {
+        setPersonalEvents([]);
+        setPersonalCalendarMessage(
+          cause instanceof ApiError ? cause.message : 'Não foi possível carregar eventos do Google Agenda.',
+        );
+      });
   }, [clinicId, showPersonalCalendar, personalCalendarAvailable, range.from, range.to, professionalFilter]);
 
   useEffect(() => {
@@ -639,7 +649,7 @@ export function AgendaView() {
         ))}
       </select>
       {personalCalendarAvailable ? (
-        <label className="check-field compact filter-toggle" title="Exibe eventos do Google Agenda da clínica e dos profissionais conectados">
+        <label className="check-field compact filter-toggle" title="Exibe eventos do Google Agenda da clínica e dos profissionais conectados (não cria consultas)">
           <input
             type="checkbox"
             checked={showPersonalCalendar}
@@ -1128,6 +1138,9 @@ export function AgendaView() {
         actions={agendaSettings}
       >
         {filterBar}
+        {showPersonalCalendar && personalCalendarMessage ? (
+          <div className="state-message" role="status">{personalCalendarMessage}</div>
+        ) : null}
         {waitingRoom}
         {loading && <div className="state-message">Carregando agenda…</div>}
         {!loading && columns.length === 0 && (
@@ -1365,6 +1378,9 @@ export function AgendaView() {
         actions={agendaSettings}
       >
         {filterBar}
+        {showPersonalCalendar && personalCalendarMessage ? (
+          <div className="state-message" role="status">{personalCalendarMessage}</div>
+        ) : null}
         {waitingRoom}
         {loading && <div className="state-message">Carregando agenda…</div>}
         {!loading && visible.length === 0 && (

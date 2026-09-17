@@ -267,7 +267,9 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   } | null>(null);
   const [niboCategoryIds, setNiboCategoryIds] = useState<string[]>([]);
   const [niboCostCenterIds, setNiboCostCenterIds] = useState<string[]>([]);
+  const [niboAccountId, setNiboAccountId] = useState('');
   const [niboTesting, setNiboTesting] = useState(false);
+  const [niboImporting, setNiboImporting] = useState(false);
   const [googleScopeType, setGoogleScopeType] = useState<'CLINIC' | 'PROFESSIONAL'>(
     initialIntegration?.scopeType === 'PROFESSIONAL' ? 'PROFESSIONAL' : 'CLINIC',
   );
@@ -389,6 +391,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
     const cfg = initialIntegration?.configuration ?? {};
     setNiboCategoryIds(niboIdList(cfg, 'receivableCategoryIds', 'receivableCategoryId'));
     setNiboCostCenterIds(niboIdList(cfg, 'costCenterIds', 'costCenterId'));
+    setNiboAccountId(String(cfg.accountId ?? cfg.defaultAccountId ?? '').trim());
   }, [initialIntegration?.id]);
 
   useEffect(() => {
@@ -444,6 +447,30 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível testar a conexão Nibo.');
     } finally {
       setNiboTesting(false);
+    }
+  }
+
+  async function importNiboFinance() {
+    if (!initialIntegration?.id) {
+      setMessage('');
+      setError('Salve a conexão Nibo antes de importar lançamentos.');
+      return;
+    }
+    setNiboImporting(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await api.post<{
+        success?: boolean;
+        message?: string;
+        receivablesCreated?: number;
+        payablesCreated?: number;
+      }>(`/integrations/${initialIntegration.id}/nibo/import`, {});
+      setMessage(result.message ?? 'Importação do Nibo concluída.');
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível importar do Nibo.');
+    } finally {
+      setNiboImporting(false);
     }
   }
 
@@ -1023,6 +1050,9 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             configuration.costCenterId = niboCostCenterIds[0];
             configuration.costCenterName = costCenterNameById.get(niboCostCenterIds[0]) ?? '';
           }
+          if (niboAccountId.trim()) {
+            configuration.accountId = niboAccountId.trim();
+          }
         }
         if (integrationProvider === 'GOOGLE_CALENDAR' && googleScopeType === 'PROFESSIONAL' && !googleScopeProfessionalId) {
           setMessage('');
@@ -1138,7 +1168,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
               />
               <span className="field-hint">
                 {niboCatalog?.message
-                  || 'Mapeie as categorias financeiras usadas nos títulos a receber sincronizados.'}
+                  || 'Filtro na importação de títulos a receber e categoria padrão do espelho Sonder→Nibo (primeira selecionada).'}
               </span>
             </div>
             <div className="span-2">
@@ -1151,8 +1181,28 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
                 disabled={!niboCatalog?.costCenters.length}
                 placeholder={niboCatalog?.costCenters.length ? 'Selecionar centros de custo…' : 'Teste a conexão para carregar centros de custo'}
               />
-              <span className="field-hint">Usado para classificar pagamentos e recebimentos no Nibo.</span>
+              <span className="field-hint">
+                Filtro na importação de despesas (a pagar) e centro de custo padrão do espelho Sonder→Nibo (primeira selecionada).
+              </span>
             </div>
+            <label className="span-2">
+              Conta bancária Nibo (accountId)
+              <input
+                name="niboAccountId"
+                value={niboAccountId}
+                onChange={(event) => setNiboAccountId(event.target.value)}
+                placeholder="UUID da conta no Nibo"
+                autoComplete="off"
+              />
+              <span className="field-hint">
+                Obrigatória para espelhar baixas (pagamento de recebível / despesa). Liste contas em Contas no Nibo.
+              </span>
+            </label>
+            <p className="muted-note span-2">
+              Sync bidirecional: “Importar do Nibo” (e pull automático do worker) cria e atualiza títulos locais;
+              criar/editar/pagar/cancelar no Sonder espelha no Nibo (categoria/centro/conta configurados).
+              Pacientes sem CPF correspondente na importação vão para “Importação Nibo (sem paciente)”.
+            </p>
           </>
         ) : null}
         <p className="muted-note span-2">
@@ -1160,16 +1210,28 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         </p>
         <div className="form-actions span-2">
           {integrationProvider === 'NIBO' ? (
-            <button
-              className="button"
-              type="button"
-              disabled={busy || niboTesting}
-              onClick={() => void testNiboConnection()}
-            >
-              {niboTesting ? 'Testando…' : 'Testar conexão'}
-            </button>
+            <>
+              <button
+                className="button"
+                type="button"
+                disabled={busy || niboTesting || niboImporting}
+                onClick={() => void testNiboConnection()}
+              >
+                {niboTesting ? 'Testando…' : 'Testar conexão'}
+              </button>
+              {initialIntegration?.id ? (
+                <button
+                  className="button"
+                  type="button"
+                  disabled={busy || niboTesting || niboImporting}
+                  onClick={() => void importNiboFinance()}
+                >
+                  {niboImporting ? 'Sincronizando…' : 'Sincronizar com Nibo'}
+                </button>
+              ) : null}
+            </>
           ) : null}
-          <button className="button primary" disabled={busy || niboTesting}>
+          <button className="button primary" disabled={busy || niboTesting || niboImporting}>
             {busy ? 'Salvando…' : 'Salvar integração'}
           </button>
         </div>

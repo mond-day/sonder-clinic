@@ -80,6 +80,16 @@ services:
       INTEGRATION_SCOPE_DEFAULT: ${INTEGRATION_SCOPE_DEFAULT:-CLINIC}
       AI_PROVIDER: ${AI_PROVIDER:-OPENAI}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      # Produção não pode herdar default MOCK=true do código (dev/CI).
+      GOOGLE_CALENDAR_MOCK: ${GOOGLE_CALENDAR_MOCK:-false}
+      NIBO_MOCK: ${NIBO_MOCK:-false}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-primary}
+      GOOGLE_CALENDAR_WEBHOOK_URL: ${GOOGLE_CALENDAR_WEBHOOK_URL:-}
+      GOOGLE_CALENDAR_WATCH_AUTO_RENEW: ${GOOGLE_CALENDAR_WATCH_AUTO_RENEW:-true}
+      NIBO_BASE_URL: ${NIBO_BASE_URL:-https://api.nibo.com.br/empresas/v1}
     secrets:
       - jwt_access_secret
       - jwt_refresh_secret
@@ -128,6 +138,15 @@ services:
       QUEUE_DRIVER: redis
       STORAGE_DRIVER: s3
       AV_DRIVER: ${AV_DRIVER:-clamav}
+      GOOGLE_CALENDAR_MOCK: ${GOOGLE_CALENDAR_MOCK:-false}
+      NIBO_MOCK: ${NIBO_MOCK:-false}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-primary}
+      GOOGLE_CALENDAR_WEBHOOK_URL: ${GOOGLE_CALENDAR_WEBHOOK_URL:-}
+      GOOGLE_CALENDAR_WATCH_AUTO_RENEW: ${GOOGLE_CALENDAR_WATCH_AUTO_RENEW:-true}
+      NIBO_BASE_URL: ${NIBO_BASE_URL:-https://api.nibo.com.br/empresas/v1}
     secrets:
       - encryption_master_key
       - s3_access_key

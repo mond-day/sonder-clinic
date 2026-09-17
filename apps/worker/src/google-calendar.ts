@@ -115,25 +115,39 @@ export async function upsertCalendarEvent(input: {
   eventId?: string | null;
   summary: string;
   description?: string;
-  startAt: Date;
-  endAt: Date;
+  startAt?: Date;
+  endAt?: Date;
+  /** YYYY-MM-DD — evento all-day (fim exclusivo = dia seguinte). */
+  allDayDate?: string;
   timeZone?: string;
   appointmentId: string;
+  extendedKey?: 'appointmentId' | 'patientId';
 }): Promise<string> {
   const cal = encodeURIComponent(input.calendarId || 'primary');
+  const timeZone = input.timeZone || 'America/Cuiaba';
+  const extendedKey = input.extendedKey ?? 'appointmentId';
+  let start: Record<string, string>;
+  let end: Record<string, string>;
+  if (input.allDayDate) {
+    const day = input.allDayDate.slice(0, 10);
+    const next = new Date(`${day}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    const endDay = next.toISOString().slice(0, 10);
+    start = { date: day };
+    end = { date: endDay };
+  } else if (input.startAt && input.endAt) {
+    start = { dateTime: input.startAt.toISOString(), timeZone };
+    end = { dateTime: input.endAt.toISOString(), timeZone };
+  } else {
+    throw new Error('upsertCalendarEvent exige startAt/endAt ou allDayDate.');
+  }
   const body = JSON.stringify({
     summary: input.summary,
     description: input.description ?? '',
-    start: {
-      dateTime: input.startAt.toISOString(),
-      timeZone: input.timeZone || 'America/Cuiaba',
-    },
-    end: {
-      dateTime: input.endAt.toISOString(),
-      timeZone: input.timeZone || 'America/Cuiaba',
-    },
+    start,
+    end,
     extendedProperties: {
-      private: { appointmentId: input.appointmentId, source: 'sonder-clinic' },
+      private: { [extendedKey]: input.appointmentId, source: 'sonder-clinic' },
     },
   });
   const url = input.eventId

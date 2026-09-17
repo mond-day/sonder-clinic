@@ -14,10 +14,30 @@ import {
   resolveGoogleOAuth,
   upsertCalendarEvent,
 } from './google-calendar';
+import {
+  buildCreditPayload,
+  buildDebitPayload,
+  decryptNiboCredentials,
+  deleteNiboSchedule,
+  findOrCreateNiboCustomer,
+  findOrCreateNiboSupplier,
+  isNiboMock,
+  niboReference,
+  payNiboSchedule,
+  readNiboAccountId,
+  readNiboApiKey,
+  readNiboIdList,
+  toNiboAmount,
+  toNiboDate,
+  upsertNiboSchedule,
+} from './nibo-sync';
+import { NIBO_PULL_EVENT, processNiboPullConnection } from './nibo-pull';
 
 const WHATSAPP_REMINDER_EVENT = 'appointment.whatsapp-reminder.requested';
 const APPOINTMENT_COMPLETED_EVENT = 'appointment.completed';
 const CALENDAR_SYNC_EVENT = 'appointment.calendar-sync.requested';
+const PATIENT_CALENDAR_SYNC_EVENT = 'patient.calendar-sync.requested';
+const NIBO_SYNC_EVENT = 'finance.nibo-sync.requested';
 const MAX_ATTEMPTS = 5;
 
 type OutboxEvent = {
@@ -251,6 +271,18 @@ async function processEvent(event: OutboxEvent): Promise<'done' | 'deferred'> {
     await processCalendarSync(event);
     return 'done';
   }
+  if (event.eventType === PATIENT_CALENDAR_SYNC_EVENT) {
+    await processPatientCalendarSync(event);
+    return 'done';
+  }
+  if (event.eventType === NIBO_SYNC_EVENT) {
+    await processNiboSync(event);
+    return 'done';
+  }
+  if (event.eventType === NIBO_PULL_EVENT) {
+    await processNiboPull(event);
+    return 'done';
+  }
   if (event.eventType === APPOINTMENT_COMPLETED_EVENT) {
     return processAppointmentCompleted(event);
   }
@@ -259,6 +291,591 @@ async function processEvent(event: OutboxEvent): Promise<'done' | 'deferred'> {
     data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
   });
   return 'done';
+}
+
+async function markOutboxDone(eventId: string, lastError: string | null): Promise<void> {
+  await prisma.outboxEvent.update({
+    where: { id: eventId },
+    data: {
+      processedAt: new Date(),
+      attempts: { increment: 1 },
+      lastError: lastError ? lastError.slice(0, 500) : null,
+    },
+  });
+}
+
+async function processPatientCalendarSync(event: OutboxEvent): Promise<void> {
+  const payload = (event.payload ?? {}) as {
+    patientId?: string;
+    clinicId?: string;
+    action?: 'UPSERT' | 'DELETE';
+  };
+  const patientId = payload.patientId ?? event.aggregateId;
+  const clinicId = payload.clinicId;
+  const action = payload.action === 'DELETE' ? 'DELETE' : 'UPSERT';
+
+  const patient = await prisma.patient.findUnique({
+    where: { id: patientId },
+    select: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      primaryPhone: true,
+      email: true,
+      cpf: true,
+      externalCalendarEventId: true,
+      organizationId: true,
+      clinics: { select: { clinicId: true }, take: 5 },
+    },
+  });
+  if (!patient) {
+    await markOutboxDone(event.id, 'Paciente não encontrado; sync de calendário descartado.');
+    return;
+  }
+
+  if (isGoogleCalendarMock()) {
+    await markOutboxDone(event.id, 'Google Calendar MOCK=true; sync de paciente não executado.');
+    return;
+  }
+
+  const resolvedClinicId = clinicId
+    ?? patient.clinics[0]?.clinicId
+    ?? null;
+  if (!resolvedClinicId) {
+    await markOutboxDone(event.id, 'Paciente sem clínica para sync Google Calendar.');
+    return;
+  }
+
+  const connection = await prisma.integrationConnection.findFirst({
+    where: {
+      clinicId: resolvedClinicId,
+      provider: 'GOOGLE_CALENDAR',
+      status: 'ACTIVE',
+      encryptedCredentials: { not: null },
+    },
+  });
+  if (!connection?.encryptedCredentials) {
+    await markOutboxDone(event.id, 'Google Calendar não configurado para a clínica.');
+    return;
+  }
+
+  let credentials = decryptIntegrationCredentials(connection.encryptedCredentials);
+  const oauth = resolveGoogleOAuth(credentials);
+  if (!oauth || !readTokens(credentials)) {
+    await markOutboxDone(event.id, 'Google Calendar sem OAuth completo (refresh_token).');
+    return;
+  }
+
+  const fresh = await ensureAccessToken(oauth, credentials);
+  if (fresh.refreshed) {
+    credentials = fresh.credentials;
+    await prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { encryptedCredentials: encryptIntegrationCredentials(credentials) },
+    });
+  }
+
+  const calendarId = readCalendarId(connection.configuration);
+  const displayName = patient.preferredName ?? patient.fullName;
+  const unit = await prisma.unit.findFirst({
+    where: { clinicId: resolvedClinicId, status: 'ACTIVE' },
+    select: { timezone: true },
+    orderBy: { name: 'asc' },
+  });
+  const timeZone = unit?.timezone || 'America/Cuiaba';
+
+  // A51: evento all-day no dia do cadastro (sem horário clínico no create).
+  const now = new Date();
+  const dayFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const day = dayFormatter.format(now);
+
+  if (action === 'DELETE') {
+    if (patient.externalCalendarEventId) {
+      await deleteCalendarEvent(fresh.accessToken, calendarId, patient.externalCalendarEventId);
+      await prisma.patient.update({
+        where: { id: patient.id },
+        data: { externalCalendarEventId: null },
+      });
+    }
+  } else {
+    const eventId = await upsertCalendarEvent({
+      accessToken: fresh.accessToken,
+      calendarId,
+      eventId: patient.externalCalendarEventId,
+      summary: `Paciente · ${displayName}`,
+      description: [
+        `Cadastro Sonder Clinic`,
+        patient.cpf ? `CPF: ${patient.cpf}` : null,
+        patient.primaryPhone ? `Tel: ${patient.primaryPhone}` : null,
+        patient.email ? `E-mail: ${patient.email}` : null,
+        `Sonder patientId=${patient.id}`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      allDayDate: day,
+      timeZone,
+      appointmentId: patient.id,
+      extendedKey: 'patientId',
+    });
+    if (eventId !== patient.externalCalendarEventId) {
+      await prisma.patient.update({
+        where: { id: patient.id },
+        data: { externalCalendarEventId: eventId },
+      });
+    }
+  }
+
+  await prisma.$transaction([
+    prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { lastSyncAt: new Date() },
+    }),
+    prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: {
+        processedAt: new Date(),
+        attempts: { increment: 1 },
+        lastError: null,
+      },
+    }),
+  ]);
+}
+
+async function processNiboPull(event: OutboxEvent): Promise<void> {
+  const payload = (event.payload ?? {}) as { connectionId?: string };
+  const connectionId = payload.connectionId ?? event.aggregateId;
+  if (isNiboMock()) {
+    await markOutboxDone(event.id, 'Nibo MOCK=true; pull Nibo→Sonder não executado.');
+    return;
+  }
+  try {
+    const result = await processNiboPullConnection(connectionId);
+    await markOutboxDone(event.id, result.message);
+  } catch (error) {
+    throw error;
+  }
+}
+
+async function processNiboSync(event: OutboxEvent): Promise<void> {
+  const payload = (event.payload ?? {}) as {
+    entityType?: 'Receivable' | 'Payable';
+    entityId?: string;
+    action?: 'UPSERT' | 'DELETE' | 'PAY';
+    amount?: string;
+    paymentId?: string;
+  };
+  const entityType = payload.entityType === 'Payable' ? 'Payable' : 'Receivable';
+  const entityId = payload.entityId ?? event.aggregateId;
+  const action =
+    payload.action === 'DELETE' ? 'DELETE' : payload.action === 'PAY' ? 'PAY' : 'UPSERT';
+
+  if (isNiboMock()) {
+    await markOutboxDone(event.id, 'Nibo MOCK=true; espelho Sonder→Nibo não executado.');
+    return;
+  }
+
+  if (action === 'DELETE') {
+    await processNiboDelete(event, entityType, entityId);
+    return;
+  }
+
+  if (action === 'PAY') {
+    await processNiboPay(event, entityType, entityId, payload.amount, payload.paymentId);
+    return;
+  }
+
+  if (entityType === 'Receivable') {
+    const receivable = await prisma.receivable.findUnique({
+      where: { id: entityId },
+    });
+    if (!receivable) {
+      await markOutboxDone(event.id, 'Recebível não encontrado; sync Nibo descartado.');
+      return;
+    }
+    if (receivable.status === 'CANCELLED') {
+      await markOutboxDone(event.id, 'Recebível cancelado; sync Nibo ignorado.');
+      return;
+    }
+
+    const patient = await prisma.patient.findUnique({
+      where: { id: receivable.patientId },
+      select: { fullName: true, preferredName: true, cpf: true },
+    });
+    if (!patient) {
+      await markOutboxDone(event.id, 'Paciente do recebível não encontrado; sync Nibo descartado.');
+      return;
+    }
+
+    const connection = await prisma.integrationConnection.findFirst({
+      where: {
+        clinicId: receivable.clinicId,
+        provider: 'NIBO',
+        status: 'ACTIVE',
+        encryptedCredentials: { not: null },
+      },
+    });
+    if (!connection?.encryptedCredentials) {
+      await markOutboxDone(event.id, 'Nibo não configurado para a clínica.');
+      return;
+    }
+
+    const credentials = decryptNiboCredentials(connection.encryptedCredentials);
+    const apiKey = readNiboApiKey(credentials);
+    if (!apiKey) {
+      await markOutboxDone(event.id, 'Conexão Nibo sem API Key.');
+      return;
+    }
+
+    const config =
+      connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
+        ? (connection.configuration as Record<string, unknown>)
+        : {};
+    const categoryId = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId')[0] ?? null;
+    if (!categoryId) {
+      await markOutboxDone(
+        event.id,
+        'Configure ao menos uma categoria Nibo (recebíveis) na integração para espelhar títulos.',
+      );
+      return;
+    }
+
+    const stakeholderId = await findOrCreateNiboCustomer(apiKey, {
+      name: patient.preferredName ?? patient.fullName,
+      document: patient.cpf,
+    });
+    const dueDate = toNiboDate(receivable.dueDate);
+    const amount = toNiboAmount(receivable.netAmount);
+    const scheduleId = await upsertNiboSchedule({
+      apiKey,
+      kind: 'credit',
+      scheduleId: receivable.externalId,
+      payload: buildCreditPayload({
+        stakeholderId,
+        description: receivable.description,
+        dueDate,
+        amount,
+        categoryId,
+        reference: niboReference('Receivable', receivable.id),
+      }),
+    });
+
+    await prisma.$transaction([
+      prisma.receivable.update({
+        where: { id: receivable.id },
+        data: { externalId: scheduleId, provider: 'NIBO' },
+      }),
+      prisma.integrationConnection.update({
+        where: { id: connection.id },
+        data: { lastSyncAt: new Date() },
+      }),
+      prisma.outboxEvent.update({
+        where: { id: event.id },
+        data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
+      }),
+    ]);
+    return;
+  }
+
+  const payable = await prisma.payable.findUnique({ where: { id: entityId } });
+  if (!payable) {
+    await markOutboxDone(event.id, 'Conta a pagar não encontrada; sync Nibo descartado.');
+    return;
+  }
+  if (payable.status === 'CANCELLED') {
+    await markOutboxDone(event.id, 'Conta a pagar cancelada; sync Nibo ignorado.');
+    return;
+  }
+
+  const connection = await prisma.integrationConnection.findFirst({
+    where: {
+      clinicId: payable.clinicId,
+      provider: 'NIBO',
+      status: 'ACTIVE',
+      encryptedCredentials: { not: null },
+    },
+  });
+  if (!connection?.encryptedCredentials) {
+    await markOutboxDone(event.id, 'Nibo não configurado para a clínica.');
+    return;
+  }
+
+  const credentials = decryptNiboCredentials(connection.encryptedCredentials);
+  const apiKey = readNiboApiKey(credentials);
+  if (!apiKey) {
+    await markOutboxDone(event.id, 'Conexão Nibo sem API Key.');
+    return;
+  }
+
+  const config =
+    connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
+      ? (connection.configuration as Record<string, unknown>)
+      : {};
+  const categoryId = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId')[0] ?? null;
+  const costCenterId = readNiboIdList(config, 'costCenterIds', 'costCenterId')[0] ?? null;
+  if (!categoryId) {
+    await markOutboxDone(
+      event.id,
+      'Configure ao menos uma categoria Nibo na integração para espelhar contas a pagar.',
+    );
+    return;
+  }
+
+  const stakeholderId = await findOrCreateNiboSupplier(apiKey, {
+    name: payable.supplierName || 'Fornecedor Sonder',
+  });
+  const dueDate = toNiboDate(payable.dueDate);
+  const amount = toNiboAmount(payable.originalAmount);
+  const scheduleId = await upsertNiboSchedule({
+    apiKey,
+    kind: 'debit',
+    scheduleId: payable.externalId,
+    payload: buildDebitPayload({
+      stakeholderId,
+      description: payable.description,
+      dueDate,
+      amount,
+      categoryId,
+      costCenterId,
+      reference: niboReference('Payable', payable.id),
+    }),
+  });
+
+  await prisma.$transaction([
+    prisma.payable.update({
+      where: { id: payable.id },
+      data: { externalId: scheduleId, provider: 'NIBO' },
+    }),
+    prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { lastSyncAt: new Date() },
+    }),
+    prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
+    }),
+  ]);
+}
+
+async function loadActiveNiboConnection(clinicId: string) {
+  return prisma.integrationConnection.findFirst({
+    where: {
+      clinicId,
+      provider: 'NIBO',
+      status: 'ACTIVE',
+      encryptedCredentials: { not: null },
+    },
+  });
+}
+
+async function processNiboDelete(
+  event: OutboxEvent,
+  entityType: 'Receivable' | 'Payable',
+  entityId: string,
+): Promise<void> {
+  const kind = entityType === 'Receivable' ? 'credit' : 'debit';
+  if (entityType === 'Receivable') {
+    const receivable = await prisma.receivable.findUnique({ where: { id: entityId } });
+    if (!receivable) {
+      await markOutboxDone(event.id, 'Recebível não encontrado; DELETE Nibo descartado.');
+      return;
+    }
+    if (!receivable.externalId) {
+      await markOutboxDone(event.id, 'Recebível sem schedule Nibo; DELETE ignorado.');
+      return;
+    }
+    const connection = await loadActiveNiboConnection(receivable.clinicId);
+    if (!connection?.encryptedCredentials) {
+      await markOutboxDone(event.id, 'Nibo não configurado para a clínica.');
+      return;
+    }
+    const apiKey = readNiboApiKey(decryptNiboCredentials(connection.encryptedCredentials));
+    if (!apiKey) {
+      await markOutboxDone(event.id, 'Conexão Nibo sem API Key.');
+      return;
+    }
+    await deleteNiboSchedule({ apiKey, kind, scheduleId: receivable.externalId });
+    await prisma.$transaction([
+      prisma.receivable.update({
+        where: { id: receivable.id },
+        data: { externalId: null },
+      }),
+      prisma.integrationConnection.update({
+        where: { id: connection.id },
+        data: { lastSyncAt: new Date() },
+      }),
+      prisma.outboxEvent.update({
+        where: { id: event.id },
+        data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
+      }),
+    ]);
+    return;
+  }
+
+  const payable = await prisma.payable.findUnique({ where: { id: entityId } });
+  if (!payable) {
+    await markOutboxDone(event.id, 'Conta a pagar não encontrada; DELETE Nibo descartado.');
+    return;
+  }
+  if (!payable.externalId) {
+    await markOutboxDone(event.id, 'Conta a pagar sem schedule Nibo; DELETE ignorado.');
+    return;
+  }
+  const connection = await loadActiveNiboConnection(payable.clinicId);
+  if (!connection?.encryptedCredentials) {
+    await markOutboxDone(event.id, 'Nibo não configurado para a clínica.');
+    return;
+  }
+  const apiKey = readNiboApiKey(decryptNiboCredentials(connection.encryptedCredentials));
+  if (!apiKey) {
+    await markOutboxDone(event.id, 'Conexão Nibo sem API Key.');
+    return;
+  }
+  await deleteNiboSchedule({ apiKey, kind, scheduleId: payable.externalId });
+  await prisma.$transaction([
+    prisma.payable.update({
+      where: { id: payable.id },
+      data: { externalId: null },
+    }),
+    prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { lastSyncAt: new Date() },
+    }),
+    prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
+    }),
+  ]);
+}
+
+async function processNiboPay(
+  event: OutboxEvent,
+  entityType: 'Receivable' | 'Payable',
+  entityId: string,
+  amountRaw?: string,
+  paymentId?: string,
+): Promise<void> {
+  const kind = entityType === 'Receivable' ? 'credit' : 'debit';
+  const amount = toNiboAmount(amountRaw ?? 0);
+  if (amount <= 0) {
+    await markOutboxDone(event.id, 'Baixa Nibo sem valor; evento descartado.');
+    return;
+  }
+
+  if (entityType === 'Receivable') {
+    const receivable = await prisma.receivable.findUnique({ where: { id: entityId } });
+    if (!receivable) {
+      await markOutboxDone(event.id, 'Recebível não encontrado; baixa Nibo descartada.');
+      return;
+    }
+    if (!receivable.externalId) {
+      await markOutboxDone(
+        event.id,
+        'Recebível sem schedule Nibo; espelhe o título (UPSERT) antes da baixa.',
+      );
+      return;
+    }
+    const connection = await loadActiveNiboConnection(receivable.clinicId);
+    if (!connection?.encryptedCredentials) {
+      await markOutboxDone(event.id, 'Nibo não configurado para a clínica.');
+      return;
+    }
+    const config =
+      connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
+        ? (connection.configuration as Record<string, unknown>)
+        : {};
+    const accountId = readNiboAccountId(config);
+    if (!accountId) {
+      await markOutboxDone(
+        event.id,
+        'Configure accountId (conta bancária Nibo) na integração para espelhar baixas.',
+      );
+      return;
+    }
+    const apiKey = readNiboApiKey(decryptNiboCredentials(connection.encryptedCredentials));
+    if (!apiKey) {
+      await markOutboxDone(event.id, 'Conexão Nibo sem API Key.');
+      return;
+    }
+    await payNiboSchedule({
+      apiKey,
+      kind,
+      scheduleId: receivable.externalId,
+      accountId,
+      date: toNiboDate(new Date()),
+      value: amount,
+      identifier: paymentId ? `sonder:payment:${paymentId}` : `sonder:receivable:${receivable.id}`,
+    });
+    await prisma.$transaction([
+      prisma.integrationConnection.update({
+        where: { id: connection.id },
+        data: { lastSyncAt: new Date() },
+      }),
+      prisma.outboxEvent.update({
+        where: { id: event.id },
+        data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
+      }),
+    ]);
+    return;
+  }
+
+  const payable = await prisma.payable.findUnique({ where: { id: entityId } });
+  if (!payable) {
+    await markOutboxDone(event.id, 'Conta a pagar não encontrada; baixa Nibo descartada.');
+    return;
+  }
+  if (!payable.externalId) {
+    await markOutboxDone(
+      event.id,
+      'Conta a pagar sem schedule Nibo; espelhe o título (UPSERT) antes da baixa.',
+    );
+    return;
+  }
+  const connection = await loadActiveNiboConnection(payable.clinicId);
+  if (!connection?.encryptedCredentials) {
+    await markOutboxDone(event.id, 'Nibo não configurado para a clínica.');
+    return;
+  }
+  const config =
+    connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
+      ? (connection.configuration as Record<string, unknown>)
+      : {};
+  const accountId = readNiboAccountId(config);
+  if (!accountId) {
+    await markOutboxDone(
+      event.id,
+      'Configure accountId (conta bancária Nibo) na integração para espelhar baixas.',
+    );
+    return;
+  }
+  const apiKey = readNiboApiKey(decryptNiboCredentials(connection.encryptedCredentials));
+  if (!apiKey) {
+    await markOutboxDone(event.id, 'Conexão Nibo sem API Key.');
+    return;
+  }
+  await payNiboSchedule({
+    apiKey,
+    kind,
+    scheduleId: payable.externalId,
+    accountId,
+    date: toNiboDate(new Date()),
+    value: amount,
+    identifier: `sonder:payable:${payable.id}`,
+  });
+  await prisma.$transaction([
+    prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { lastSyncAt: new Date() },
+    }),
+    prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null },
+    }),
+  ]);
 }
 
 async function processCalendarSync(event: OutboxEvent): Promise<void> {

@@ -2560,8 +2560,12 @@ export class OperationsService {
     const discount = money(input.discount ?? '0');
     const surcharge = money(input.surcharge ?? '0');
     if (discount.greaterThan(originalAmount.add(surcharge))) throw new ConflictException('Desconto supera o valor do título.');
-    return prisma.receivable.create({
-      data: { organizationId, ...input, originalAmount, discount, surcharge, netAmount: originalAmount.sub(discount).add(surcharge), dueDate: new Date(`${input.dueDate}T00:00:00Z`) },
+    return prisma.$transaction(async (tx) => {
+      const created = await tx.receivable.create({
+        data: { organizationId, ...input, originalAmount, discount, surcharge, netAmount: originalAmount.sub(discount).add(surcharge), dueDate: new Date(`${input.dueDate}T00:00:00Z`) },
+      });
+      await this.enqueueNiboSync(tx, 'Receivable', created.id, 'UPSERT');
+      return created;
     });
   }
 
@@ -2578,14 +2582,18 @@ export class OperationsService {
     if (['PAID', 'CANCELLED'].includes(receivable.status)) {
       throw new ConflictException('Títulos pagos ou cancelados não podem ser editados.');
     }
-    return prisma.receivable.update({
-      where: { id },
-      data: {
-        description: input.description?.trim(),
-        dueDate: input.dueDate ? new Date(`${input.dueDate}T00:00:00Z`) : undefined,
-        paymentMethod: input.paymentMethod === undefined ? undefined : (input.paymentMethod || null),
-      },
-      include: { treatment: { select: { id: true, title: true, status: true } } },
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.receivable.update({
+        where: { id },
+        data: {
+          description: input.description?.trim(),
+          dueDate: input.dueDate ? new Date(`${input.dueDate}T00:00:00Z`) : undefined,
+          paymentMethod: input.paymentMethod === undefined ? undefined : (input.paymentMethod || null),
+        },
+        include: { treatment: { select: { id: true, title: true, status: true } } },
+      });
+      await this.enqueueNiboSync(tx, 'Receivable', id, 'UPSERT');
+      return updated;
     });
   }
 
@@ -2651,6 +2659,10 @@ export class OperationsService {
           eventType: 'payment.confirmed',
           payload: { paymentId: payment.id, receivableId },
         },
+      });
+      await this.enqueueNiboSync(tx, 'Receivable', receivableId, 'PAY', {
+        amount: amount.toFixed(2),
+        paymentId: payment.id,
       });
       return payment;
     });
@@ -2867,6 +2879,10 @@ export class OperationsService {
             eventType: 'payment.confirmed',
             payload: { paymentId: payment.id, receivableId: payment.receivableId, provider: 'ABACATEPAY' },
           },
+        });
+        await this.enqueueNiboSync(tx, 'Receivable', payment.receivableId, 'PAY', {
+          amount: payment.amount.toFixed(2),
+          paymentId: payment.id,
         });
       }
       return updated;
@@ -3905,18 +3921,22 @@ export class OperationsService {
       const costCenter = await prisma.costCenter.findFirst({ where: { id: input.costCenterId, organizationId, active: true } });
       if (!costCenter) throw new NotFoundException('Centro de custo não encontrado.');
     }
-    return prisma.payable.create({
-      data: {
-        organizationId,
-        clinicId: input.clinicId,
-        description: input.description,
-        originalAmount: money(input.originalAmount),
-        dueDate: new Date(input.dueDate),
-        supplierName: input.supplierName,
-        notes: input.notes,
-        categoryId: input.categoryId,
-        costCenterId: input.costCenterId,
-      },
+    return prisma.$transaction(async (tx) => {
+      const created = await tx.payable.create({
+        data: {
+          organizationId,
+          clinicId: input.clinicId,
+          description: input.description,
+          originalAmount: money(input.originalAmount),
+          dueDate: new Date(input.dueDate),
+          supplierName: input.supplierName,
+          notes: input.notes,
+          categoryId: input.categoryId,
+          costCenterId: input.costCenterId,
+        },
+      });
+      await this.enqueueNiboSync(tx, 'Payable', created.id, 'UPSERT');
+      return created;
     });
   }
 
@@ -3938,11 +3958,13 @@ export class OperationsService {
       });
       const paidAmount = payable.paidAmount.add(amount);
       const status = computePayableStatus(payable.originalAmount, paidAmount);
-      return tx.payable.update({
+      const updated = await tx.payable.update({
         where: { id },
         data: { paidAmount, status },
         include: { payments: true },
       });
+      await this.enqueueNiboSync(tx, 'Payable', id, 'PAY', { amount: amount.toFixed(2) });
+      return updated;
     });
   }
 
@@ -4007,9 +4029,13 @@ export class OperationsService {
     const payable = await prisma.payable.findFirst({ where: { id, organizationId } });
     if (!payable) throw new NotFoundException('Conta a pagar não encontrada.');
     if (payable.paidAmount.gt(0)) throw new ConflictException('Título com pagamento deve ser estornado, não cancelado.');
-    return prisma.payable.update({
-      where: { id },
-      data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason },
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.payable.update({
+        where: { id },
+        data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason },
+      });
+      await this.enqueueNiboSync(tx, 'Payable', id, 'DELETE');
+      return updated;
     });
   }
 
@@ -4234,6 +4260,16 @@ export class OperationsService {
     if (!result) throw new ConflictException('Recorrência fora da janela (endsAt) ou sem dados para gerar.');
     return result;
   }
+
+  private enqueueNiboSync(
+    transaction: Prisma.TransactionClient,
+    entityType: 'Receivable' | 'Payable',
+    entityId: string,
+    action: 'UPSERT' | 'DELETE' | 'PAY',
+    extra?: { amount?: string; paymentId?: string },
+  ) {
+    return enqueueNiboSyncEvent(transaction, entityType, entityId, action, extra);
+  }
 }
 
 type RecurrenceRow = {
@@ -4269,6 +4305,29 @@ function advanceOccurrence(from: Date, frequency: string, interval: number): Dat
       break;
   }
   return next;
+}
+
+async function enqueueNiboSyncEvent(
+  transaction: Prisma.TransactionClient,
+  entityType: 'Receivable' | 'Payable',
+  entityId: string,
+  action: 'UPSERT' | 'DELETE' | 'PAY',
+  extra?: { amount?: string; paymentId?: string },
+) {
+  await transaction.outboxEvent.create({
+    data: {
+      aggregateType: entityType,
+      aggregateId: entityId,
+      eventType: 'finance.nibo-sync.requested',
+      payload: {
+        entityType,
+        entityId,
+        action,
+        ...(extra?.amount ? { amount: extra.amount } : {}),
+        ...(extra?.paymentId ? { paymentId: extra.paymentId } : {}),
+      },
+    },
+  });
 }
 
 async function materializeFinanceRecurrence(recurrence: RecurrenceRow) {
@@ -4314,6 +4373,7 @@ async function materializeFinanceRecurrence(recurrence: RecurrenceRow) {
           notes: typeof metadata.notes === 'string' ? metadata.notes : `Gerado pela recorrência ${recurrence.id}`,
         },
       });
+      await enqueueNiboSyncEvent(tx, 'Payable', payable.id, 'UPSERT');
       created = { type: 'PAYABLE', id: payable.id };
     } else if (recurrence.kind === 'RECEIVABLE') {
       const patientId = typeof metadata.patientId === 'string' ? metadata.patientId : null;
@@ -4331,6 +4391,7 @@ async function materializeFinanceRecurrence(recurrence: RecurrenceRow) {
           dueDate,
         },
       });
+      await enqueueNiboSyncEvent(tx, 'Receivable', receivable.id, 'UPSERT');
       created = { type: 'RECEIVABLE', id: receivable.id };
     } else {
       throw new BadRequestException(`Tipo de recorrência inválido: ${recurrence.kind}`);
