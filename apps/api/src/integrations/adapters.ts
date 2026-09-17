@@ -173,17 +173,12 @@ export async function testNibo(apiKey?: string): Promise<AdapterResult> {
 
 export async function testGoogleCalendar(): Promise<AdapterResult> {
   const mock = envFlag('GOOGLE_CALENDAR_MOCK', 'true');
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
-  if (mock || !clientId || !clientSecret || !redirectUri) {
+  if (mock) {
     return {
       success: false,
       provider: 'GOOGLE_CALENDAR',
       enabled: false,
-      message: mock
-        ? 'Google Calendar desabilitado (GOOGLE_CALENDAR_MOCK=true).'
-        : 'Google Calendar desabilitado: configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET e GOOGLE_REDIRECT_URI.',
+      message: 'Google Calendar desabilitado (GOOGLE_CALENDAR_MOCK=true).',
     };
   }
   return {
@@ -191,7 +186,7 @@ export async function testGoogleCalendar(): Promise<AdapterResult> {
     provider: 'GOOGLE_CALENDAR',
     enabled: true,
     message:
-      'Client OAuth presente no env. Conclua POST /integrations/:id/oauth/start + callback para obter refresh_token; use test-connection na conexão persistida.',
+      'Use test-connection na conexão persistida (Client ID/Secret salvos na UI) após OAuth. Env GOOGLE_CLIENT_* é opcional (fallback).',
   };
 }
 

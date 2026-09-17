@@ -55,7 +55,7 @@ Ver `.env.example`. Resumo:
 | Queue | `QUEUE_DRIVER=memory\|redis`, `REDIS_URL` |
 | SMTP | `SMTP_HOST` (password reset) |
 | OTEL | `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
-| Integrações | `*_MOCK` + credenciais; Google: `GOOGLE_CLIENT_ID`/`SECRET`/`REDIRECT_URI`/`CALENDAR_ID`; Evolution: `EVOLUTION_BASE_URL`/`API_KEY`/`INSTANCE` |
+| Integrações | `*_MOCK` + credenciais; Google: Client ID/Secret na UI (ou `GOOGLE_CLIENT_*` opcional) + redirect canônico / `GOOGLE_REDIRECT_URI`; Evolution: `EVOLUTION_BASE_URL`/`API_KEY`/`INSTANCE` |
 
 ## Protótipos HTML
 

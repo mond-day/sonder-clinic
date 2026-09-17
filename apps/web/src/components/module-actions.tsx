@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, getApiUrl } from '@/lib/api';
 import { APPOINTMENT_DURATIONS } from '@/lib/duration';
 import {
   cpfDigits,
@@ -169,8 +169,8 @@ const integrationFields: Record<IntegrationProvider, Array<{
     { key: 'webhookSecret', label: 'Segredo de confirmação', secret: true, required: false },
   ],
   GOOGLE_CALENDAR: [
-    { key: 'clientId', label: 'ID do cliente' },
-    { key: 'clientSecret', label: 'Segredo do cliente', secret: true },
+    { key: 'clientId', label: 'Client ID', hint: 'Cole o ID do cliente OAuth do Google Cloud Console (tipo Aplicativo da Web).' },
+    { key: 'clientSecret', label: 'Client Secret', secret: true, hint: 'Cole o segredo do cliente OAuth. Fica criptografado e não é exibido de novo.' },
   ],
   OPENAI: [
     { key: 'apiKey', label: 'Chave de acesso', secret: true },
@@ -270,6 +270,8 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [niboAccountId, setNiboAccountId] = useState('');
   const [niboTesting, setNiboTesting] = useState(false);
   const [niboImporting, setNiboImporting] = useState(false);
+  const [googleOauthBusy, setGoogleOauthBusy] = useState(false);
+  const googleRedirectUri = `${getApiUrl().replace(/\/$/, '')}/integrations/google/callback`;
   const [googleScopeType, setGoogleScopeType] = useState<'CLINIC' | 'PROFESSIONAL'>(
     initialIntegration?.scopeType === 'PROFESSIONAL' ? 'PROFESSIONAL' : 'CLINIC',
   );
@@ -471,6 +473,37 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível importar do Nibo.');
     } finally {
       setNiboImporting(false);
+    }
+  }
+
+  async function startGoogleOauth() {
+    if (!initialIntegration?.id) {
+      setMessage('');
+      setError('Salve Client ID e Client Secret antes de autenticar no Google.');
+      return;
+    }
+    setGoogleOauthBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await api.post<{ authorizeUrl?: string; message?: string; redirectUri?: string }>(
+        `/integrations/${initialIntegration.id}/oauth/start`,
+        {},
+      );
+      if (result.authorizeUrl) {
+        window.open(result.authorizeUrl, '_blank', 'noopener,noreferrer');
+        setMessage(
+          result.redirectUri
+            ? `Autorize no Google. Se falhar, confira no Console o Redirect URI: ${result.redirectUri}`
+            : (result.message ?? 'Autorize o acesso no Google na janela aberta.'),
+        );
+        return;
+      }
+      setError(result.message ?? 'Não foi possível iniciar a autenticação Google.');
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível autenticar no Google Agenda.');
+    } finally {
+      setGoogleOauthBusy(false);
     }
   }
 
@@ -1152,6 +1185,14 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
                 options={professionals.map((item) => ({ value: item.id, label: item.name }))}
               />
             ) : null}
+            <div className="secure-notice" style={{ display: 'grid', gap: 6 }}>
+              <strong>Redirect URI (cole no Google Cloud Console)</strong>
+              <code style={{ wordBreak: 'break-all' }}>{googleRedirectUri}</code>
+              <span className="field-hint">
+                Em APIs e serviços → Credenciais → cliente OAuth → Authorized redirect URIs, cadastre exatamente este valor.
+                Depois salve Client ID/Secret aqui e use Conectar / Autenticar (não precisa colocar no .env do Swarm).
+              </span>
+            </div>
           </div>
         ) : null}
         {integrationProvider === 'NIBO' ? (
@@ -1231,7 +1272,17 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
               ) : null}
             </>
           ) : null}
-          <button className="button primary" disabled={busy || niboTesting || niboImporting}>
+          {integrationProvider === 'GOOGLE_CALENDAR' && initialIntegration?.id ? (
+            <button
+              className="button"
+              type="button"
+              disabled={busy || googleOauthBusy}
+              onClick={() => void startGoogleOauth()}
+            >
+              {googleOauthBusy ? 'Abrindo Google…' : 'Conectar / Autenticar'}
+            </button>
+          ) : null}
+          <button className="button primary" disabled={busy || niboTesting || niboImporting || googleOauthBusy}>
             {busy ? 'Salvando…' : 'Salvar integração'}
           </button>
         </div>

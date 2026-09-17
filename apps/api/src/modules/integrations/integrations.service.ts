@@ -17,6 +17,7 @@ import {
   mergeTokenCredentials,
   rangesOverlap,
   readCalendarId,
+  resolveCanonicalGoogleRedirectUri,
   resolveGoogleCalendarWebhookToken,
   resolveGoogleCalendarWebhookUrl,
   resolveGoogleOAuthCredentials,
@@ -144,13 +145,28 @@ export class IntegrationsService {
       };
     });
     return {
-      configured: persisted.map(({ encryptedCredentials, ...connection }) => ({
-        ...connection,
-        scopeLabel: connection.scopeType === 'PROFESSIONAL'
-          ? (professionalNameById.get(connection.scopeId) ?? 'Profissional')
-          : 'Clínica',
-        credentials: encryptedCredentials ? { configured: true, masked: '••••••••' } : { configured: false },
-      })),
+      configured: persisted.map(({ encryptedCredentials, ...connection }) => {
+        const base = {
+          ...connection,
+          scopeLabel: connection.scopeType === 'PROFESSIONAL'
+            ? (professionalNameById.get(connection.scopeId) ?? 'Profissional')
+            : 'Clínica',
+          credentials: encryptedCredentials ? { configured: true, masked: '••••••••' } : { configured: false },
+        };
+        if (connection.provider !== 'GOOGLE_CALENDAR') return base;
+        const credentials = encryptedCredentials
+          ? this.decryptForAdapter(encryptedCredentials)
+          : undefined;
+        return {
+          ...base,
+          oauth: this.googleCalendarOauthStatus(
+            organizationId,
+            connection.id,
+            credentials,
+            connection.configuration,
+          ),
+        };
+      }),
       bootstrap,
       storage: storageStatus().storage,
       antivirus: storageStatus().antivirus,
@@ -556,7 +572,8 @@ export class IntegrationsService {
 
   /**
    * Status honesto do OAuth Google Calendar (A38 / Fatia 4).
-   * Sem clientId/secret/redirect → disabled. Com OAuth (refresh_token) → ready para sync.
+   * Credenciais: conexão (UI) primeiro, env como fallback ops.
+   * Sem clientId/secret → MISSING_CREDENTIALS. Com OAuth (refresh_token) → ready.
    */
   googleCalendarOauthStatus(
     organizationId?: string,
@@ -569,15 +586,24 @@ export class IntegrationsService {
     const oauth = resolveGoogleOAuthCredentials(connectionCredentials);
     const tokens = connectionCredentials ? tokensFromCredentials(connectionCredentials) : null;
     const calendarId = readCalendarId(configuration);
-    const redirectUri = (process.env.GOOGLE_REDIRECT_URI ?? '').trim() || null;
+    const redirectUri = oauth?.redirectUri || resolveCanonicalGoogleRedirectUri() || null;
+    const connectionClientId = typeof connectionCredentials?.clientId === 'string'
+      ? connectionCredentials.clientId.trim()
+      : '';
+    const connectionClientSecret = typeof connectionCredentials?.clientSecret === 'string'
+      ? connectionCredentials.clientSecret.trim()
+      : '';
+    const hasConnectionClient = Boolean(connectionClientId && connectionClientSecret);
     const envHints = {
       mock: envMock,
+      hasConnectionClientId: Boolean(connectionClientId),
+      hasConnectionClientSecret: Boolean(connectionClientSecret),
       hasEnvClientId: Boolean((process.env.GOOGLE_CLIENT_ID ?? '').trim()),
       hasEnvClientSecret: Boolean((process.env.GOOGLE_CLIENT_SECRET ?? '').trim()),
       redirectUri,
       expectedRedirectPath: '/api/v1/integrations/google/callback',
       redirectUriHint:
-        'Cadastre exatamente este URI no Google Cloud Console (OAuth client → Authorized redirect URIs). Ex.: https://api.seudominio.com/api/v1/integrations/google/callback',
+        'Cadastre exatamente este URI no Google Cloud Console (OAuth client → Authorized redirect URIs).',
     };
 
     if (envMock) {
@@ -593,7 +619,7 @@ export class IntegrationsService {
         mode: 'mock',
         ...envHints,
         message:
-          'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). No .env da VPS / Swarm defina GOOGLE_CALENDAR_MOCK=false (api e worker), GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET e GOOGLE_REDIRECT_URI=https://<API_HOST>/api/v1/integrations/google/callback; reinicie e conclua o OAuth.',
+          'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). Em produção defina GOOGLE_CALENDAR_MOCK=false (api e worker), reinicie, salve Client ID/Secret em Integrações e use Conectar / Autenticar.',
       };
     }
 
@@ -609,8 +635,9 @@ export class IntegrationsService {
         status: 'MISSING_CREDENTIALS',
         mode: 'missing_credentials',
         ...envHints,
-        message:
-          'Google Calendar sem credenciais. Configure clientId/clientSecret na conexão (ou GOOGLE_CLIENT_ID/SECRET no env) e GOOGLE_REDIRECT_URI apontando para /api/v1/integrations/google/callback.',
+        message: redirectUri
+          ? 'Preencha Client ID e Client Secret nesta integração (como no N8N), cadastre o Redirect URI abaixo no Google Cloud Console e use Conectar / Autenticar.'
+          : 'Preencha Client ID e Client Secret nesta integração. Configure API_URL ou GOOGLE_REDIRECT_URI no servidor para exibir o Redirect URI canônico.',
       };
     }
 
@@ -626,8 +653,9 @@ export class IntegrationsService {
         status: 'OAUTH_PENDING',
         mode: 'credentials_present',
         ...envHints,
-        message:
-          'Credenciais OAuth presentes, mas falta consentimento (refresh_token). Use "Conectar / reconectar" e autorize no Google. O redirect URI no Console deve ser idêntico ao GOOGLE_REDIRECT_URI.',
+        message: hasConnectionClient
+          ? 'Client ID/Secret salvos. Use “Conectar / Autenticar”, autorize no Google e confira se o Redirect URI no Console é idêntico ao exibido aqui.'
+          : 'Credenciais OAuth presentes (env). Use “Conectar / Autenticar” e autorize no Google. O Redirect URI no Console deve ser idêntico ao exibido aqui.',
       };
     }
 
@@ -648,6 +676,27 @@ export class IntegrationsService {
     };
   }
 
+  /** Carrega status OAuth com credenciais da conexão (quando connectionId informado). */
+  async googleCalendarOauthStatusFor(organizationId: string, connectionId?: string) {
+    if (!connectionId?.trim()) {
+      return this.googleCalendarOauthStatus(organizationId);
+    }
+    const connection = await prisma.integrationConnection.findFirst({
+      where: { id: connectionId, clinic: { organizationId }, provider: 'GOOGLE_CALENDAR' },
+      select: { id: true, encryptedCredentials: true, configuration: true },
+    });
+    if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
+    const credentials = connection.encryptedCredentials
+      ? this.decryptForAdapter(connection.encryptedCredentials)
+      : undefined;
+    return this.googleCalendarOauthStatus(
+      organizationId,
+      connection.id,
+      credentials,
+      connection.configuration,
+    );
+  }
+
   async startGoogleCalendarOauth(organizationId: string, connectionId: string) {
     const connection = await prisma.integrationConnection.findFirst({
       where: { id: connectionId, clinic: { organizationId }, provider: 'GOOGLE_CALENDAR' },
@@ -661,13 +710,16 @@ export class IntegrationsService {
       : {};
     if (isGoogleCalendarMock()) {
       throw new BadRequestException(
-        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). Defina MOCK=false para iniciar OAuth.',
+        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). Defina GOOGLE_CALENDAR_MOCK=false e reinicie para autenticar.',
       );
     }
     const oauth = resolveGoogleOAuthCredentials(credentials);
     if (!oauth) {
+      const redirectUri = resolveCanonicalGoogleRedirectUri();
       throw new BadRequestException(
-        'Configure clientId/clientSecret na conexão e GOOGLE_REDIRECT_URI no ambiente antes do OAuth.',
+        redirectUri
+          ? `Salve Client ID e Client Secret nesta integração (Integrações → Google Agenda) antes de autenticar. Redirect URI para o Google Cloud Console: ${redirectUri}`
+          : 'Salve Client ID e Client Secret nesta integração. Configure API_URL ou GOOGLE_REDIRECT_URI no servidor para o callback OAuth.',
       );
     }
     const state = signOAuthState(connectionId, process.env.ENCRYPTION_MASTER_KEY!);

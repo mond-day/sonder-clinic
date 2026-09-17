@@ -37,8 +37,11 @@ export class IntegrationsController {
 
   @Get('google-calendar/oauth-status')
   @RequirePermissions('integration.view')
-  googleCalendarOauthStatus() {
-    return this.integrations.googleCalendarOauthStatus();
+  googleCalendarOauthStatus(
+    @Req() request: AuthenticatedRequest,
+    @Query('connectionId') connectionId?: string,
+  ) {
+    return this.integrations.googleCalendarOauthStatusFor(request.auth.organizationId, connectionId);
   }
 
   @Get(':id/nibo/catalog')
@@ -104,7 +107,8 @@ export class IntegrationsController {
 
 /**
  * Callback OAuth + webhook push Google — sem AuthGuard.
- * OAuth: GOOGLE_REDIRECT_URI. Webhook: GOOGLE_CALENDAR_WEBHOOK_URL.
+ * OAuth: redirect canônico (GOOGLE_REDIRECT_URI / API_URL) + client da conexão ou env.
+ * Webhook: GOOGLE_CALENDAR_WEBHOOK_URL.
  */
 @ApiTags('integrations-oauth')
 @Controller('integrations/google')

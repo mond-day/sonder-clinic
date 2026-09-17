@@ -2002,9 +2002,13 @@ export function SettingsView() {
                                 const expiration = cfg.webhookExpiration;
                                 const calendarId = text(cfg.calendarId, 'primary');
                                 const lastError = text(cfg.webhookWatchLastError);
-                                const redirectUri = text(googleOauthStatus?.redirectUri)
-                                  || text(googleOauthStatus?.expectedRedirectPath, '/api/v1/integrations/google/callback');
-                                const oauthMessage = text(googleOauthStatus?.message);
+                                const rowOauth = item.oauth && typeof item.oauth === 'object'
+                                  ? item.oauth as RecordValue
+                                  : googleOauthStatus;
+                                const redirectUri = text(rowOauth?.redirectUri)
+                                  || text(googleOauthStatus?.redirectUri)
+                                  || `${getApiUrl().replace(/\/$/, '')}/integrations/google/callback`;
+                                const oauthMessage = text(rowOauth?.message) || text(googleOauthStatus?.message);
                                 const expLabel = (() => {
                                   if (!expiration) return 'não configuradas — use sincronização manual';
                                   const expMs = Number(expiration);
@@ -2115,7 +2119,7 @@ export function SettingsView() {
                                         role="menuitem"
                                         onClick={() => void startGoogleOauth(String(item.id))}
                                       >
-                                        Conectar / reconectar
+                                        Conectar / Autenticar
                                       </button>
                                       <button
                                         type="button"

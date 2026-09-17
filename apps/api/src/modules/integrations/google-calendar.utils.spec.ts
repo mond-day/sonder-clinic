@@ -6,6 +6,7 @@ import {
   mergeTokenCredentials,
   rangesOverlap,
   readCalendarId,
+  resolveCanonicalGoogleRedirectUri,
   resolveGoogleOAuthCredentials,
   signOAuthState,
   tokensFromCredentials,
@@ -17,15 +18,25 @@ const SECRET = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 describe('google-calendar.utils', () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it('resolveGoogleOAuthCredentials exige clientId, secret e redirect', () => {
-    vi.stubEnv('GOOGLE_CLIENT_ID', 'id');
-    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'secret');
+  it('resolveGoogleOAuthCredentials exige clientId e secret (redirect canônico em dev)', () => {
     expect(resolveGoogleOAuthCredentials()).toBeNull();
 
-    vi.stubEnv('GOOGLE_REDIRECT_URI', 'http://localhost:4000/api/v1/integrations/google/callback');
+    vi.stubEnv('GOOGLE_CLIENT_ID', 'id');
+    vi.stubEnv('GOOGLE_CLIENT_SECRET', 'secret');
     expect(resolveGoogleOAuthCredentials()).toEqual({
       clientId: 'id',
       clientSecret: 'secret',
+      redirectUri: 'http://localhost:4000/api/v1/integrations/google/callback',
+    });
+  });
+
+  it('aceita clientId/secret só da conexão sem GOOGLE_CLIENT_* no env', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    expect(
+      resolveGoogleOAuthCredentials({ clientId: 'ui-id', clientSecret: 'ui-secret' }),
+    ).toEqual({
+      clientId: 'ui-id',
+      clientSecret: 'ui-secret',
       redirectUri: 'http://localhost:4000/api/v1/integrations/google/callback',
     });
   });
@@ -36,7 +47,33 @@ describe('google-calendar.utils', () => {
     vi.stubEnv('GOOGLE_REDIRECT_URI', 'http://localhost/cb');
     expect(
       resolveGoogleOAuthCredentials({ clientId: 'conn-id', clientSecret: 'conn-secret' }),
-    ).toMatchObject({ clientId: 'conn-id', clientSecret: 'conn-secret' });
+    ).toMatchObject({ clientId: 'conn-id', clientSecret: 'conn-secret', redirectUri: 'http://localhost/cb' });
+  });
+
+  it('override de redirectUri da conexão tem prioridade sobre env', () => {
+    vi.stubEnv('GOOGLE_REDIRECT_URI', 'https://api.env.example/api/v1/integrations/google/callback');
+    expect(
+      resolveGoogleOAuthCredentials({
+        clientId: 'id',
+        clientSecret: 'secret',
+        redirectUri: 'https://api.conn.example/api/v1/integrations/google/callback',
+      }),
+    ).toMatchObject({
+      redirectUri: 'https://api.conn.example/api/v1/integrations/google/callback',
+    });
+  });
+
+  it('resolveCanonicalGoogleRedirectUri deriva de API_URL com ou sem /api/v1', () => {
+    expect(resolveCanonicalGoogleRedirectUri({
+      API_URL: 'https://api.example.com/api/v1',
+    } as NodeJS.ProcessEnv)).toBe('https://api.example.com/api/v1/integrations/google/callback');
+    expect(resolveCanonicalGoogleRedirectUri({
+      API_URL: 'https://api.example.com',
+    } as NodeJS.ProcessEnv)).toBe('https://api.example.com/api/v1/integrations/google/callback');
+    expect(resolveCanonicalGoogleRedirectUri({
+      GOOGLE_REDIRECT_URI: 'https://custom.example/cb',
+      API_URL: 'https://api.example.com/api/v1',
+    } as NodeJS.ProcessEnv)).toBe('https://custom.example/cb');
   });
 
   it('assina e verifica state OAuth', () => {

@@ -84,9 +84,10 @@ services:
       # o fail-fast da API/worker e o deploy.sh recusam o start/deploy.
       GOOGLE_CALENDAR_MOCK: ${GOOGLE_CALENDAR_MOCK:-false}
       NIBO_MOCK: ${NIBO_MOCK:-false}
-      # OAuth Google — obrigatório para sair de OAUTH_PENDING. Redirect URI exato:
-      # https://<API_HOST>/api/v1/integrations/google/callback
-      # (mesmo valor em Google Cloud Console → Authorized redirect URIs)
+      # OAuth Google — Client ID/Secret preferencialmente na UI (Integrações).
+      # Env abaixo é fallback ops opcional. Redirect canônico deriva de API_URL se
+      # GOOGLE_REDIRECT_URI estiver vazio: …/api/v1/integrations/google/callback
+      API_URL: ${API_URL:?Defina API_URL}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
@@ -147,6 +148,7 @@ services:
       AV_DRIVER: ${AV_DRIVER:-clamav}
       GOOGLE_CALENDAR_MOCK: ${GOOGLE_CALENDAR_MOCK:-false}
       NIBO_MOCK: ${NIBO_MOCK:-false}
+      # Client ID/Secret: preferir conexão (UI); env é fallback opcional para refresh.
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}

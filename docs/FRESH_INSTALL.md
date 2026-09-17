@@ -107,18 +107,18 @@ Recuperação é operacional (SQL consciente / restore de backup), não um backd
 | `INITIAL_SETUP_TOKEN` | secret do primeiro setup (só na API; o operador informa em `/setup`) |
 | `DATABASE_ADMIN_URL` | só bootstrap, se o database alvo ainda não existir |
 | `GOOGLE_CALENDAR_MOCK` / `NIBO_MOCK` | **obrigatório `false` em produção** (fail-fast + `deploy.sh`). Não copie `true` do `.env.example` |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth Google (env e/ou credenciais da conexão) |
-| `GOOGLE_REDIRECT_URI` | **exato**: `https://<API_HOST>/api/v1/integrations/google/callback` — mesmo valor em Google Cloud Console → Authorized redirect URIs |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | **opcional** — fallback ops; preferir Client ID/Secret na UI (Integrações), criptografados na conexão |
+| `GOOGLE_REDIRECT_URI` | **opcional** se `API_URL` estiver definido — canônico: `https://<API_HOST>/api/v1/integrations/google/callback` (mesmo valor no Google Cloud Console) |
 | `NIBO_PULL_ENABLED` | pull automático Nibo→Financeiro no worker (default `true`) |
 
 `APP_URL` foi removido do stack; use `WEB_URL`.
 
 ### Google Calendar (produção)
 
-1. No `.env` da VPS: `GOOGLE_CALENDAR_MOCK=false`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI=https://api.<seu-dominio>/api/v1/integrations/google/callback`.
-2. No [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → OAuth 2.0 Client → **Authorized redirect URIs**: cole exatamente o mesmo `GOOGLE_REDIRECT_URI` (incluindo `/api/v1/integrations/google/callback`).
-3. Redeploy (`deploy.sh` recusa `MOCK=true`). Em Configurações → Integrações, use **Conectar / reconectar** e autorize.
-4. A UI mostra o redirect URI em “Detalhes técnicos” da integração Google.
+1. No `.env` da VPS: `GOOGLE_CALENDAR_MOCK=false` (obrigatório). `GOOGLE_CLIENT_*` / `GOOGLE_REDIRECT_URI` são **opcionais** (redirect deriva de `API_URL` se omitido).
+2. No [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → OAuth 2.0 Client → **Authorized redirect URIs**: cole exatamente `https://api.<seu-dominio>/api/v1/integrations/google/callback` (a UI em Integrações mostra o valor canônico).
+3. Redeploy (`deploy.sh` recusa `MOCK=true`). Em Configurações → Integrações → Google Agenda: cole **Client ID** e **Client Secret**, salve, use **Conectar / Autenticar** e autorize.
+4. A UI mostra o redirect URI no formulário e em “Detalhes técnicos”.
 
 ### Nibo (produção)
 

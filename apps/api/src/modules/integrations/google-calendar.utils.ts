@@ -36,6 +36,8 @@ const SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
 ].join(' ');
 
+export const GOOGLE_OAUTH_CALLBACK_PATH = '/api/v1/integrations/google/callback';
+
 function pickString(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim();
@@ -43,20 +45,64 @@ function pickString(...values: unknown[]): string {
   return '';
 }
 
+/**
+ * Redirect URI canônico para o Google Cloud Console.
+ * Ordem: GOOGLE_REDIRECT_URI → API_URL/API_PUBLIC_URL → API_HOST → localhost (dev).
+ * Client ID/Secret NÃO vêm daqui — preferir conexão (UI) com fallback de env.
+ */
+export function resolveCanonicalGoogleRedirectUri(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const explicit = pickString(env.GOOGLE_REDIRECT_URI);
+  if (explicit) return explicit;
+
+  const apiUrl = pickString(env.API_URL, env.API_PUBLIC_URL);
+  if (apiUrl) {
+    try {
+      const url = new URL(apiUrl);
+      let pathname = url.pathname.replace(/\/$/, '');
+      if (pathname === '/api/v1' || pathname.endsWith('/api/v1')) {
+        pathname = pathname.slice(0, -'/api/v1'.length);
+      }
+      return `${url.origin}${pathname}${GOOGLE_OAUTH_CALLBACK_PATH}`;
+    } catch {
+      /* fall through */
+    }
+  }
+
+  const apiHost = pickString(env.API_HOST);
+  if (apiHost) {
+    const host = apiHost.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+    const isProd = (env.NODE_ENV ?? '').toLowerCase() === 'production';
+    return `${isProd ? 'https' : 'http'}://${host}${GOOGLE_OAUTH_CALLBACK_PATH}`;
+  }
+
+  if ((env.NODE_ENV ?? '').toLowerCase() !== 'production') {
+    return `http://localhost:4000${GOOGLE_OAUTH_CALLBACK_PATH}`;
+  }
+  return '';
+}
+
+/**
+ * Resolve clientId/secret/redirect para OAuth.
+ * Credenciais: conexão primeiro, depois env (fallback ops).
+ * Redirect: override da conexão → canônico (env / API_URL / host).
+ */
 export function resolveGoogleOAuthCredentials(
   connectionCredentials?: Record<string, string>,
+  env: NodeJS.ProcessEnv = process.env,
 ): GoogleOAuthCredentials | null {
   const clientId = pickString(
     connectionCredentials?.clientId,
-    process.env.GOOGLE_CLIENT_ID,
+    env.GOOGLE_CLIENT_ID,
   );
   const clientSecret = pickString(
     connectionCredentials?.clientSecret,
-    process.env.GOOGLE_CLIENT_SECRET,
+    env.GOOGLE_CLIENT_SECRET,
   );
   const redirectUri = pickString(
-    process.env.GOOGLE_REDIRECT_URI,
     connectionCredentials?.redirectUri,
+    resolveCanonicalGoogleRedirectUri(env),
   );
   if (!clientId || !clientSecret || !redirectUri) return null;
   return { clientId, clientSecret, redirectUri };
