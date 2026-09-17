@@ -44,13 +44,14 @@ export class IntegrationsController {
     return this.integrations.googleCalendarOauthStatusFor(request.auth.organizationId, connectionId);
   }
 
-  @Get(':id/nibo/catalog')
+  @Get(['nibo/:id/catalog', ':id/nibo/catalog'])
   @RequirePermissions('integration.view')
   niboCatalog(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.integrations.niboCatalog(request.auth.organizationId, id);
   }
 
-  @Post(':id/nibo/import')
+  /** Path canônico: static `nibo` antes do id (mais estável no Express 5). Alias legado `:id/nibo/import`. */
+  @Post(['nibo/:id/import', ':id/nibo/import'])
   @RequirePermissions('integration.manage')
   importNibo(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.integrations.importNiboFinance(request.auth.organizationId, id);

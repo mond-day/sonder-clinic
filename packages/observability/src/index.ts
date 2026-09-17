@@ -124,6 +124,13 @@ export {
   isEnvelopeV2,
 } from './envelope-crypto.ts';
 
+export {
+  envFlagEnabled,
+  parseEnvFlag,
+  readEnvFlag,
+  type EnvFlagInfo,
+} from './env-flag.ts';
+
 /** Converte LOG_LEVEL (info/debug/…) nos níveis do NestJS. */
 export function nestLoggerLevels(raw = process.env.LOG_LEVEL): NestLogLevel[] {
   const level = (raw ?? 'info').trim().toLowerCase();

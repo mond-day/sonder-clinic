@@ -41,6 +41,7 @@ export class AppController {
     return {
       status: 'ok',
       service: 'sonder-api',
+      version: process.env.APP_VERSION ?? process.env.npm_package_version ?? null,
       timestamp: new Date().toISOString(),
     };
   }

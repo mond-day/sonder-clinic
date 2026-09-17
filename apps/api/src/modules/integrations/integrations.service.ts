@@ -6,12 +6,14 @@ import { storageStatus } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
 import { resolvePublicWebUrl } from '../../common/public-web-url';
+import { envFlag } from '../../integrations/http';
 import {
   buildGoogleAuthorizeUrl,
   ensureFreshAccessToken,
   exchangeGoogleAuthCode,
   getGoogleCalendarEvent,
   isGoogleCalendarMock,
+  googleCalendarMockInfo,
   isSonderClinicSyncedEvent,
   listGoogleCalendarEvents,
   mergeTokenCredentials,
@@ -66,13 +68,6 @@ export type PersonalCalendarEventDto = {
   calendarOwnerName: string;
 };
 
-const envSchema = z.object({
-  NIBO_MOCK: z.string().default('true'),
-  ABACATEPAY_MOCK: z.string().default('true'),
-  EVOLUTION_MOCK: z.string().default('true'),
-  CHATWOOT_MOCK: z.string().default('true'),
-});
-
 export type Provider = 'NIBO' | 'ABACATEPAY' | 'EVOLUTION' | 'CHATWOOT';
 
 const credentialsSchema = z.record(z.string(), z.string().min(1)).refine(
@@ -110,7 +105,6 @@ export type SaveConnectionInput = {
 @Injectable()
 export class IntegrationsService {
   private readonly logger = new Logger(IntegrationsService.name);
-  private readonly env = envSchema.parse(process.env);
 
   async list(organizationId?: string) {
     const persisted = organizationId
@@ -136,7 +130,7 @@ export class IntegrationsService {
       : [];
     const professionalNameById = new Map(professionalNames.map((item) => [item.id, item.name]));
     const bootstrap = (['NIBO', 'ABACATEPAY', 'EVOLUTION', 'CHATWOOT'] as const).map((provider) => {
-      const mock = this.env[`${provider}_MOCK`] === 'true';
+      const mock = envFlag(`${provider}_MOCK`, 'true');
       return {
         provider,
         mode: mock ? 'mock' : 'live',
@@ -198,7 +192,7 @@ export class IntegrationsService {
     if (provider === 'GOOGLE_CALENDAR') {
       return this.probeGoogleCalendarLive(id, credentials, connection.configuration);
     }
-    const mock = (process.env[`${provider}_MOCK`] ?? 'true').toLowerCase() === 'true';
+    const mock = envFlag(`${provider}_MOCK`, 'true');
     const niboApiKey = provider === 'NIBO'
       ? String(credentials.apiKey || credentials.token || '').trim()
       : '';
@@ -582,7 +576,8 @@ export class IntegrationsService {
     configuration?: unknown,
   ) {
     void organizationId;
-    const envMock = isGoogleCalendarMock();
+    const mockInfo = googleCalendarMockInfo();
+    const envMock = mockInfo.value;
     const oauth = resolveGoogleOAuthCredentials(connectionCredentials);
     const tokens = connectionCredentials ? tokensFromCredentials(connectionCredentials) : null;
     const calendarId = readCalendarId(configuration);
@@ -596,6 +591,8 @@ export class IntegrationsService {
     const hasConnectionClient = Boolean(connectionClientId && connectionClientSecret);
     const envHints = {
       mock: envMock,
+      mockEnvPresent: mockInfo.present,
+      mockEnvRaw: mockInfo.raw,
       hasConnectionClientId: Boolean(connectionClientId),
       hasConnectionClientSecret: Boolean(connectionClientSecret),
       hasEnvClientId: Boolean((process.env.GOOGLE_CLIENT_ID ?? '').trim()),
@@ -607,6 +604,9 @@ export class IntegrationsService {
     };
 
     if (envMock) {
+      const mockReason = mockInfo.present
+        ? `GOOGLE_CALENDAR_MOCK=${mockInfo.raw}`
+        : 'GOOGLE_CALENDAR_MOCK ausente no container da API (MOCK implícito)';
       return {
         success: false,
         provider: 'GOOGLE_CALENDAR' as const,
@@ -619,7 +619,7 @@ export class IntegrationsService {
         mode: 'mock',
         ...envHints,
         message:
-          'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). Em produção defina GOOGLE_CALENDAR_MOCK=false (api e worker), reinicie, salve Client ID/Secret em Integrações e use Conectar / Autenticar.',
+          `Google Calendar em MOCK (${mockReason}). Em produção defina GOOGLE_CALENDAR_MOCK=false no Swarm (serviço api e worker), rode deploy.sh (que carrega o .env) e reinicie; depois salve Client ID/Secret e use Conectar / Autenticar.`,
       };
     }
 
@@ -709,8 +709,12 @@ export class IntegrationsService {
       ? this.decryptForAdapter(connection.encryptedCredentials)
       : {};
     if (isGoogleCalendarMock()) {
+      const mockInfo = googleCalendarMockInfo();
+      const mockReason = mockInfo.present
+        ? `GOOGLE_CALENDAR_MOCK=${mockInfo.raw}`
+        : 'GOOGLE_CALENDAR_MOCK ausente no container da API';
       throw new BadRequestException(
-        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente). Defina GOOGLE_CALENDAR_MOCK=false e reinicie para autenticar.',
+        `Google Calendar em MOCK (${mockReason}). Defina GOOGLE_CALENDAR_MOCK=false no Swarm (api), redeploy e reinicie para autenticar.`,
       );
     }
     const oauth = resolveGoogleOAuthCredentials(credentials);
@@ -810,8 +814,12 @@ export class IntegrationsService {
     });
     if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
     if (isGoogleCalendarMock()) {
+      const mockInfo = googleCalendarMockInfo();
+      const mockReason = mockInfo.present
+        ? `GOOGLE_CALENDAR_MOCK=${mockInfo.raw}`
+        : 'GOOGLE_CALENDAR_MOCK ausente no container da API';
       throw new BadRequestException(
-        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente) — sincronização desabilitada. Em produção defina GOOGLE_CALENDAR_MOCK=false no Swarm (api e worker), reinicie os serviços e conclua o OAuth.',
+        `Google Calendar em MOCK (${mockReason}) — sincronização desabilitada. Defina GOOGLE_CALENDAR_MOCK=false no Swarm (api e worker), redeploy e conclua o OAuth.`,
       );
     }
     if (!connection.encryptedCredentials) {
@@ -941,8 +949,12 @@ export class IntegrationsService {
     });
     if (!connection) throw new NotFoundException('Conexão Google Calendar não encontrada.');
     if (isGoogleCalendarMock()) {
+      const mockInfo = googleCalendarMockInfo();
+      const mockReason = mockInfo.present
+        ? `GOOGLE_CALENDAR_MOCK=${mockInfo.raw}`
+        : 'GOOGLE_CALENDAR_MOCK ausente no container da API';
       throw new BadRequestException(
-        'Google Calendar em MOCK (GOOGLE_CALENDAR_MOCK=true ou ausente) — webhook watch desabilitado. Em produção defina GOOGLE_CALENDAR_MOCK=false no Swarm (api e worker), reinicie e conclua o OAuth antes de ativar atualizações automáticas.',
+        `Google Calendar em MOCK (${mockReason}) — webhook watch desabilitado. Defina GOOGLE_CALENDAR_MOCK=false no Swarm (api e worker), redeploy e conclua o OAuth.`,
       );
     }
     const webhookUrl = resolveGoogleCalendarWebhookUrl();

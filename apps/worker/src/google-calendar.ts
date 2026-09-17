@@ -1,4 +1,4 @@
-import { envelopeDecryptJson, envelopeEncryptJson } from '@sonder/observability';
+import { envelopeDecryptJson, envelopeEncryptJson, envFlagEnabled } from '@sonder/observability';
 
 export type GoogleOAuthEnv = {
   clientId: string;
@@ -55,7 +55,7 @@ export function readCalendarId(configuration: unknown): string {
 }
 
 export function isGoogleCalendarMock(): boolean {
-  return (process.env.GOOGLE_CALENDAR_MOCK ?? 'true').toLowerCase() === 'true';
+  return envFlagEnabled('GOOGLE_CALENDAR_MOCK', true);
 }
 
 async function refreshAccessToken(

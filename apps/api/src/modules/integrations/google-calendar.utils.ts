@@ -4,6 +4,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { readEnvFlag } from '@sonder/observability';
 
 export type GoogleOAuthCredentials = {
   clientId: string;
@@ -108,8 +109,12 @@ export function resolveGoogleOAuthCredentials(
   return { clientId, clientSecret, redirectUri };
 }
 
-export function isGoogleCalendarMock(): boolean {
-  return (process.env.GOOGLE_CALENDAR_MOCK ?? 'true').toLowerCase() === 'true';
+export function googleCalendarMockInfo(env: NodeJS.ProcessEnv = process.env) {
+  return readEnvFlag('GOOGLE_CALENDAR_MOCK', true, env);
+}
+
+export function isGoogleCalendarMock(env: NodeJS.ProcessEnv = process.env): boolean {
+  return googleCalendarMockInfo(env).value;
 }
 
 export function buildGoogleAuthorizeUrl(

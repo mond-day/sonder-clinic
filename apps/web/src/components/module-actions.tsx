@@ -432,7 +432,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         costCenters?: Array<{ id: string; name: string }>;
         source?: string;
         message?: string;
-      }>(`/integrations/${initialIntegration.id}/nibo/catalog`);
+      }>(`/integrations/nibo/${initialIntegration.id}/catalog`);
       const categories = payload.categories ?? [];
       const costCenters = payload.costCenters ?? [];
       setNiboCatalog({
@@ -467,7 +467,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         message?: string;
         receivablesCreated?: number;
         payablesCreated?: number;
-      }>(`/integrations/${initialIntegration.id}/nibo/import`, {});
+      }>(`/integrations/nibo/${initialIntegration.id}/import`, {});
       setMessage(result.message ?? 'Importação do Nibo concluída.');
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível importar do Nibo.');

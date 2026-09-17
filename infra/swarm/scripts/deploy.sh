@@ -8,6 +8,19 @@ COMPOSE_FILE="${COMPOSE_FILE:-$(cd "$(dirname "$0")/.." && pwd)/stack.production
 MIGRATE_SERVICE="${STACK_NAME}_migrate"
 WAIT_SECONDS="${BOOTSTRAP_WAIT_SECONDS:-180}"
 
+# Swarm NÃO carrega .env sozinho — só interpola do shell. Sem isso, GOOGLE_CALENDAR_MOCK
+# pode ficar ausente no serviço api (MOCK implícito) mesmo com false no arquivo.
+DEPLOY_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+for env_file in "${DEPLOY_ENV_FILE:-}" "${DEPLOY_ROOT}/.env" "$(pwd)/.env"; do
+  if [[ -n "${env_file}" && -f "${env_file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${env_file}"
+    set +a
+    break
+  fi
+done
+
 required=(API_IMAGE WEB_IMAGE WORKER_IMAGE DATABASE_URL REDIS_URL S3_ENDPOINT S3_BUCKET WEB_URL API_URL)
 for name in "${required[@]}"; do
   if [[ -z "${!name:-}" ]]; then
@@ -32,12 +45,19 @@ if [[ "${WEB_URL}" != https://* ]]; then
 fi
 
 # .env.example usa MOCK=true (dev). Em produção isso silencia Nibo/Google e deve ser false.
-if [[ "${GOOGLE_CALENDAR_MOCK:-false}" == "true" ]]; then
-  echo "GOOGLE_CALENDAR_MOCK=true não é permitido em produção. Defina GOOGLE_CALENDAR_MOCK=false no .env da VPS." >&2
+# Aceita true/1/yes como ligado (mesmo parser da API).
+mock_on() {
+  case "$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    true|1|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if mock_on "${GOOGLE_CALENDAR_MOCK:-false}"; then
+  echo "GOOGLE_CALENDAR_MOCK ligado não é permitido em produção. Defina GOOGLE_CALENDAR_MOCK=false no .env da VPS." >&2
   exit 1
 fi
-if [[ "${NIBO_MOCK:-false}" == "true" ]]; then
-  echo "NIBO_MOCK=true não é permitido em produção. Defina NIBO_MOCK=false no .env da VPS." >&2
+if mock_on "${NIBO_MOCK:-false}"; then
+  echo "NIBO_MOCK ligado não é permitido em produção. Defina NIBO_MOCK=false no .env da VPS." >&2
   exit 1
 fi
 

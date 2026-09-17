@@ -1,3 +1,5 @@
+import { readEnvFlag } from '@sonder/observability';
+
 /**
  * Fail-fast de ambiente em produção.
  * Recusa startup se secrets/drivers críticos estiverem ausentes, fracos ou default.
@@ -93,14 +95,20 @@ export function assertProductionEnvironment(env: NodeJS.ProcessEnv = process.env
   assertPublicHttpsUrl(env.WEB_URL, 'WEB_URL', errors);
 
   // Código trata ausência como MOCK=true (seguro em dev). Em prod exige false explícito.
-  if ((env.GOOGLE_CALENDAR_MOCK ?? 'true').toLowerCase() === 'true') {
+  const googleMock = readEnvFlag('GOOGLE_CALENDAR_MOCK', true, env);
+  if (googleMock.value) {
     errors.push(
-      'GOOGLE_CALENDAR_MOCK=true (ou ausente). Defina GOOGLE_CALENDAR_MOCK=false no Swarm/.env de produção.',
+      googleMock.present
+        ? `GOOGLE_CALENDAR_MOCK=${googleMock.raw} (MOCK ligado). Defina GOOGLE_CALENDAR_MOCK=false no Swarm/.env de produção.`
+        : 'GOOGLE_CALENDAR_MOCK ausente no processo (MOCK implícito). Defina GOOGLE_CALENDAR_MOCK=false no serviço api do Swarm e redeploy.',
     );
   }
-  if ((env.NIBO_MOCK ?? 'true').toLowerCase() === 'true') {
+  const niboMock = readEnvFlag('NIBO_MOCK', true, env);
+  if (niboMock.value) {
     errors.push(
-      'NIBO_MOCK=true (ou ausente). Defina NIBO_MOCK=false no Swarm/.env de produção.',
+      niboMock.present
+        ? `NIBO_MOCK=${niboMock.raw} (MOCK ligado). Defina NIBO_MOCK=false no Swarm/.env de produção.`
+        : 'NIBO_MOCK ausente no processo (MOCK implícito). Defina NIBO_MOCK=false no serviço api do Swarm e redeploy.',
     );
   }
 

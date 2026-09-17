@@ -1,3 +1,9 @@
+/**
+ * Adapters HTTP helpers.
+ */
+
+import { envFlagEnabled } from '@sonder/observability';
+
 export type AdapterResult = {
   success: boolean;
   provider: string;
@@ -6,8 +12,9 @@ export type AdapterResult = {
   detail?: unknown;
 };
 
+/** *_MOCK e feature flags: só true/1/yes ligam; false/0/no desligam. */
 export function envFlag(name: string, fallback = 'true') {
-  return (process.env[name] ?? fallback).toLowerCase() === 'true';
+  return envFlagEnabled(name, fallback.toLowerCase() === 'true');
 }
 
 export function pickString(...values: unknown[]): string {

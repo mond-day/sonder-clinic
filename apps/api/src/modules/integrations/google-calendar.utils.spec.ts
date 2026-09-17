@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildGoogleAuthorizeUrl,
+  googleCalendarMockInfo,
   isGoogleCalendarMock,
   isSonderClinicSyncedEvent,
   mergeTokenCredentials,
@@ -111,11 +112,23 @@ describe('google-calendar.utils', () => {
     });
   });
 
-  it('readCalendarId e mock flag', () => {
+  it('readCalendarId e mock flag (false/0/ausente)', () => {
     expect(readCalendarId({})).toBe('primary');
     expect(readCalendarId({ calendarId: 'clinic-cal' })).toBe('clinic-cal');
     vi.stubEnv('GOOGLE_CALENDAR_MOCK', 'false');
     expect(isGoogleCalendarMock()).toBe(false);
+    vi.stubEnv('GOOGLE_CALENDAR_MOCK', '0');
+    expect(isGoogleCalendarMock()).toBe(false);
+    vi.stubEnv('GOOGLE_CALENDAR_MOCK', 'no');
+    expect(isGoogleCalendarMock()).toBe(false);
+    vi.stubEnv('GOOGLE_CALENDAR_MOCK', '1');
+    expect(isGoogleCalendarMock()).toBe(true);
+    vi.stubEnv('GOOGLE_CALENDAR_MOCK', 'yes');
+    expect(isGoogleCalendarMock()).toBe(true);
+    vi.unstubAllEnvs();
+    delete process.env.GOOGLE_CALENDAR_MOCK;
+    expect(googleCalendarMockInfo().present).toBe(false);
+    expect(googleCalendarMockInfo().value).toBe(true);
   });
 
   it('identifica eventos sincronizados pela clínica e sobreposição', () => {

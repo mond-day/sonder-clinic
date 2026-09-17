@@ -803,7 +803,7 @@ export function SettingsView() {
         debitFetched?: number;
         creditMatchedFilters?: number;
         debitMatchedFilters?: number;
-      }>(`/integrations/${id}/nibo/import`, {});
+      }>(`/integrations/nibo/${id}/import`, {});
       showSuccess(result.message ?? 'Importação do Nibo concluída.');
       load();
     } catch (cause) {
@@ -2026,6 +2026,18 @@ export function SettingsView() {
                                       <code style={{ wordBreak: 'break-all' }}>{redirectUri}</code>
                                     </span>
                                     {oauthMessage ? <span>Status OAuth: {oauthMessage}</span> : null}
+                                    {rowOauth?.mock === true || rowOauth?.mock === false ? (
+                                      <span>
+                                        MOCK parseado:
+                                        {' '}
+                                        {String(rowOauth.mock)}
+                                        {rowOauth.mockEnvPresent === false
+                                          ? ' (env ausente no container da API)'
+                                          : rowOauth.mockEnvRaw
+                                            ? ` (env=${String(rowOauth.mockEnvRaw)})`
+                                            : ''}
+                                      </span>
+                                    ) : null}
                                     {lastError ? <span>Última falha: {lastError}</span> : null}
                                   </div>
                                 );
