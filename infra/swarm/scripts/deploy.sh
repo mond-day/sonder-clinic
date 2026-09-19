@@ -62,8 +62,9 @@ if mock_on "${NIBO_MOCK:-false}"; then
 fi
 
 if [[ -z "${GOOGLE_REDIRECT_URI:-}" ]]; then
-  echo "AVISO: GOOGLE_REDIRECT_URI vazio. OAuth Google exige exatamente:" >&2
-  echo "  https://<API_HOST>/api/v1/integrations/google/callback" >&2
+  echo "AVISO: GOOGLE_REDIRECT_URI vazio. OAuth Google deriva de API_URL:" >&2
+  echo "  ${API_URL%/}/integrations/google/callback  (se API_URL já incluir /api/v1)" >&2
+  echo "  ou https://<API_HOST>/api/v1/integrations/google/callback" >&2
   echo "Cadastre o mesmo URI em Google Cloud Console → Authorized redirect URIs." >&2
 elif [[ "${GOOGLE_REDIRECT_URI}" != *"/api/v1/integrations/google/callback" ]]; then
   echo "AVISO: GOOGLE_REDIRECT_URI deve terminar com /api/v1/integrations/google/callback (valor atual pode falhar no OAuth)." >&2
@@ -97,7 +98,13 @@ elif ! docker secret inspect database_admin_url >/dev/null 2>&1; then
 fi
 
 echo "Deploying ${STACK_NAME} from ${COMPOSE_FILE}"
+DEPLOY_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 docker stack deploy -c "${COMPOSE_FILE}" "${STACK_NAME}"
+
+# KEEP_ALIVE deixa o task Running sem reaplicar migrate. Force recreate em todo deploy
+# (idempotent prisma migrate deploy) — cobre Portainer/stack update com a mesma imagem.
+echo "Recriando serviço migrate para aplicar prisma migrate deploy..."
+docker service update --force "${MIGRATE_SERVICE}" >/dev/null
 
 echo "Aguardando bootstrap/migrate (${WAIT_SECONDS}s)..."
 deadline=$((SECONDS + WAIT_SECONDS))
@@ -106,12 +113,13 @@ while (( SECONDS < deadline )); do
   if echo "${tasks}" | grep -qiE 'Failed|Rejected'; then
     echo "Migration falhou:" >&2
     echo "${tasks}" >&2
-    docker service logs --tail 80 "${MIGRATE_SERVICE}" >&2 || true
+    docker service logs --since "${DEPLOY_TS}" --tail 80 "${MIGRATE_SERVICE}" >&2 || true
     echo "Release abortado. Não execute seed/reset. Use: prisma migrate status" >&2
+    echo "Manual: docker service update --force ${MIGRATE_SERVICE}" >&2
     exit 1
   fi
   if echo "${tasks}" | grep -qiE 'Running|Complete'; then
-    logs="$(docker service logs --tail 50 "${MIGRATE_SERVICE}" 2>&1 || true)"
+    logs="$(docker service logs --since "${DEPLOY_TS}" --tail 80 "${MIGRATE_SERVICE}" 2>&1 || true)"
     if echo "${logs}" | grep -q '"event":"complete"'; then
       echo "Bootstrap concluído."
       exit 0
@@ -125,5 +133,6 @@ while (( SECONDS < deadline )); do
 done
 
 echo "Timeout aguardando migrate. Últimos logs:" >&2
-docker service logs --tail 80 "${MIGRATE_SERVICE}" >&2 || true
+docker service logs --since "${DEPLOY_TS}" --tail 80 "${MIGRATE_SERVICE}" >&2 || true
+echo "Tente: docker service update --force ${MIGRATE_SERVICE}" >&2
 exit 1

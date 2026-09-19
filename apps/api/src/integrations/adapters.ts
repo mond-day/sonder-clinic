@@ -3,7 +3,7 @@
  * Nunca retornam sucesso simulado quando a integração está desabilitada ou a chamada falha.
  */
 
-import { envFlag, fetchJson, type AdapterResult } from './http';
+import { asRecord, fetchJson, integrationMockFlag, pickString, type AdapterResult } from './http';
 import { testAbacatePay } from './abacatepay';
 import { testChatwoot } from './chatwoot';
 
@@ -49,7 +49,7 @@ export async function fetchNiboCatalog(apiKey: string): Promise<{
   message?: string;
 }> {
   const key = apiKey.trim();
-  const mock = envFlag('NIBO_MOCK', 'true');
+  const mock = integrationMockFlag('NIBO_MOCK');
   if (!key) {
     return {
       categories: [],
@@ -88,29 +88,60 @@ export async function fetchNiboCatalog(apiKey: string): Promise<{
   };
 }
 
-export async function testEvolution(): Promise<AdapterResult> {
-  const mock = envFlag('EVOLUTION_MOCK', 'true');
-  const baseUrl = process.env.EVOLUTION_BASE_URL;
-  const apiKey = process.env.EVOLUTION_API_KEY;
-  if (mock || !baseUrl || !apiKey) {
+export async function testEvolution(
+  credentials?: Record<string, string>,
+  configuration?: unknown,
+): Promise<AdapterResult> {
+  const mock = integrationMockFlag('EVOLUTION_MOCK');
+  const settings = asRecord(configuration) ?? {};
+  const baseUrl = pickString(
+    credentials?.baseUrl,
+    settings.baseUrl,
+    process.env.EVOLUTION_BASE_URL,
+  );
+  const apiKey = pickString(
+    credentials?.apiKey,
+    process.env.EVOLUTION_API_KEY,
+  );
+  const instance = pickString(
+    credentials?.instanceName,
+    credentials?.instance,
+    settings.instanceName,
+    settings.instance,
+    process.env.EVOLUTION_INSTANCE,
+  );
+  if (mock) {
     return {
       success: false,
       provider: 'EVOLUTION',
       enabled: false,
-      message: mock
-        ? 'Evolution desabilitada (EVOLUTION_MOCK=true). Nenhum envio foi simulado.'
-        : 'Evolution desabilitada: configure EVOLUTION_BASE_URL e EVOLUTION_API_KEY.',
+      message: 'Evolution desabilitada (EVOLUTION_MOCK=true). Nenhum envio foi simulado. Em produção omita a variável ou defina false.',
+    };
+  }
+  if (!baseUrl || !apiKey) {
+    return {
+      success: false,
+      provider: 'EVOLUTION',
+      enabled: false,
+      message: instance
+        ? 'Evolution: informe o endereço do serviço (baseUrl) e a chave de acesso na integração (ou EVOLUTION_BASE_URL / EVOLUTION_API_KEY).'
+        : 'Evolution: salve baseUrl, apiKey e nome da instância nesta integração (ou configure EVOLUTION_* no servidor).',
     };
   }
   try {
     const result = await fetchJson(`${baseUrl.replace(/\/$/, '')}/instance/fetchInstances`, {
       headers: { apikey: apiKey },
     });
+    const ok = result.ok;
     return {
-      success: result.ok,
+      success: ok,
       provider: 'EVOLUTION',
       enabled: true,
-      message: result.ok ? 'Conexão Evolution confirmada.' : `Falha Evolution HTTP ${result.status}.`,
+      message: ok
+        ? (instance
+          ? `Conexão Evolution confirmada (instância ${instance}).`
+          : 'Conexão Evolution confirmada.')
+        : `Falha Evolution HTTP ${result.status}. Confira baseUrl e apiKey.`,
       detail: result.body,
     };
   } catch (error) {
@@ -124,7 +155,7 @@ export async function testEvolution(): Promise<AdapterResult> {
 }
 
 export async function testNibo(apiKey?: string): Promise<AdapterResult> {
-  const mock = envFlag('NIBO_MOCK', 'true');
+  const mock = integrationMockFlag('NIBO_MOCK');
   const baseUrl = process.env.NIBO_BASE_URL ?? 'https://api.nibo.com.br/empresas/v1';
   const apiKeyFromCaller = apiKey?.trim() || '';
   const token = apiKeyFromCaller || process.env.NIBO_API_TOKEN;
@@ -172,7 +203,7 @@ export async function testNibo(apiKey?: string): Promise<AdapterResult> {
 }
 
 export async function testGoogleCalendar(): Promise<AdapterResult> {
-  const mock = envFlag('GOOGLE_CALENDAR_MOCK', 'true');
+  const mock = integrationMockFlag('GOOGLE_CALENDAR_MOCK');
   if (mock) {
     return {
       success: false,

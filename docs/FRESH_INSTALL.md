@@ -43,15 +43,90 @@ Se faltar permissão, o processo **falha com instrução clara**. Não derruba n
 
 ## Quando as migrations são executadas?
 
-Somente `prisma migrate deploy` (nunca `migrate dev` nem seed), no serviço `migrate` durante o `deploy.sh`.
+Somente `prisma migrate deploy` (nunca `migrate dev` nem seed), no serviço Swarm `migrate` (`sonder-clinic_migrate`), via `node packages/database/dist/bootstrap-cli.js`.
 
-`deploy.sh` recusa `WEB_URL` localhost/HTTP e imagens não definidas. Depois do `docker stack deploy`, espera o serviço `migrate` registrar bootstrap completo. Só então o release é considerado concluído.
+**Automático?** Só no fluxo oficial:
+
+| Como você atualiza | Migrations rodam? |
+|--------------------|-------------------|
+| Tag GitHub → CI → `deploy.sh` na VPS | **Sim** — `deploy.sh` faz `docker stack deploy` e espera o `migrate` concluir |
+| `./infra/swarm/scripts/deploy.sh` manual na VPS | **Sim** — idem |
+| Portainer só troca imagem de `api` / `worker` / `web` | **Não** — o serviço `migrate` não reinicia; schema fica atrasado |
+| Portainer “Update stack” sem mudar a definição/`API_IMAGE` do `migrate` | **Não** (ou só se o task `migrate` for recriado de fato) |
+
+API e worker **não** aplicam migrations no boot (de propósito — migrate no start da API é perigoso com réplicas).
+
+`deploy.sh` recusa `WEB_URL` localhost/HTTP e imagens não definidas. Depois do `docker stack deploy`, espera o serviço `migrate` registrar bootstrap completo (`"event":"complete"` / `"event":"keep_alive"`). Só então o release é considerado concluído.
+
+Com `BOOTSTRAP_KEEP_ALIVE=true`, o task `migrate` fica Running após aplicar. Para **reaplicar** migrations (nova versão de schema), o task precisa reiniciar — tipicamente nova `API_IMAGE` no serviço `migrate` + `docker service update --force sonder-clinic_migrate`, ou um one-shot (abaixo).
 
 API e worker podem subir em paralelo, mas:
 
 - Traefik só envia tráfego à API com `/api/v1/health/ready` (PostgreSQL + Redis + storage)
 - o healthcheck Docker da API permanece em `/api/v1/health` (liveness), para um Postgres lento não virar restart loop
 - o worker recusa startup em produção sem `DATABASE_URL`, Redis e storage remoto
+
+### Aplicar migrate agora (VPS / Portainer)
+
+Sintoma típico se o schema ficou atrás da imagem: Prisma `P2022` — colunas como `Receivable.externalId`, `Payable.provider`, `Patient.externalCalendarEventId` “does not exist”.
+
+**Opção A — reiniciar o serviço one-shot da stack** (usa a mesma `API_IMAGE` e secrets `database_url` + `database_admin_url`):
+
+```bash
+# Confirme o nome do stack/serviço (padrão do repo):
+docker service ls | grep migrate
+
+# Force recreate (reexecuta bootstrap-cli → prisma migrate deploy):
+docker service update --force sonder-clinic_migrate
+
+# Acompanhe até ver event complete / keep_alive (sem failed):
+docker service logs --tail 100 -f sonder-clinic_migrate
+```
+
+Secrets necessários no serviço `migrate` (já definidos em `stack.production.yml`): `database_url` (obrigatório) e `database_admin_url` (pode ser vazio se o database já existe).
+
+**Opção B — one-shot com a imagem da API** (útil se o serviço `migrate` não existir ou Portainer só atualizou api/worker). No host da VPS, com `.env` de produção:
+
+```bash
+set -a && source .env && set +a
+# Use a MESMA tag que a API em produção, ex.:
+export API_IMAGE="${API_IMAGE:-ghcr.io/mond-day/sonder-clinic-api:1.3.8}"
+
+docker run --rm \
+  --network digital_network \
+  -e NODE_ENV=production \
+  -e DATABASE_URL="$DATABASE_URL" \
+  ${DATABASE_ADMIN_URL:+-e DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL"} \
+  "$API_IMAGE" \
+  node packages/database/dist/bootstrap-cli.js
+```
+
+Não use `prisma migrate dev`, seed, reset ou `DROP DATABASE`.
+
+### Verificar se as colunas existem
+
+No Postgres da clínica (psql / cliente admin):
+
+```sql
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name IN ('Receivable', 'Payable', 'Patient')
+  AND column_name IN ('externalId', 'provider', 'externalCalendarEventId')
+ORDER BY table_name, column_name;
+```
+
+Esperado: `Patient.externalCalendarEventId`, `Payable.provider`, `Receivable.externalId`.
+
+Ou no container da API/migrate:
+
+```bash
+docker exec -it $(docker ps -q -f name=sonder-clinic_api) \
+  node node_modules/prisma/build/index.js migrate status \
+  --schema packages/database/prisma/schema.prisma
+```
+
+(`DATABASE_URL` precisa estar disponível no processo; na API de produção ela vem do secret via `hydrateDockerSecrets`.)
 
 ## O que ocorre se a migration falhar?
 
@@ -115,7 +190,7 @@ Recuperação é operacional (SQL consciente / restore de backup), não um backd
 
 ### Env mínima para boot (API + worker) — Portainer / Swarm
 
-O fail-fast **não** exige `GOOGLE_CLIENT_*`. Em **1.3.7+** também **não** exige `*_MOCK=false` explícito (ausência = off); só recusa se `*_MOCK=true`.
+O fail-fast **não** exige `GOOGLE_CLIENT_*`. Em **1.3.8+** também **não** exige `*_MOCK=false` explícito (ausência = off); só recusa se `*_MOCK=true`.
 
 **API (env + secrets Docker):**
 
@@ -136,14 +211,14 @@ O fail-fast **não** exige `GOOGLE_CLIENT_*`. Em **1.3.7+** também **não** exi
 
 ### Google Calendar (produção)
 
-1. No `.env` / Portainer: `GOOGLE_CALENDAR_MOCK=false` (recomendado; ausência também é off em 1.3.7+). `GOOGLE_CLIENT_*` / `GOOGLE_REDIRECT_URI` são **opcionais** (redirect deriva de `API_URL` se omitido).
+1. No `.env` / Portainer: `GOOGLE_CALENDAR_MOCK=false` (recomendado; ausência também é off em 1.3.8+). `GOOGLE_CLIENT_*` / `GOOGLE_REDIRECT_URI` são **opcionais** (redirect deriva de `API_URL` se omitido).
 2. No [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → OAuth 2.0 Client → **Authorized redirect URIs**: cole exatamente `https://api.<seu-dominio>/api/v1/integrations/google/callback` (a UI em Integrações mostra o valor canônico).
 3. Redeploy (`deploy.sh` recusa `MOCK=true`). Em Configurações → Integrações → Google Agenda: cole **Client ID** e **Client Secret**, salve, use **Conectar / Autenticar** e autorize.
 4. A UI mostra o redirect URI no formulário e em “Detalhes técnicos”.
 
 ### Nibo (produção)
 
-1. `NIBO_MOCK=false` (ou omitido em 1.3.7+) + API Key na conexão Integrações (status ACTIVE).
+1. `NIBO_MOCK=false` (ou omitido em 1.3.8+) + API Key na conexão Integrações (status ACTIVE).
 2. Selecione categorias (filtram a receber **e** a pagar) e, se quiser, centros de custo (filtro adicional em a pagar).
 3. **Sincronizar com Nibo** importa na hora; o worker também puxa periodicamente (`NIBO_PULL_*`). Logs: `nibo-pull.tick` / `nibo-pull.enqueued` / `nibo-pull.completed` (ou `skipReason` se MOCK/sem conexão ACTIVE).
 

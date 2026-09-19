@@ -2,7 +2,7 @@
  * Adapters HTTP helpers.
  */
 
-import { envFlagEnabled } from '@sonder/observability';
+import { envFlagEnabled, readIntegrationMockFlag } from '@sonder/observability';
 
 export type AdapterResult = {
   success: boolean;
@@ -12,9 +12,17 @@ export type AdapterResult = {
   detail?: unknown;
 };
 
-/** *_MOCK e feature flags: só true/1/yes ligam; false/0/no desligam. */
+/**
+ * *_MOCK e feature flags: só true/1/yes ligam; false/0/no desligam.
+ * Preferir `integrationMockFlag` para flags *_MOCK (prod: ausente = off).
+ */
 export function envFlag(name: string, fallback = 'true') {
   return envFlagEnabled(name, fallback.toLowerCase() === 'true');
+}
+
+/** MOCK de integração com fallback sensível a NODE_ENV (prod: ausente = false). */
+export function integrationMockFlag(name: string) {
+  return readIntegrationMockFlag(name).value;
 }
 
 export function pickString(...values: unknown[]): string {

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { z } from 'zod';
 import { api, ApiError, getApiUrl } from '@/lib/api';
 import { APPOINTMENT_DURATIONS } from '@/lib/duration';
@@ -272,6 +273,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [niboImporting, setNiboImporting] = useState(false);
   const [googleOauthBusy, setGoogleOauthBusy] = useState(false);
   const googleRedirectUri = `${getApiUrl().replace(/\/$/, '')}/integrations/google/callback`;
+  const [revealedSecrets, setRevealedSecrets] = useState<Record<string, boolean>>({});
   const [googleScopeType, setGoogleScopeType] = useState<'CLINIC' | 'PROFESSIONAL'>(
     initialIntegration?.scopeType === 'PROFESSIONAL' ? 'PROFESSIONAL' : 'CLINIC',
   );
@@ -1102,7 +1104,9 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           credentials,
           configuration,
           keepExistingCredentials: keepExisting,
-        }), 'Credenciais salvas com segurança.', event.currentTarget);
+        }), integrationProvider === 'GOOGLE_CALENDAR'
+          ? 'Credenciais salvas. Na lista de integrações, use Conectar / Autenticar para autorizar no Google.'
+          : 'Credenciais salvas com segurança.', event.currentTarget);
       }}>
         <SearchableSelect
           name="provider"
@@ -1113,11 +1117,14 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
         />
         {integrationFields[integrationProvider].map((field) => {
           const existingConfig = initialIntegration?.configuration ?? {};
-          const configuredSecret = Boolean(field.secret && initialIntegration?.credentialsConfigured);
-          const required = field.required !== false && !configuredSecret;
+          const isCredentialKey = providerCredentialKeys[integrationProvider].includes(field.key);
+          const credentialsAlreadySaved = Boolean(isCredentialKey && initialIntegration?.credentialsConfigured);
+          const required = field.required !== false && !credentialsAlreadySaved;
           const defaultValue = field.secret
-            ? (configuredSecret ? CREDENTIAL_PLACEHOLDER : '')
-            : String(existingConfig[field.key] ?? '');
+            ? (credentialsAlreadySaved ? CREDENTIAL_PLACEHOLDER : '')
+            : isCredentialKey
+              ? ''
+              : String(existingConfig[field.key] ?? '');
           if (field.type === 'select' || field.options) {
             return (
               <label key={field.key} className={field.hint ? 'span-2' : undefined}>
@@ -1132,19 +1139,47 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
               </label>
             );
           }
+          if (field.secret) {
+            const revealed = Boolean(revealedSecrets[field.key]);
+            return (
+              <label key={field.key} className={field.hint ? 'span-2' : undefined}>
+                {field.label}
+                <div className="password-field">
+                  <input
+                    name={field.key}
+                    type={revealed ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    required={required}
+                    placeholder={credentialsAlreadySaved ? 'Mantém a credencial já salva' : undefined}
+                    defaultValue={defaultValue}
+                  />
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={revealed ? `Ocultar ${field.label}` : `Mostrar ${field.label}`}
+                    onClick={() => setRevealedSecrets((prev) => ({ ...prev, [field.key]: !prev[field.key] }))}
+                  >
+                    {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                {field.hint ? <span className="field-hint">{field.hint}</span> : null}
+                {credentialsAlreadySaved ? <span className="field-hint">Deixe em branco para manter a credencial protegida já salva.</span> : null}
+              </label>
+            );
+          }
           return (
             <label key={field.key} className={field.hint ? 'span-2' : undefined}>
               {field.label}
               <input
                 name={field.key}
-                type={field.secret ? 'password' : field.type ?? 'text'}
-                autoComplete={field.secret ? 'new-password' : 'off'}
+                type={field.type ?? 'text'}
+                autoComplete="off"
                 required={required}
-                placeholder={configuredSecret ? 'Mantém a credencial já salva' : undefined}
+                placeholder={credentialsAlreadySaved ? 'Já salvo — deixe em branco para manter' : undefined}
                 defaultValue={defaultValue}
               />
               {field.hint ? <span className="field-hint">{field.hint}</span> : null}
-              {configuredSecret ? <span className="field-hint">Deixe em branco para manter a credencial protegida já salva.</span> : null}
+              {credentialsAlreadySaved ? <span className="field-hint">Deixe em branco para manter o valor já salvo.</span> : null}
             </label>
           );
         })}
@@ -1190,7 +1225,8 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
               <code style={{ wordBreak: 'break-all' }}>{googleRedirectUri}</code>
               <span className="field-hint">
                 Em APIs e serviços → Credenciais → cliente OAuth → Authorized redirect URIs, cadastre exatamente este valor.
-                Depois salve Client ID/Secret aqui e use Conectar / Autenticar (não precisa colocar no .env do Swarm).
+                Você pode salvar Client ID/Secret mesmo se o Redirect URI ainda não estiver certo no servidor;
+                o OAuth só inicia depois que a API tiver API_URL (ou GOOGLE_REDIRECT_URI).
               </span>
             </div>
           </div>

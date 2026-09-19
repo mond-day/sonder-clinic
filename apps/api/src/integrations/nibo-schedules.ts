@@ -3,7 +3,7 @@
  * Import Nibo→Sonder: fetchNiboSchedules. Push Sonder→Nibo: outbox finance.nibo-sync (worker).
  */
 
-import { envFlag, fetchJson, pickString, asRecord } from './http';
+import { fetchJson, integrationMockFlag, pickString, asRecord } from './http';
 import { niboAuthHeaders, niboUrl } from './adapters';
 
 export type NiboScheduleKind = 'credit' | 'debit';
@@ -135,7 +135,7 @@ export async function fetchNiboSchedules(
   options?: { maxPages?: number },
 ): Promise<FetchNiboSchedulesResult> {
   const key = apiKey.trim();
-  const mock = envFlag('NIBO_MOCK', 'true');
+  const mock = integrationMockFlag('NIBO_MOCK');
   if (!key) {
     return {
       items: [],

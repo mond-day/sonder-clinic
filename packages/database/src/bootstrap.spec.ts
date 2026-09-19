@@ -1,5 +1,9 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  hydrateBootstrapSecrets,
   looksLocalHost,
   parseDatabaseUrl,
   redactUrl,
@@ -35,5 +39,20 @@ describe('bootstrap helpers', () => {
     expect(looksLocalHost('postgresql://sonder:x@localhost:5432/sonder_clinic')).toBe(true);
     expect(looksLocalHost('https://127.0.0.1:3000')).toBe(true);
     expect(looksLocalHost('https://app.sonder.clinic')).toBe(false);
+  });
+
+  it('hidrata DATABASE_URL a partir de Docker secrets sem sobrescrever env', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sonder-bootstrap-secrets-'));
+    writeFileSync(join(dir, 'database_url'), 'postgresql://from-secret@db/sonder_clinic\n');
+    writeFileSync(join(dir, 'database_admin_url'), 'postgresql://admin@db/postgres\n');
+
+    const empty: NodeJS.ProcessEnv = {};
+    hydrateBootstrapSecrets(empty, dir);
+    expect(empty.DATABASE_URL).toBe('postgresql://from-secret@db/sonder_clinic');
+    expect(empty.DATABASE_ADMIN_URL).toBe('postgresql://admin@db/postgres');
+
+    const preset: NodeJS.ProcessEnv = { DATABASE_URL: 'postgresql://env@db/sonder_clinic' };
+    hydrateBootstrapSecrets(preset, dir);
+    expect(preset.DATABASE_URL).toBe('postgresql://env@db/sonder_clinic');
   });
 });

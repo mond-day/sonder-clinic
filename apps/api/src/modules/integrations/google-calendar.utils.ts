@@ -85,14 +85,13 @@ export function resolveCanonicalGoogleRedirectUri(
 }
 
 /**
- * Resolve clientId/secret/redirect para OAuth.
- * Credenciais: conexão primeiro, depois env (fallback ops).
- * Redirect: override da conexão → canônico (env / API_URL / host).
+ * Client ID/Secret da conexão (UI) ou fallback de env.
+ * Independente do Redirect URI — salvar credenciais NÃO exige API_URL.
  */
-export function resolveGoogleOAuthCredentials(
+export function resolveGoogleClientCredentials(
   connectionCredentials?: Record<string, string>,
   env: NodeJS.ProcessEnv = process.env,
-): GoogleOAuthCredentials | null {
+): { clientId: string; clientSecret: string } | null {
   const clientId = pickString(
     connectionCredentials?.clientId,
     env.GOOGLE_CLIENT_ID,
@@ -101,12 +100,29 @@ export function resolveGoogleOAuthCredentials(
     connectionCredentials?.clientSecret,
     env.GOOGLE_CLIENT_SECRET,
   );
+  if (!clientId || !clientSecret) return null;
+  return { clientId, clientSecret };
+}
+
+/**
+ * Resolve clientId/secret/redirect para OAuth (authorize + token exchange).
+ * Credenciais: conexão primeiro, depois env (fallback ops).
+ * Redirect: override da conexão → canônico (env / API_URL / host).
+ * Retorna null se faltar client OU redirect — use resolveGoogleClientCredentials
+ * para distinguir “credenciais ausentes” de “redirect ausente”.
+ */
+export function resolveGoogleOAuthCredentials(
+  connectionCredentials?: Record<string, string>,
+  env: NodeJS.ProcessEnv = process.env,
+): GoogleOAuthCredentials | null {
+  const client = resolveGoogleClientCredentials(connectionCredentials, env);
+  if (!client) return null;
   const redirectUri = pickString(
     connectionCredentials?.redirectUri,
     resolveCanonicalGoogleRedirectUri(env),
   );
-  if (!clientId || !clientSecret || !redirectUri) return null;
-  return { clientId, clientSecret, redirectUri };
+  if (!redirectUri) return null;
+  return { ...client, redirectUri };
 }
 
 export function googleCalendarMockInfo(env: NodeJS.ProcessEnv = process.env) {

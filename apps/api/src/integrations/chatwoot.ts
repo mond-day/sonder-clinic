@@ -1,4 +1,4 @@
-import { asRecord, envFlag, fetchJson, httpErrorDetail, pickString, type AdapterResult } from './http';
+import { asRecord, fetchJson, httpErrorDetail, integrationMockFlag, pickString, type AdapterResult } from './http';
 
 export type ChatwootConfig = {
   baseUrl: string;
@@ -8,7 +8,7 @@ export type ChatwootConfig = {
 };
 
 export function isChatwootMock() {
-  return envFlag('CHATWOOT_MOCK', 'true');
+  return integrationMockFlag('CHATWOOT_MOCK');
 }
 
 export function resolveChatwootConfig(

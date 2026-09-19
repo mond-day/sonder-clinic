@@ -1,12 +1,12 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
-import { envelopeDecryptJson, envelopeEncryptJson } from '@sonder/observability';
+import { envelopeDecryptJson, envelopeEncryptJson, readIntegrationMockFlag } from '@sonder/observability';
 import { storageStatus } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
 import { resolvePublicWebUrl } from '../../common/public-web-url';
-import { envFlag } from '../../integrations/http';
+import { integrationMockFlag } from '../../integrations/http';
 import {
   buildGoogleAuthorizeUrl,
   ensureFreshAccessToken,
@@ -22,6 +22,7 @@ import {
   resolveCanonicalGoogleRedirectUri,
   resolveGoogleCalendarWebhookToken,
   resolveGoogleCalendarWebhookUrl,
+  resolveGoogleClientCredentials,
   resolveGoogleOAuthCredentials,
   signOAuthState,
   stopGoogleCalendarChannel,
@@ -130,12 +131,15 @@ export class IntegrationsService {
       : [];
     const professionalNameById = new Map(professionalNames.map((item) => [item.id, item.name]));
     const bootstrap = (['NIBO', 'ABACATEPAY', 'EVOLUTION', 'CHATWOOT'] as const).map((provider) => {
-      const mock = envFlag(`${provider}_MOCK`, 'true');
+      const mockInfo = readIntegrationMockFlag(`${provider}_MOCK`);
+      const mock = mockInfo.value;
       return {
         provider,
         mode: mock ? 'mock' : 'live',
         status: mock ? 'ready' : this.hasCredentials(provider) ? 'ready' : 'missing_config',
         source: 'environment',
+        mockEnvPresent: mockInfo.present,
+        mockEnvRaw: mockInfo.raw,
       };
     });
     return {
@@ -192,7 +196,7 @@ export class IntegrationsService {
     if (provider === 'GOOGLE_CALENDAR') {
       return this.probeGoogleCalendarLive(id, credentials, connection.configuration);
     }
-    const mock = envFlag(`${provider}_MOCK`, 'true');
+    const mock = integrationMockFlag(`${provider}_MOCK`);
     const niboApiKey = provider === 'NIBO'
       ? String(credentials.apiKey || credentials.token || '').trim()
       : '';
@@ -204,14 +208,27 @@ export class IntegrationsService {
         enabled: false,
         message: provider === 'NIBO'
           ? 'Nibo em modo MOCK (NIBO_MOCK=true). Nenhum sucesso foi simulado. Desative o MOCK para testar de verdade.'
-          : `${provider} em modo MOCK (*_MOCK=true). Credenciais da conexão foram carregadas, mas nenhum sucesso foi simulado.`,
+          : `${provider} em modo MOCK (*_MOCK=true). Em produção omita a variável ou defina false; credenciais da conexão já estão salvas.`,
         mode: 'mock',
         credentialsConfigured: Object.keys(credentials).length > 0,
       };
     }
     if (provider === 'CHATWOOT') {
       const { testChatwoot, resolveChatwootConfig } = await import('../../integrations/chatwoot.js');
-      const result = await testChatwoot(resolveChatwootConfig(credentials, connection.configuration));
+      const resolved = resolveChatwootConfig(credentials, connection.configuration);
+      if (!resolved) {
+        return {
+          success: false,
+          provider,
+          connectionId: id,
+          enabled: false,
+          message:
+            'Chatwoot incompleto: salve baseUrl, accountId e token de acesso nesta integração (inboxId opcional para envio).',
+          mode: 'stub',
+          credentialsConfigured: true,
+        };
+      }
+      const result = await testChatwoot(resolved);
       await prisma.integrationConnection.update({
         where: { id },
         data: {
@@ -223,7 +240,19 @@ export class IntegrationsService {
     }
     if (provider === 'ABACATEPAY') {
       const { testAbacatePay, resolveAbacatePayConfig } = await import('../../integrations/abacatepay.js');
-      const result = await testAbacatePay(resolveAbacatePayConfig(credentials, connection.configuration));
+      const resolved = resolveAbacatePayConfig(credentials, connection.configuration);
+      if (!resolved) {
+        return {
+          success: false,
+          provider,
+          connectionId: id,
+          enabled: false,
+          message: 'AbacatePay: salve a chave de acesso (apiKey) nesta integração.',
+          mode: 'stub',
+          credentialsConfigured: true,
+        };
+      }
+      const result = await testAbacatePay(resolved);
       await prisma.integrationConnection.update({
         where: { id },
         data: {
@@ -245,6 +274,18 @@ export class IntegrationsService {
         },
       });
       return { ...result, connectionId: id, mode: 'live', credentialsConfigured: true };
+    }
+    if (provider === 'EVOLUTION') {
+      const { testEvolution } = await import('../../integrations/adapters.js');
+      const result = await testEvolution(credentials, connection.configuration);
+      await prisma.integrationConnection.update({
+        where: { id },
+        data: {
+          lastSyncAt: result.success ? new Date() : connection.lastSyncAt,
+          status: result.success ? 'ACTIVE' : connection.status === 'DISABLED' ? 'DISABLED' : 'ERROR',
+        },
+      });
+      return { ...result, connectionId: id, mode: result.enabled ? 'live' : 'stub', credentialsConfigured: true };
     }
     const { testProvider } = await import('../../integrations/adapters.js');
     const result = await testProvider(provider);
@@ -578,6 +619,7 @@ export class IntegrationsService {
     void organizationId;
     const mockInfo = googleCalendarMockInfo();
     const envMock = mockInfo.value;
+    const client = resolveGoogleClientCredentials(connectionCredentials);
     const oauth = resolveGoogleOAuthCredentials(connectionCredentials);
     const tokens = connectionCredentials ? tokensFromCredentials(connectionCredentials) : null;
     const calendarId = readCalendarId(configuration);
@@ -595,6 +637,7 @@ export class IntegrationsService {
       mockEnvRaw: mockInfo.raw,
       hasConnectionClientId: Boolean(connectionClientId),
       hasConnectionClientSecret: Boolean(connectionClientSecret),
+      hasClientCredentials: Boolean(client),
       hasEnvClientId: Boolean((process.env.GOOGLE_CLIENT_ID ?? '').trim()),
       hasEnvClientSecret: Boolean((process.env.GOOGLE_CLIENT_SECRET ?? '').trim()),
       redirectUri,
@@ -623,7 +666,7 @@ export class IntegrationsService {
       };
     }
 
-    if (!oauth) {
+    if (!client) {
       return {
         success: false,
         provider: 'GOOGLE_CALENDAR' as const,
@@ -637,7 +680,24 @@ export class IntegrationsService {
         ...envHints,
         message: redirectUri
           ? 'Preencha Client ID e Client Secret nesta integração (como no N8N), cadastre o Redirect URI abaixo no Google Cloud Console e use Conectar / Autenticar.'
-          : 'Preencha Client ID e Client Secret nesta integração. Configure API_URL ou GOOGLE_REDIRECT_URI no servidor para exibir o Redirect URI canônico.',
+          : 'Preencha e salve Client ID e Client Secret nesta integração. O Redirect URI aparece quando API_URL ou GOOGLE_REDIRECT_URI estiver no servidor da API (salvar credenciais não depende disso).',
+      };
+    }
+
+    if (!redirectUri) {
+      return {
+        success: false,
+        provider: 'GOOGLE_CALENDAR' as const,
+        connectionId: connectionId ?? null,
+        enabled: true,
+        oauthReady: false,
+        syncBidirectional: false,
+        calendarId,
+        status: 'MISSING_REDIRECT_URI',
+        mode: 'credentials_present',
+        ...envHints,
+        message:
+          'Client ID/Secret salvos. Defina API_URL (ou GOOGLE_REDIRECT_URI) no serviço api do Swarm e redeploy para gerar o Redirect URI do callback — depois use Conectar / Autenticar.',
       };
     }
 
@@ -717,13 +777,23 @@ export class IntegrationsService {
         `Google Calendar em MOCK (${mockReason}). Defina GOOGLE_CALENDAR_MOCK=false no Swarm (api), redeploy e reinicie para autenticar.`,
       );
     }
+    const client = resolveGoogleClientCredentials(credentials);
+    if (!client) {
+      throw new BadRequestException(
+        'Salve Client ID e Client Secret nesta integração (Integrações → Google Agenda) antes de autenticar.',
+      );
+    }
+    const redirectUri = resolveCanonicalGoogleRedirectUri()
+      || (typeof credentials.redirectUri === 'string' ? credentials.redirectUri.trim() : '');
+    if (!redirectUri) {
+      throw new BadRequestException(
+        'Client ID e Client Secret estão salvos. Defina API_URL (ou GOOGLE_REDIRECT_URI) no serviço api do Swarm e redeploy para o callback OAuth — o salvamento das credenciais não depende disso.',
+      );
+    }
     const oauth = resolveGoogleOAuthCredentials(credentials);
     if (!oauth) {
-      const redirectUri = resolveCanonicalGoogleRedirectUri();
       throw new BadRequestException(
-        redirectUri
-          ? `Salve Client ID e Client Secret nesta integração (Integrações → Google Agenda) antes de autenticar. Redirect URI para o Google Cloud Console: ${redirectUri}`
-          : 'Salve Client ID e Client Secret nesta integração. Configure API_URL ou GOOGLE_REDIRECT_URI no servidor para o callback OAuth.',
+        'Não foi possível montar o OAuth Google. Confira Client ID/Secret salvos e o Redirect URI no servidor.',
       );
     }
     const state = signOAuthState(connectionId, process.env.ENCRYPTION_MASTER_KEY!);

@@ -1,11 +1,36 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Client } from 'pg';
 
 const ADVISORY_LOCK_KEY = 87_214_601;
 const DEFAULT_WAIT_MS = 60_000;
 const REQUIRED_TABLES = ['_prisma_migrations', 'Organization', 'User', 'SystemInstallation'];
+
+/** Swarm monta secrets em /run/secrets/<nome>; o serviço migrate não passa por main da API. */
+const BOOTSTRAP_DOCKER_SECRETS: ReadonlyArray<readonly [envName: string, fileName: string]> = [
+  ['DATABASE_URL', 'database_url'],
+  ['DATABASE_ADMIN_URL', 'database_admin_url'],
+];
+
+/**
+ * Preenche DATABASE_URL / DATABASE_ADMIN_URL a partir de Docker secrets se o env estiver vazio.
+ * Idempotente; não sobrescreve variáveis já definidas.
+ */
+export function hydrateBootstrapSecrets(
+  env: NodeJS.ProcessEnv = process.env,
+  secretsDir = '/run/secrets',
+): void {
+  for (const [envName, fileName] of BOOTSTRAP_DOCKER_SECRETS) {
+    if (env[envName]?.trim()) continue;
+    try {
+      const value = readFileSync(`${secretsDir}/${fileName}`, 'utf8').trim();
+      if (value) env[envName] = value;
+    } catch {
+      /* secret ausente neste ambiente */
+    }
+  }
+}
 
 export class BootstrapError extends Error {
   constructor(message: string, readonly exitCode = 1) {
@@ -256,9 +281,13 @@ export async function assertSchemaReady(databaseUrl: string): Promise<void> {
 }
 
 export async function runProductionBootstrap(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  hydrateBootstrapSecrets(env);
   const databaseUrl = env.DATABASE_URL?.trim();
   if (!databaseUrl) {
-    throw new BootstrapError('DATABASE_URL ausente. Defina a URL do database da aplicação.');
+    throw new BootstrapError(
+      'DATABASE_URL ausente. Defina a URL do database da aplicação '
+      + '(env ou Docker secret `database_url`).',
+    );
   }
 
   const adminUrl = env.DATABASE_ADMIN_URL?.trim() || undefined;

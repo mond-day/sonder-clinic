@@ -1,4 +1,4 @@
-import { asRecord, envFlag, fetchJson, httpErrorDetail, pickString, type AdapterResult } from './http';
+import { asRecord, fetchJson, httpErrorDetail, integrationMockFlag, pickString, type AdapterResult } from './http';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export type AbacatePayConfig = {
@@ -32,7 +32,7 @@ export type AbacatePayCharge = {
 const DEFAULT_BASE_URL = 'https://api.abacatepay.com/v2';
 
 export function isAbacatePayMock() {
-  return envFlag('ABACATEPAY_MOCK', 'true');
+  return integrationMockFlag('ABACATEPAY_MOCK');
 }
 
 export function resolveAbacatePayConfig(

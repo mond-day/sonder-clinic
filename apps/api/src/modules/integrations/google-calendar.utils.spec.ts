@@ -8,6 +8,7 @@ import {
   rangesOverlap,
   readCalendarId,
   resolveCanonicalGoogleRedirectUri,
+  resolveGoogleClientCredentials,
   resolveGoogleOAuthCredentials,
   signOAuthState,
   tokensFromCredentials,
@@ -18,6 +19,19 @@ const SECRET = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 describe('google-calendar.utils', () => {
   afterEach(() => vi.unstubAllEnvs());
+
+  it('resolveGoogleClientCredentials independente do redirect', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    delete process.env.API_URL;
+    delete process.env.GOOGLE_REDIRECT_URI;
+    delete process.env.API_HOST;
+    expect(
+      resolveGoogleClientCredentials({ clientId: 'ui-id', clientSecret: 'ui-secret' }),
+    ).toEqual({ clientId: 'ui-id', clientSecret: 'ui-secret' });
+    expect(
+      resolveGoogleOAuthCredentials({ clientId: 'ui-id', clientSecret: 'ui-secret' }),
+    ).toBeNull();
+  });
 
   it('resolveGoogleOAuthCredentials exige clientId e secret (redirect canônico em dev)', () => {
     expect(resolveGoogleOAuthCredentials()).toBeNull();

@@ -66,4 +66,71 @@ describe('IntegrationsService', () => {
     expect(String(result.message ?? '')).not.toMatch(/MOCK/i);
     expect(fetchMock).toHaveBeenCalled();
   });
+
+  it('testConnection Evolution usa credenciais da conexão (não só env)', async () => {
+    vi.stubEnv('ENCRYPTION_MASTER_KEY', MASTER_KEY);
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('EVOLUTION_MOCK', 'false');
+    const service = new IntegrationsService();
+    vi.spyOn(prisma.integrationConnection, 'findFirst').mockResolvedValue({
+      id: 'conn-evo',
+      provider: 'EVOLUTION',
+      encryptedCredentials: 'stored',
+      configuration: { baseUrl: 'https://evo.example' },
+      lastSyncAt: null,
+      status: 'ACTIVE',
+      clinicId: 'clinic-1',
+      scopeType: 'CLINIC',
+      scopeId: 'clinic-1',
+    } as never);
+    vi.spyOn(service, 'decryptForAdapter').mockReturnValue({
+      apiKey: 'evo-key',
+      instanceName: 'clinic',
+    });
+    vi.spyOn(prisma.integrationConnection, 'update').mockResolvedValue({} as never);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '[]',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await service.testConnection('org-1', 'conn-evo');
+    expect(result.success).toBe(true);
+    expect(String(result.message ?? '')).toMatch(/Evolution/i);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://evo.example/instance/fetchInstances',
+      expect.objectContaining({ headers: expect.objectContaining({ apikey: 'evo-key' }) }),
+    );
+  });
+
+  it('testConnection AbacatePay não trata MOCK ausente como ligado em produção', async () => {
+    vi.stubEnv('ENCRYPTION_MASTER_KEY', MASTER_KEY);
+    vi.stubEnv('NODE_ENV', 'production');
+    delete process.env.ABACATEPAY_MOCK;
+    const service = new IntegrationsService();
+    vi.spyOn(prisma.integrationConnection, 'findFirst').mockResolvedValue({
+      id: 'conn-aba',
+      provider: 'ABACATEPAY',
+      encryptedCredentials: 'stored',
+      configuration: {},
+      lastSyncAt: null,
+      status: 'ACTIVE',
+      clinicId: 'clinic-1',
+      scopeType: 'CLINIC',
+      scopeId: 'clinic-1',
+    } as never);
+    vi.spyOn(service, 'decryptForAdapter').mockReturnValue({ apiKey: 'aba-key' });
+    vi.spyOn(prisma.integrationConnection, 'update').mockResolvedValue({} as never);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: { id: 'x' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await service.testConnection('org-1', 'conn-aba');
+    expect(String(result.message ?? '')).not.toMatch(/MOCK/i);
+    expect(fetchMock).toHaveBeenCalled();
+  });
 });
