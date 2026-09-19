@@ -20,6 +20,13 @@ if (!(BigInt.prototype as unknown as { toJSON?: () => number }).toJSON) {
 async function bootstrap(): Promise<void> {
   hydrateDockerSecrets();
   assertProductionEnvironment();
+  // eslint-disable-next-line no-console
+  console.info(JSON.stringify({
+    service: 'sonder-api',
+    event: 'boot.start',
+    appVersion: process.env.APP_VERSION ?? process.env.npm_package_version ?? 'unknown',
+    node: process.version,
+  }));
   try {
     await runBootMigrations({ service: 'sonder-api' });
   } catch (error) {
@@ -28,6 +35,7 @@ async function bootstrap(): Promise<void> {
     console.error(JSON.stringify({
       service: 'sonder-api',
       event: 'boot.migrate.failed',
+      appVersion: process.env.APP_VERSION ?? process.env.npm_package_version ?? 'unknown',
       error: message,
     }));
     process.exit(error instanceof BootstrapError ? error.exitCode : 1);

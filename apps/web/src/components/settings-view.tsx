@@ -948,6 +948,14 @@ export function SettingsView() {
               && typeof editingIntegration.credentials === 'object'
               && (editingIntegration.credentials as RecordValue).configured,
             ),
+            credentialValues: (() => {
+              const creds = editingIntegration.credentials;
+              if (!creds || typeof creds !== 'object') return {};
+              const clientId = (creds as RecordValue).clientId;
+              return typeof clientId === 'string' && clientId.trim()
+                ? { clientId: clientId.trim() }
+                : {};
+            })(),
             configuration: editingIntegration.configuration && typeof editingIntegration.configuration === 'object'
               ? editingIntegration.configuration as Record<string, unknown>
               : {},

@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  BootstrapError,
+  assertMigrationsPresent,
   hydrateBootstrapSecrets,
   looksLocalHost,
   parseDatabaseUrl,
@@ -69,5 +71,18 @@ describe('bootstrap helpers', () => {
       runBootMigrations({ env, service: 'test-boot', secretsDir: dir, postgresWaitMs: 1_500 }),
     ).rejects.toThrow(/PostgreSQL indisponível/);
     expect(env.DATABASE_URL).toBe('postgresql://from_secret@127.0.0.1:1/sonder_clinic');
+  });
+
+  it('assertMigrationsPresent encontra schema e migrations no monorepo', () => {
+    const { schema, migrationsDir } = assertMigrationsPresent();
+    expect(schema).toContain('schema.prisma');
+    expect(migrationsDir).toContain('migrations');
+  });
+
+  it('BootstrapError expõe exitCode sem parameter property', () => {
+    const err = new BootstrapError('falhou', 42);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.exitCode).toBe(42);
+    expect(err.message).toBe('falhou');
   });
 });

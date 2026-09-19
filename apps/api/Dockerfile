@@ -17,13 +17,22 @@ RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY . .
-RUN pnpm --filter @sonder/database generate \
+# Fail the image build if critical migrations or Prisma CLI are missing (silent migrate no-op in prod).
+RUN test -f packages/database/prisma/schema.prisma \
+  && test -f packages/database/prisma/migrations/20260917120000_nibo_external_ids/migration.sql \
+  && test -f packages/database/prisma/migrations/20260917130000_patient_calendar_event/migration.sql \
+  && test -e packages/database/node_modules/prisma/build/index.js \
+  && pnpm --filter @sonder/database generate \
   && pnpm --filter @sonder/database exec tsc -p tsconfig.bootstrap.json \
-  && pnpm --filter @sonder/api build
+  && pnpm --filter @sonder/api build \
+  && test -f packages/database/dist/bootstrap.js \
+  && test -f packages/database/dist/bootstrap-cli.js
 
 FROM node:24-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ARG APP_VERSION=unknown
+ENV APP_VERSION=$APP_VERSION
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates wget \
   && rm -rf /var/lib/apt/lists/* \
@@ -32,6 +41,11 @@ COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/apps/api ./apps/api
+# Runtime assert: migrations + prisma CLI + compiled bootstrap must be in the final image.
+RUN test -f packages/database/prisma/migrations/20260917120000_nibo_external_ids/migration.sql \
+  && test -f packages/database/prisma/migrations/20260917130000_patient_calendar_event/migration.sql \
+  && test -e packages/database/node_modules/prisma/build/index.js \
+  && test -f packages/database/dist/bootstrap-cli.js
 USER sonder
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

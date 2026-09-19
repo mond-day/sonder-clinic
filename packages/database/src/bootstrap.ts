@@ -10,6 +10,28 @@ const MIGRATE_ADVISORY_LOCK_KEY = 87_214_602;
 const DEFAULT_WAIT_MS = 60_000;
 const REQUIRED_TABLES = ['_prisma_migrations', 'Organization', 'User', 'SystemInstallation'];
 
+/** Colunas críticas (Nibo + Google paciente). Ausência = P2022 em produção. */
+const REQUIRED_COLUMNS: ReadonlyArray<{ table: string; column: string }> = [
+  { table: 'Receivable', column: 'externalId' },
+  { table: 'Payable', column: 'externalId' },
+  { table: 'Payable', column: 'provider' },
+  { table: 'Patient', column: 'externalCalendarEventId' },
+];
+
+/** Pastas de migration que o boot exige no filesystem da imagem. */
+const REQUIRED_MIGRATION_DIRS = [
+  '20260917120000_nibo_external_ids',
+  '20260917130000_patient_calendar_event',
+] as const;
+
+/** DDL idempotente se migrate deploy “passou” mas colunas ainda faltam (histórico divergente). */
+const COLUMN_REPAIR_SQL = `
+ALTER TABLE "Receivable" ADD COLUMN IF NOT EXISTS "externalId" TEXT;
+ALTER TABLE "Payable" ADD COLUMN IF NOT EXISTS "externalId" TEXT;
+ALTER TABLE "Payable" ADD COLUMN IF NOT EXISTS "provider" "IntegrationProvider";
+ALTER TABLE "Patient" ADD COLUMN IF NOT EXISTS "externalCalendarEventId" TEXT;
+`.trim();
+
 /** Swarm monta secrets em /run/secrets/<nome>; o serviço migrate não passa por main da API. */
 const BOOTSTRAP_DOCKER_SECRETS: ReadonlyArray<readonly [envName: string, fileName: string]> = [
   ['DATABASE_URL', 'database_url'],
@@ -36,9 +58,13 @@ export function hydrateBootstrapSecrets(
 }
 
 export class BootstrapError extends Error {
-  constructor(message: string, readonly exitCode = 1) {
+  readonly exitCode: number;
+
+  constructor(message: string, exitCode = 1) {
     super(message);
     this.name = 'BootstrapError';
+    // Atribução explícita: Node strip-types não aceita parameter properties (1.3.9 quebrava require).
+    this.exitCode = exitCode;
   }
 }
 
@@ -239,7 +265,58 @@ function runPrisma(args: string[], env: NodeJS.ProcessEnv, root: string): { stat
   return { status: result.status ?? 1, output };
 }
 
+/** Garante que schema + pasta migrations existem no filesystem (imagem Docker incompleta = no-op silencioso). */
+export function assertMigrationsPresent(root = findRepoRoot()): {
+  schema: string;
+  migrationsDir: string;
+} {
+  const schema = join(root, 'packages', 'database', 'prisma', 'schema.prisma');
+  const migrationsDir = join(root, 'packages', 'database', 'prisma', 'migrations');
+  if (!existsSync(schema)) {
+    throw new BootstrapError(
+      `schema.prisma ausente em ${schema}. A imagem de produção precisa incluir packages/database/prisma.`,
+    );
+  }
+  if (!existsSync(migrationsDir)) {
+    throw new BootstrapError(
+      `Pasta prisma/migrations ausente em ${migrationsDir}. `
+      + 'Sem ela, `prisma migrate deploy` não aplica nada e o schema fica atrás do Prisma Client (P2022).',
+    );
+  }
+  const missingDirs = REQUIRED_MIGRATION_DIRS.filter(
+    (name) => !existsSync(join(migrationsDir, name, 'migration.sql')),
+  );
+  if (missingDirs.length) {
+    throw new BootstrapError(
+      `Migrations críticas ausentes na imagem: ${missingDirs.join(', ')}. `
+      + `Esperado sob ${migrationsDir}. Rebuild a imagem a partir do monorepo completo.`,
+    );
+  }
+  const prismaCli = (() => {
+    try {
+      return resolvePrismaCli(root);
+    } catch {
+      return null;
+    }
+  })();
+  if (!prismaCli) {
+    throw new BootstrapError(
+      'Prisma CLI ausente em node_modules. Em produção, `prisma` deve ser dependency '
+      + '(não só devDependency) e copiada na imagem runner.',
+    );
+  }
+  log('migrate.filesystem.ok', {
+    root,
+    schema,
+    migrationsDir,
+    requiredMigrations: REQUIRED_MIGRATION_DIRS,
+    prisma: prismaCli.command,
+  });
+  return { schema, migrationsDir };
+}
+
 export function applyMigrations(databaseUrl: string, root = findRepoRoot()): void {
+  assertMigrationsPresent(root);
   const env = { ...process.env, DATABASE_URL: databaseUrl, PRISMA_HIDE_UPDATE_MESSAGE: '1' };
   log('migrate.deploy.start');
   const deployed = runPrisma(['migrate', 'deploy'], env, root);
@@ -261,6 +338,57 @@ export function applyMigrations(databaseUrl: string, root = findRepoRoot()): voi
   log('migrate.status.ok');
 }
 
+async function listMissingRequiredColumns(databaseUrl: string): Promise<string[]> {
+  return withClient(databaseUrl, async (client) => {
+    const missing: string[] = [];
+    for (const { table, column } of REQUIRED_COLUMNS) {
+      const result = await client.query<{ exists: boolean }>(
+        `SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+        ) AS exists`,
+        [table, column],
+      );
+      if (!result.rows[0]?.exists) missing.push(`${table}.${column}`);
+    }
+    return missing;
+  });
+}
+
+/**
+ * Se colunas críticas faltarem após migrate deploy (ex.: migration marcada aplicada sem DDL),
+ * aplica ALTER IF NOT EXISTS e revalida. Falha alto se ainda faltar.
+ */
+export async function assertRequiredColumns(databaseUrl: string): Promise<void> {
+  let missing = await listMissingRequiredColumns(databaseUrl);
+  if (!missing.length) {
+    log('schema.columns.ok', { columns: REQUIRED_COLUMNS.map((c) => `${c.table}.${c.column}`) });
+    return;
+  }
+
+  console.error(JSON.stringify({
+    service: 'sonder-db-bootstrap',
+    event: 'boot.migrate.columns_missing',
+    missing,
+    action: 'repair_if_not_exists',
+  }));
+
+  await withClient(databaseUrl, async (client) => {
+    log('schema.columns.repair.start', { missing });
+    await client.query(COLUMN_REPAIR_SQL);
+  });
+
+  missing = await listMissingRequiredColumns(databaseUrl);
+  if (missing.length) {
+    throw new BootstrapError(
+      `Colunas críticas ausentes após migrate + repair: ${missing.join(', ')}. `
+      + 'A API não pode subir (evitar P2022). Fallback manual SQL:\n'
+      + COLUMN_REPAIR_SQL,
+    );
+  }
+  log('schema.columns.repair.ok', { repaired: true });
+}
+
 export async function assertSchemaReady(databaseUrl: string): Promise<void> {
   await withClient(databaseUrl, async (client) => {
     const result = await client.query<{ tablename: string }>(
@@ -280,7 +408,11 @@ export async function assertSchemaReady(databaseUrl: string): Promise<void> {
       throw new BootstrapError('Há migrations não finalizadas em _prisma_migrations.');
     }
   });
-  log('schema.ready', { tables: REQUIRED_TABLES });
+  await assertRequiredColumns(databaseUrl);
+  log('schema.ready', {
+    tables: REQUIRED_TABLES,
+    columns: REQUIRED_COLUMNS.map((c) => `${c.table}.${c.column}`),
+  });
 }
 
 /**
@@ -329,9 +461,15 @@ export type BootMigrateOptions = {
 export async function runBootMigrations(options: BootMigrateOptions = {}): Promise<void> {
   const env = options.env ?? process.env;
   const service = options.service ?? 'sonder-db-bootstrap';
+  const appVersion = env.APP_VERSION?.trim() || env.npm_package_version?.trim() || 'unknown';
   const bootLog = (event: string, extra: Record<string, unknown> = {}): void => {
-    console.info(JSON.stringify({ service, event, ...extra }));
+    console.info(JSON.stringify({ service, event, appVersion, ...extra }));
   };
+
+  bootLog('boot.migrate.version', {
+    node: process.version,
+    cwd: process.cwd(),
+  });
 
   hydrateBootstrapSecrets(env, options.secretsDir);
   const databaseUrl = env.DATABASE_URL?.trim();
@@ -342,18 +480,28 @@ export async function runBootMigrations(options: BootMigrateOptions = {}): Promi
     );
   }
 
+  const root = options.root ?? findRepoRoot();
   const parsed = parseDatabaseUrl(databaseUrl);
-  bootLog('boot.migrate.start', { database: parsed.name, host: parsed.host });
+  bootLog('boot.migrate.start', {
+    database: parsed.name,
+    host: parsed.host,
+    root,
+  });
 
   try {
     await applyMigrationsWithLock(
       databaseUrl,
-      options.root ?? findRepoRoot(),
+      root,
       options.postgresWaitMs ?? DEFAULT_WAIT_MS,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'erro desconhecido';
-    console.error(JSON.stringify({ service, event: 'boot.migrate.failed', error: message }));
+    console.error(JSON.stringify({
+      service,
+      event: 'boot.migrate.failed',
+      appVersion,
+      error: message,
+    }));
     throw error;
   }
 

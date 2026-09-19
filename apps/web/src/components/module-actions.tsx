@@ -245,6 +245,8 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   initialIntegration?: {
     id?: string;
     credentialsConfigured?: boolean;
+    /** Valores não-secretos já salvos (ex.: Google clientId) para reexibir no formulário. */
+    credentialValues?: Record<string, string>;
     configuration?: Record<string, unknown>;
     scopeType?: string;
     scopeId?: string;
@@ -1120,10 +1122,13 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           const isCredentialKey = providerCredentialKeys[integrationProvider].includes(field.key);
           const credentialsAlreadySaved = Boolean(isCredentialKey && initialIntegration?.credentialsConfigured);
           const required = field.required !== false && !credentialsAlreadySaved;
+          const savedNonSecret = isCredentialKey && !field.secret
+            ? String(initialIntegration?.credentialValues?.[field.key] ?? '').trim()
+            : '';
           const defaultValue = field.secret
             ? (credentialsAlreadySaved ? CREDENTIAL_PLACEHOLDER : '')
             : isCredentialKey
-              ? ''
+              ? savedNonSecret
               : String(existingConfig[field.key] ?? '');
           if (field.type === 'select' || field.options) {
             return (

@@ -144,19 +144,31 @@ export class IntegrationsService {
     });
     return {
       configured: persisted.map(({ encryptedCredentials, ...connection }) => {
+        const credentialsPayload = encryptedCredentials
+          ? { configured: true as const, masked: '••••••••' }
+          : { configured: false as const };
         const base = {
           ...connection,
           scopeLabel: connection.scopeType === 'PROFESSIONAL'
             ? (professionalNameById.get(connection.scopeId) ?? 'Profissional')
             : 'Clínica',
-          credentials: encryptedCredentials ? { configured: true, masked: '••••••••' } : { configured: false },
+          credentials: credentialsPayload,
         };
         if (connection.provider !== 'GOOGLE_CALENDAR') return base;
         const credentials = encryptedCredentials
           ? this.decryptForAdapter(encryptedCredentials)
           : undefined;
+        const clientId = typeof credentials?.clientId === 'string' ? credentials.clientId.trim() : '';
         return {
           ...base,
+          credentials: encryptedCredentials
+            ? {
+                configured: true as const,
+                masked: '••••••••',
+                // Client ID não é segredo — UI precisa reexibir ao reabrir o formulário.
+                ...(clientId ? { clientId } : {}),
+              }
+            : { configured: false as const },
           oauth: this.googleCalendarOauthStatus(
             organizationId,
             connection.id,
@@ -635,6 +647,7 @@ export class IntegrationsService {
       mock: envMock,
       mockEnvPresent: mockInfo.present,
       mockEnvRaw: mockInfo.raw,
+      credentialsConfigured: hasConnectionClient || Boolean(client),
       hasConnectionClientId: Boolean(connectionClientId),
       hasConnectionClientSecret: Boolean(connectionClientSecret),
       hasClientCredentials: Boolean(client),
@@ -644,6 +657,7 @@ export class IntegrationsService {
       expectedRedirectPath: '/api/v1/integrations/google/callback',
       redirectUriHint:
         'Cadastre exatamente este URI no Google Cloud Console (OAuth client → Authorized redirect URIs).',
+      ...(connectionClientId ? { clientId: connectionClientId } : {}),
     };
 
     if (envMock) {
@@ -1588,7 +1602,17 @@ export class IntegrationsService {
           correlationId: randomUUID(),
         },
       });
-      return { ...connection, encryptedCredentials: undefined, credentials: { configured: true, masked: '••••••••' } };
+      return {
+        ...connection,
+        encryptedCredentials: undefined,
+        credentials: {
+          configured: true,
+          masked: '••••••••',
+          ...(provider === 'GOOGLE_CALENDAR' && credentials.clientId
+            ? { clientId: credentials.clientId }
+            : {}),
+        },
+      };
     });
   }
 

@@ -45,7 +45,7 @@ Se faltar permissão, o processo **falha com instrução clara**. Não derruba n
 
 Somente `prisma migrate deploy` (nunca `migrate dev` nem seed).
 
-**Fonte de verdade (1.3.9+):** no **boot da API e do worker**, via `runBootMigrations` de `@sonder/database` (hidrata secret `database_url`, lock consultivo PostgreSQL, `migrate deploy`, verifica schema). Se o migrate falhar, o processo **sai com erro** e não aceita tráfego / não processa filas.
+**Fonte de verdade (1.3.10+):** no **boot da API e do worker**, via `runBootMigrations` de `@sonder/database` (hidrata secret `database_url`, lock consultivo PostgreSQL, `migrate deploy`, verifica tabelas **e** colunas críticas como `Receivable.externalId` / `Patient.externalCalendarEventId`). Se o migrate ou a verificação falhar, o processo **sai com erro** e não aceita tráfego / não processa filas. Nos logs: `boot.migrate.version`, `boot.migrate.start`, `boot.migrate.complete` (ou `boot.migrate.failed`).
 
 O serviço Swarm `migrate` (`sonder-clinic_migrate`, `bootstrap-cli.js`) permanece na stack como **pré-deploy opcional**: cria o database se faltar (`DATABASE_ADMIN_URL`) e aplica migrate antes do keep-alive. Útil no `deploy.sh` e na instalação limpa; **não** é necessário forçar `sonder-clinic_migrate` no Portainer só para schema — reiniciar/atualizar API (e worker) basta.
 
@@ -75,7 +75,7 @@ API e worker podem subir em paralelo, mas:
 
 Sintoma típico se o schema ficou atrás da imagem: Prisma `P2022` — colunas como `Receivable.externalId`, `Payable.provider`, `Patient.externalCalendarEventId` “does not exist”.
 
-**Preferido (1.3.9+):** atualizar/recriar os serviços **api** e **worker** com a imagem nova — o boot roda `prisma migrate deploy` sozinho.
+**Preferido (1.3.10+):** atualizar/recriar os serviços **api** e **worker** com a imagem nova — o boot roda `prisma migrate deploy` sozinho.
 
 ```bash
 docker service update --force sonder-clinic_api
@@ -104,7 +104,7 @@ Secrets necessários no serviço `migrate` (já definidos em `stack.production.y
 ```bash
 set -a && source .env && set +a
 # Use a MESMA tag que a API em produção, ex.:
-export API_IMAGE="${API_IMAGE:-ghcr.io/mond-day/sonder-clinic-api:1.3.9}"
+export API_IMAGE="${API_IMAGE:-ghcr.io/mond-day/sonder-clinic-api:1.3.10}"
 
 docker run --rm \
   --network digital_network \
@@ -130,7 +130,20 @@ WHERE table_schema = 'public'
 ORDER BY table_name, column_name;
 ```
 
-Esperado: `Patient.externalCalendarEventId`, `Payable.provider`, `Receivable.externalId`.
+Esperado: `Patient.externalCalendarEventId`, `Payable.provider`, `Receivable.externalId` (e `Payable.externalId`).
+
+### Fallback SQL one-shot (se ainda faltar coluna após 1.3.10)
+
+Se `_prisma_migrations` já marca a migration como aplicada mas a coluna não existe (histórico divergente), rode no Postgres:
+
+```sql
+ALTER TABLE "Receivable" ADD COLUMN IF NOT EXISTS "externalId" TEXT;
+ALTER TABLE "Payable" ADD COLUMN IF NOT EXISTS "externalId" TEXT;
+ALTER TABLE "Payable" ADD COLUMN IF NOT EXISTS "provider" "IntegrationProvider";
+ALTER TABLE "Patient" ADD COLUMN IF NOT EXISTS "externalCalendarEventId" TEXT;
+```
+
+A 1.3.10+ também tenta esse repair automaticamente no boot (`boot.migrate.columns_missing` → `schema.columns.repair.*`) e só sobe se as colunas existirem.
 
 Ou no container da API/migrate:
 

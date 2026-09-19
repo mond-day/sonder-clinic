@@ -11,7 +11,7 @@ Legenda: **GO** = pronto se configurado; **NO-GO** = bloqueia go-live; **PARTIAL
 | Secrets JWT / `ENCRYPTION_MASTER_KEY` | **NO-GO** até trocar defaults | Fail-fast em `NODE_ENV=production` recusa startup com defaults |
 | `DATABASE_URL` Postgres gerenciado | **NO-GO** | Não-localhost; backups e retenção obrigatórios |
 | HTTPS + Traefik / TLS | **NO-GO** | ADR 0002; redes `traefik_public` |
-| Migrations aplicadas (`db:deploy` / bootstrap) | **GO (fluxo)** | **1.3.9+:** migrate no boot de api/worker (fonte de verdade no Portainer). Serviço Swarm `migrate` + `deploy.sh` opcionais/pré-deploy. Nunca seed em prod |
+| Migrations aplicadas (`db:deploy` / bootstrap) | **GO (fluxo)** | **1.3.10+:** migrate no boot de api/worker com assert de colunas críticas (fonte de verdade no Portainer). Serviço Swarm `migrate` + `deploy.sh` opcionais/pré-deploy. Nunca seed em prod |
 | `COOKIE_SECURE=true` + HTTPS | **GO (stack)** | Fail-fast + `COOKIE_SECURE: "true"` no stack |
 | `WEB_URL` HTTPS público | **GO (stack)** | Sem fallback localhost; e-mails/convites usam `WEB_URL` |
 | Imagens obrigatórias (`API_IMAGE`/`WEB_IMAGE`/`WORKER_IMAGE`) | **GO (stack)** | Sem fallback `1.0.0`; preferir `sha-<commit>` |

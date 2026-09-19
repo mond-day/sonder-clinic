@@ -115,6 +115,12 @@ async function tick(): Promise<void> {
 async function main(): Promise<void> {
   hydrateDockerSecrets();
   assertWorkerProductionEnvironment();
+  console.info(JSON.stringify({
+    service: 'sonder-worker',
+    event: 'boot.start',
+    appVersion: process.env.APP_VERSION ?? process.env.npm_package_version ?? 'unknown',
+    node: process.version,
+  }));
   try {
     await runBootMigrations({ service: 'sonder-worker' });
   } catch (error) {
@@ -122,6 +128,7 @@ async function main(): Promise<void> {
     console.error(JSON.stringify({
       service: 'sonder-worker',
       event: 'boot.migrate.failed',
+      appVersion: process.env.APP_VERSION ?? process.env.npm_package_version ?? 'unknown',
       error: message,
     }));
     process.exit(error instanceof BootstrapError ? error.exitCode : 1);

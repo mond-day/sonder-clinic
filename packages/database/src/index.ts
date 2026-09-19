@@ -23,6 +23,8 @@ export {
   BootstrapError,
   applyMigrations,
   applyMigrationsWithLock,
+  assertMigrationsPresent,
+  assertRequiredColumns,
   hydrateBootstrapSecrets,
   runBootMigrations,
   runProductionBootstrap,
