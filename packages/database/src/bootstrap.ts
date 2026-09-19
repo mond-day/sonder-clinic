@@ -3,7 +3,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Client } from 'pg';
 
+/** Lock para CREATE DATABASE (serviço migrate / bootstrap completo). */
 const ADVISORY_LOCK_KEY = 87_214_601;
+/** Lock para `prisma migrate deploy` (API/worker boot + serviço migrate). */
+const MIGRATE_ADVISORY_LOCK_KEY = 87_214_602;
 const DEFAULT_WAIT_MS = 60_000;
 const REQUIRED_TABLES = ['_prisma_migrations', 'Organization', 'User', 'SystemInstallation'];
 
@@ -280,6 +283,83 @@ export async function assertSchemaReady(databaseUrl: string): Promise<void> {
   log('schema.ready', { tables: REQUIRED_TABLES });
 }
 
+/**
+ * Aplica `prisma migrate deploy` com lock consultivo (seguro com réplicas API/worker).
+ * Não cria database nem roda seed — só migrate + verificação de schema.
+ */
+export async function applyMigrationsWithLock(
+  databaseUrl: string,
+  root = findRepoRoot(),
+  waitMs = DEFAULT_WAIT_MS,
+): Promise<void> {
+  await waitForPostgres(databaseUrl, waitMs);
+  const client = new Client({ connectionString: databaseUrl, connectionTimeoutMillis: 5_000 });
+  await client.connect();
+  try {
+    log('migrate.lock.wait');
+    await client.query('SELECT pg_advisory_lock($1)', [MIGRATE_ADVISORY_LOCK_KEY]);
+    log('migrate.lock.acquired');
+    try {
+      applyMigrations(databaseUrl, root);
+      await assertSchemaReady(databaseUrl);
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [MIGRATE_ADVISORY_LOCK_KEY]).catch(() => undefined);
+      log('migrate.lock.released');
+    }
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+export type BootMigrateOptions = {
+  env?: NodeJS.ProcessEnv;
+  /** Nome do serviço nos logs estruturados. */
+  service?: string;
+  root?: string;
+  /** Diretório de Docker secrets (default `/run/secrets`). */
+  secretsDir?: string;
+  /** Timeout para aguardar Postgres (ms). */
+  postgresWaitMs?: number;
+};
+
+/**
+ * Hook de boot (API/worker): hidrata secrets Docker, aplica migrate deploy e falha o processo se der erro.
+ * Idempotente; multi-réplica via advisory lock. Não executa seed nem `migrate dev`.
+ */
+export async function runBootMigrations(options: BootMigrateOptions = {}): Promise<void> {
+  const env = options.env ?? process.env;
+  const service = options.service ?? 'sonder-db-bootstrap';
+  const bootLog = (event: string, extra: Record<string, unknown> = {}): void => {
+    console.info(JSON.stringify({ service, event, ...extra }));
+  };
+
+  hydrateBootstrapSecrets(env, options.secretsDir);
+  const databaseUrl = env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    throw new BootstrapError(
+      'DATABASE_URL ausente. Defina a URL do database da aplicação '
+      + '(env ou Docker secret `database_url`).',
+    );
+  }
+
+  const parsed = parseDatabaseUrl(databaseUrl);
+  bootLog('boot.migrate.start', { database: parsed.name, host: parsed.host });
+
+  try {
+    await applyMigrationsWithLock(
+      databaseUrl,
+      options.root ?? findRepoRoot(),
+      options.postgresWaitMs ?? DEFAULT_WAIT_MS,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'erro desconhecido';
+    console.error(JSON.stringify({ service, event: 'boot.migrate.failed', error: message }));
+    throw error;
+  }
+
+  bootLog('boot.migrate.complete', { database: parsed.name });
+}
+
 export async function runProductionBootstrap(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   hydrateBootstrapSecrets(env);
   const databaseUrl = env.DATABASE_URL?.trim();
@@ -295,8 +375,7 @@ export async function runProductionBootstrap(env: NodeJS.ProcessEnv = process.en
   log('start', { database: parsed.name, host: parsed.host, hasAdminUrl: Boolean(adminUrl) });
 
   await ensureDatabaseExists({ databaseUrl, adminUrl });
-  applyMigrations(databaseUrl);
-  await assertSchemaReady(databaseUrl);
+  await applyMigrationsWithLock(databaseUrl);
 
   log('complete', { database: parsed.name });
 

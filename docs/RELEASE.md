@@ -1,8 +1,8 @@
 # Release e versionamento
 
-Versão atual do monorepo: **1.3.8** (semver `MAJOR.MINOR.PATCH`).
+Versão atual do monorepo: **1.3.9** (semver `MAJOR.MINOR.PATCH`).
 
-**Padrão de tag: `v1.3.8`.** Não use `v.1.3.8` (ponto extra após o `v`) — o GitHub ignora esse formato.
+**Padrão de tag: `v1.3.9`.** Não use `v.1.3.9` (ponto extra após o `v`) — o GitHub ignora esse formato.
 
 ## Como lançar (v1.2.3)
 

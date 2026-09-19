@@ -1,3 +1,4 @@
+import { BootstrapError, runBootMigrations } from '@sonder/database';
 import { startObservability, hydrateDockerSecrets } from '@sonder/observability';
 import { assertWorkerProductionEnvironment } from './production-env';
 import { materializeExpiredAnamneses } from './anamnesis-expire';
@@ -114,6 +115,17 @@ async function tick(): Promise<void> {
 async function main(): Promise<void> {
   hydrateDockerSecrets();
   assertWorkerProductionEnvironment();
+  try {
+    await runBootMigrations({ service: 'sonder-worker' });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'erro desconhecido';
+    console.error(JSON.stringify({
+      service: 'sonder-worker',
+      event: 'boot.migrate.failed',
+      error: message,
+    }));
+    process.exit(error instanceof BootstrapError ? error.exitCode : 1);
+  }
   await startObservability('sonder-worker');
   console.info(JSON.stringify({
     service: 'sonder-worker',

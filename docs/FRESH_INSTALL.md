@@ -9,7 +9,7 @@ Passo a passo de lançamento: `docs/RELEASE.md`.
 1. O GitHub roda os testes essenciais (incluindo instalação limpa).
 2. Publica as imagens no GHCR.
 3. Se a VPS estiver ligada ao GitHub (`SWARM_HOST` + SSH), o deploy roda sozinho.
-4. O serviço `migrate` cria o database se faltar e aplica `prisma migrate deploy`.
+4. API e worker aplicam `prisma migrate deploy` no boot (fonte de verdade no Portainer). O serviço `migrate` da stack pode criar o database na instalação inicial e permanece opcional no pré-deploy.
 5. Você abre o domínio do frontend:
    - **primeira vez** → `/setup` (nome da clínica, primeiro administrador, senha)
    - **já instalado** → `/login`
@@ -43,34 +43,48 @@ Se faltar permissão, o processo **falha com instrução clara**. Não derruba n
 
 ## Quando as migrations são executadas?
 
-Somente `prisma migrate deploy` (nunca `migrate dev` nem seed), no serviço Swarm `migrate` (`sonder-clinic_migrate`), via `node packages/database/dist/bootstrap-cli.js`.
+Somente `prisma migrate deploy` (nunca `migrate dev` nem seed).
 
-**Automático?** Só no fluxo oficial:
+**Fonte de verdade (1.3.9+):** no **boot da API e do worker**, via `runBootMigrations` de `@sonder/database` (hidrata secret `database_url`, lock consultivo PostgreSQL, `migrate deploy`, verifica schema). Se o migrate falhar, o processo **sai com erro** e não aceita tráfego / não processa filas.
+
+O serviço Swarm `migrate` (`sonder-clinic_migrate`, `bootstrap-cli.js`) permanece na stack como **pré-deploy opcional**: cria o database se faltar (`DATABASE_ADMIN_URL`) e aplica migrate antes do keep-alive. Útil no `deploy.sh` e na instalação limpa; **não** é necessário forçar `sonder-clinic_migrate` no Portainer só para schema — reiniciar/atualizar API (e worker) basta.
+
+**Automático?**
 
 | Como você atualiza | Migrations rodam? |
 |--------------------|-------------------|
-| Tag GitHub → CI → `deploy.sh` na VPS | **Sim** — `deploy.sh` faz `docker stack deploy` e espera o `migrate` concluir |
+| Tag GitHub → CI → `deploy.sh` na VPS | **Sim** — `migrate` one-shot + **boot** de api/worker |
 | `./infra/swarm/scripts/deploy.sh` manual na VPS | **Sim** — idem |
-| Portainer só troca imagem de `api` / `worker` / `web` | **Não** — o serviço `migrate` não reinicia; schema fica atrasado |
-| Portainer “Update stack” sem mudar a definição/`API_IMAGE` do `migrate` | **Não** (ou só se o task `migrate` for recriado de fato) |
+| Portainer só troca imagem de `api` / `worker` / `web` | **Sim** — api e worker aplicam migrate no startup |
+| Portainer “Update stack” | **Sim** — no boot dos containers api/worker |
 
-API e worker **não** aplicam migrations no boot (de propósito — migrate no start da API é perigoso com réplicas).
+Multi-réplica: `pg_advisory_lock` serializa o deploy; demais réplicas esperam e validam o schema (idempotente).
 
-`deploy.sh` recusa `WEB_URL` localhost/HTTP e imagens não definidas. Depois do `docker stack deploy`, espera o serviço `migrate` registrar bootstrap completo (`"event":"complete"` / `"event":"keep_alive"`). Só então o release é considerado concluído.
+`deploy.sh` recusa `WEB_URL` localhost/HTTP e imagens não definidas. Depois do `docker stack deploy`, espera o serviço `migrate` registrar bootstrap completo (`"event":"complete"` / `"event":"keep_alive"`) quando esse serviço existir. Com boot migrate, o release também fica saudável assim que api/worker passam no readiness com schema atualizado.
 
-Com `BOOTSTRAP_KEEP_ALIVE=true`, o task `migrate` fica Running após aplicar. Para **reaplicar** migrations (nova versão de schema), o task precisa reiniciar — tipicamente nova `API_IMAGE` no serviço `migrate` + `docker service update --force sonder-clinic_migrate`, ou um one-shot (abaixo).
+Com `BOOTSTRAP_KEEP_ALIVE=true`, o task `migrate` fica Running após aplicar. Reiniciar esse serviço continua opcional (pré-aquecimento / CREATE DATABASE).
 
 API e worker podem subir em paralelo, mas:
 
 - Traefik só envia tráfego à API com `/api/v1/health/ready` (PostgreSQL + Redis + storage)
 - o healthcheck Docker da API permanece em `/api/v1/health` (liveness), para um Postgres lento não virar restart loop
 - o worker recusa startup em produção sem `DATABASE_URL`, Redis e storage remoto
+- se migrate no boot falhar, api/worker reiniciam (fail-fast) até o schema estar aplicável
 
 ### Aplicar migrate agora (VPS / Portainer)
 
 Sintoma típico se o schema ficou atrás da imagem: Prisma `P2022` — colunas como `Receivable.externalId`, `Payable.provider`, `Patient.externalCalendarEventId` “does not exist”.
 
-**Opção A — reiniciar o serviço one-shot da stack** (usa a mesma `API_IMAGE` e secrets `database_url` + `database_admin_url`):
+**Preferido (1.3.9+):** atualizar/recriar os serviços **api** e **worker** com a imagem nova — o boot roda `prisma migrate deploy` sozinho.
+
+```bash
+docker service update --force sonder-clinic_api
+docker service update --force sonder-clinic_worker
+docker service logs --tail 100 -f sonder-clinic_api
+# Procure: "boot.migrate.complete" (sucesso) ou "boot.migrate.failed"
+```
+
+**Opção A — serviço `migrate` da stack** (ainda válido; CREATE DATABASE + migrate):
 
 ```bash
 # Confirme o nome do stack/serviço (padrão do repo):
@@ -85,12 +99,12 @@ docker service logs --tail 100 -f sonder-clinic_migrate
 
 Secrets necessários no serviço `migrate` (já definidos em `stack.production.yml`): `database_url` (obrigatório) e `database_admin_url` (pode ser vazio se o database já existe).
 
-**Opção B — one-shot com a imagem da API** (útil se o serviço `migrate` não existir ou Portainer só atualizou api/worker). No host da VPS, com `.env` de produção:
+**Opção B — one-shot com a imagem da API** (útil se o serviço `migrate` não existir). No host da VPS, com `.env` de produção:
 
 ```bash
 set -a && source .env && set +a
 # Use a MESMA tag que a API em produção, ex.:
-export API_IMAGE="${API_IMAGE:-ghcr.io/mond-day/sonder-clinic-api:1.3.8}"
+export API_IMAGE="${API_IMAGE:-ghcr.io/mond-day/sonder-clinic-api:1.3.9}"
 
 docker run --rm \
   --network digital_network \
@@ -130,12 +144,13 @@ docker exec -it $(docker ps -q -f name=sonder-clinic_api) \
 
 ## O que ocorre se a migration falhar?
 
-- o serviço `migrate` reinicia com `on-failure` até o limite
-- `deploy.sh` marca o release como falho
+- API e worker **falham o boot** (`boot.migrate.failed`) e reiniciam até o schema ser aplicável
+- o serviço `migrate` (se usado) reinicia com `on-failure` até o limite
+- `deploy.sh` marca o release como falho se o one-shot `migrate` não concluir
 - **não** rode seed, reset ou `DROP DATABASE`
-- API nova não deve receber tráfego (readiness falha sem schema)
+- API nova não deve receber tráfego (processo morto / readiness falha sem schema)
 
-Na VPS, o diagnóstico é `prisma migrate status` no container da API/migrate. `prisma migrate resolve` só com intervenção consciente.
+Na VPS, o diagnóstico é `prisma migrate status` no container da API. `prisma migrate resolve` só com intervenção consciente.
 
 ## Como saber se está atualizado?
 

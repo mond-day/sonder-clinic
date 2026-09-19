@@ -19,3 +19,12 @@ export {
 } from './core-defaults.ts';
 export { ODONTOGRAM_CONDITIONS, PERMISSION_CODES } from './permissions.ts';
 export { INSTALLATION_SINGLETON_ID } from './installation.ts';
+export {
+  BootstrapError,
+  applyMigrations,
+  applyMigrationsWithLock,
+  hydrateBootstrapSecrets,
+  runBootMigrations,
+  runProductionBootstrap,
+} from './bootstrap.ts';
+export type { BootMigrateOptions } from './bootstrap.ts';

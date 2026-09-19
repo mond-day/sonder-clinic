@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import { BootstrapError, runBootMigrations } from '@sonder/database';
 import { startObservability, hydrateDockerSecrets, nestLoggerLevels } from '@sonder/observability';
 import { AppModule } from './app.module';
 import { assertProductionEnvironment, isSwaggerEnabled } from './common/production-env';
@@ -19,6 +20,18 @@ if (!(BigInt.prototype as unknown as { toJSON?: () => number }).toJSON) {
 async function bootstrap(): Promise<void> {
   hydrateDockerSecrets();
   assertProductionEnvironment();
+  try {
+    await runBootMigrations({ service: 'sonder-api' });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'erro desconhecido';
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      service: 'sonder-api',
+      event: 'boot.migrate.failed',
+      error: message,
+    }));
+    process.exit(error instanceof BootstrapError ? error.exitCode : 1);
+  }
   await startObservability('sonder-api');
   const app = await NestFactory.create(AppModule, {
     rawBody: true,

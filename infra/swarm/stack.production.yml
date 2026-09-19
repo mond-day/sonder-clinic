@@ -7,6 +7,8 @@ version: "3.9"
 # DATABASE_URL e INITIAL_SETUP_TOKEN entram como Docker secrets (não em environment).
 
 services:
+  # Opcional: CREATE DATABASE + migrate pré-deploy. Fonte de verdade no Portainer:
+  # api e worker aplicam migrate deploy no boot (1.3.9+).
   migrate:
     image: ${API_IMAGE:?Defina API_IMAGE}
     command: ["node", "packages/database/dist/bootstrap-cli.js"]
@@ -16,7 +18,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BOOTSTRAP_KEEP_ALIVE: "true"
       # Muda a cada release → Swarm recria o task migrate no "Update the stack" do Portainer.
-      APP_VERSION: ${APP_VERSION:-1.3.8}
+      APP_VERSION: ${APP_VERSION:-1.3.9}
     secrets:
       - database_url
       - database_admin_url
@@ -65,7 +67,7 @@ services:
       API_PORT: "4000"
       TZ: ${TZ:-America/Cuiaba}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      APP_VERSION: ${APP_VERSION:-1.3.8}
+      APP_VERSION: ${APP_VERSION:-1.3.9}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       REDIS_URL: ${REDIS_URL:?Defina REDIS_URL}
@@ -144,7 +146,7 @@ services:
       NODE_ENV: production
       TZ: ${TZ:-America/Cuiaba}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      APP_VERSION: ${APP_VERSION:-1.3.8}
+      APP_VERSION: ${APP_VERSION:-1.3.9}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       REDIS_URL: ${REDIS_URL:?Defina REDIS_URL}

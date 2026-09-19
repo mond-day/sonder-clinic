@@ -7,6 +7,7 @@ import {
   looksLocalHost,
   parseDatabaseUrl,
   redactUrl,
+  runBootMigrations,
   sanitizePgIdentifier,
 } from './bootstrap';
 
@@ -54,5 +55,19 @@ describe('bootstrap helpers', () => {
     const preset: NodeJS.ProcessEnv = { DATABASE_URL: 'postgresql://env@db/sonder_clinic' };
     hydrateBootstrapSecrets(preset, dir);
     expect(preset.DATABASE_URL).toBe('postgresql://env@db/sonder_clinic');
+  });
+
+  it('runBootMigrations falha rápido sem DATABASE_URL', async () => {
+    await expect(runBootMigrations({ env: {}, service: 'test-boot' })).rejects.toThrow(/DATABASE_URL/);
+  });
+
+  it('runBootMigrations hidrata secret database_url antes de conectar', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sonder-boot-migrate-'));
+    writeFileSync(join(dir, 'database_url'), 'postgresql://from_secret@127.0.0.1:1/sonder_clinic\n');
+    const env: NodeJS.ProcessEnv = {};
+    await expect(
+      runBootMigrations({ env, service: 'test-boot', secretsDir: dir, postgresWaitMs: 1_500 }),
+    ).rejects.toThrow(/PostgreSQL indisponível/);
+    expect(env.DATABASE_URL).toBe('postgresql://from_secret@127.0.0.1:1/sonder_clinic');
   });
 });

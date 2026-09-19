@@ -41,7 +41,7 @@ Estados: `GO` | `PARTIAL` | `NO-GO` | `DISABLED` | `LEGACY` | `FUTURE`
 - **Nibo ↔ Financeiro (A50):** pull manual + pull periódico worker (`finance.nibo-pull.requested`); create/update por `externalId`; categorias filtram a receber e a pagar; centros de custo filtram a pagar; logs de tick/skip no worker; push create/update schedule, PAY (baixa) e DELETE (cancel Payable); UI com `accountId`, lastNiboImport e feedback de sync
 - **Paciente → Google (A51):** cadastro enfileira `patient.calendar-sync.requested`; evento all-day + `Patient.externalCalendarEventId`; soft-fail no outbox
 - **Google personal pull (A38):** pull-sync + overlay; oauth-status expõe `redirectUri` + `mock`/`mockEnvPresent`; Client ID/Secret na UI (1.3.5+); parse MOCK robusto + diagnóstico (1.3.6); fail-fast MOCK só se `true` (1.3.7); save vs redirect desacoplados + reveal secret (1.3.8)
-- **Produção MOCK:** `stack.production.yml` defaulta `GOOGLE_CALENDAR_MOCK`/`NIBO_MOCK`/`ABACATEPAY_MOCK`/`EVOLUTION_MOCK`/`CHATWOOT_MOCK=false`; fail-fast + `deploy.sh` se Google/Nibo MOCK **ligado**; ausência em prod = off (1.3.7+); migrate force recreate no `deploy.sh` + `APP_VERSION` no serviço migrate (1.3.8)
+- **Produção MOCK:** `stack.production.yml` defaulta `GOOGLE_CALENDAR_MOCK`/`NIBO_MOCK`/`ABACATEPAY_MOCK`/`EVOLUTION_MOCK`/`CHATWOOT_MOCK=false`; fail-fast + `deploy.sh` se Google/Nibo MOCK **ligado**; ausência em prod = off (1.3.7+); migrate force recreate no `deploy.sh` + `APP_VERSION` no serviço migrate (1.3.8); **migrate no boot** de api/worker (1.3.9)
 - **Nibo import route (1.3.6):** canônico `POST /integrations/nibo/:id/import` (+ alias legado)
 - **Migrations:** `20260917120000_nibo_external_ids`; `20260917130000_patient_calendar_event`
 
