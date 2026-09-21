@@ -42,12 +42,21 @@ import {
 import {
   NIBO_FALLBACK_PATIENT_NAME,
   NIBO_FALLBACK_PATIENT_PHONE,
+  NIBO_IMPORT_PATIENT_PHONE,
+  decideNiboPatientLink,
   matchesNiboFilters,
+  niboPayablePaymentMarker,
+  niboPaymentIdempotencyKey,
+  niboSettlementAmount,
+  niboSettlementPaidAt,
   normalizeDocument,
+  normalizePatientNameKey,
   payableFieldsFromNibo,
   readNiboIdList,
   receivableFieldsFromNibo,
+  shouldCreateNiboSettlement,
 } from './nibo-import.utils';
+import type { NiboScheduleItem } from '../../integrations/nibo-schedules';
 
 export type PersonalCalendarWarning = {
   type: 'personal_calendar';
@@ -405,7 +414,7 @@ export class IntegrationsService {
     const debitItems = debitResult.items.filter((item) => matchesNiboFilters(item, debitFilters));
 
     const fallbackPatientId = await this.ensureNiboFallbackPatient(organizationId, connection.clinicId);
-    const patientsByCpf = await this.niboPatientsByCpf(organizationId);
+    const { patientsByCpf, patientsByName } = await this.niboPatientIndexes(organizationId);
 
     let receivablesCreated = 0;
     let receivablesUpdated = 0;
@@ -413,6 +422,8 @@ export class IntegrationsService {
     let payablesCreated = 0;
     let payablesUpdated = 0;
     let payablesSkipped = 0;
+    let patientsCreated = 0;
+    let settlementsCreated = 0;
 
     for (const item of creditItems) {
       const fields = receivableFieldsFromNibo(item);
@@ -437,21 +448,31 @@ export class IntegrationsService {
           },
         });
         receivablesUpdated += 1;
+        if (await this.ensureNiboReceivableSettlement(existing.id, item)) settlementsCreated += 1;
         continue;
       }
-      const doc = normalizeDocument(item.stakeholderDocument);
-      const patientId = (doc && patientsByCpf.get(doc)) || fallbackPatientId;
-      await prisma.receivable.create({
+      const resolved = await this.resolveNiboPatientId({
+        organizationId,
+        clinicId: connection.clinicId,
+        item,
+        fallbackPatientId,
+        patientsByCpf,
+        patientsByName,
+      });
+      if (resolved.created) patientsCreated += 1;
+      const created = await prisma.receivable.create({
         data: {
           organizationId,
           clinicId: connection.clinicId,
-          patientId,
+          patientId: resolved.patientId,
           ...fields,
           provider: 'NIBO',
           externalId: item.scheduleId,
         },
+        select: { id: true },
       });
       receivablesCreated += 1;
+      if (await this.ensureNiboReceivableSettlement(created.id, item)) settlementsCreated += 1;
     }
 
     for (const item of debitItems) {
@@ -477,9 +498,10 @@ export class IntegrationsService {
           },
         });
         payablesUpdated += 1;
+        if (await this.ensureNiboPayableSettlement(existing.id, item)) settlementsCreated += 1;
         continue;
       }
-      await prisma.payable.create({
+      const created = await prisma.payable.create({
         data: {
           organizationId,
           clinicId: connection.clinicId,
@@ -487,8 +509,10 @@ export class IntegrationsService {
           provider: 'NIBO',
           externalId: item.scheduleId,
         },
+        select: { id: true },
       });
       payablesCreated += 1;
+      if (await this.ensureNiboPayableSettlement(created.id, item)) settlementsCreated += 1;
     }
 
     await prisma.integrationConnection.update({
@@ -506,6 +530,8 @@ export class IntegrationsService {
             payablesCreated,
             payablesUpdated,
             payablesSkipped,
+            patientsCreated,
+            settlementsCreated,
             creditFetched: creditResult.items.length,
             debitFetched: debitResult.items.length,
           },
@@ -547,6 +573,8 @@ export class IntegrationsService {
       payablesCreated,
       payablesUpdated,
       payablesSkipped,
+      patientsCreated,
+      settlementsCreated,
       creditFetched: creditResult.items.length,
       debitFetched: debitResult.items.length,
       creditMatchedFilters: creditItems.length,
@@ -554,6 +582,8 @@ export class IntegrationsService {
       message: [
         `Sincronização Nibo→Sonder: ${receivablesCreated} recebível(is) criado(s), ${receivablesUpdated} atualizado(s);`,
         `${payablesCreated} despesa(s) criada(s), ${payablesUpdated} atualizada(s)`,
+        patientsCreated ? `· ${patientsCreated} paciente(s) criado(s) a partir do contato Nibo` : '',
+        settlementsCreated ? `· ${settlementsCreated} baixa(s) no fluxo de caixa` : '',
         receivablesSkipped + payablesSkipped
           ? `(${receivablesSkipped + payablesSkipped} cancelado(s) locais preservados).`
           : '.',
@@ -563,7 +593,7 @@ export class IntegrationsService {
           ? `Filtro de ${categoryIds.length} categoria(s) em recebíveis e despesas.`
           : 'Sem filtro de categoria.',
         costCenterIds.length
-          ? `Filtro adicional de ${costCenterIds.length} centro(s) de custo nas despesas.`
+          ? `Filtro de ${costCenterIds.length} centro(s) de custo nas despesas (itens sem centro de custo no Nibo continuam importados).`
           : '',
         filterMiss
           ? `Atenção: filtros não casaram com os IDs do Nibo. Exemplos de categoryId no Nibo (crédito): ${sampleCreditCategories.join(', ') || 'nenhum'}; (débito): ${sampleDebitCategories.join(', ') || 'nenhum'}. Revise as categorias salvas na integração.`
@@ -573,18 +603,131 @@ export class IntegrationsService {
     };
   }
 
-  private async niboPatientsByCpf(organizationId: string): Promise<Map<string, string>> {
+  private async niboPatientIndexes(organizationId: string): Promise<{
+    patientsByCpf: Map<string, string>;
+    patientsByName: Map<string, string>;
+  }> {
     const patients = await prisma.patient.findMany({
-      where: { organizationId, status: { not: 'ARCHIVED' }, cpf: { not: null } },
-      select: { id: true, cpf: true },
-      take: 5000,
+      where: { organizationId, status: { not: 'ARCHIVED' } },
+      select: { id: true, cpf: true, fullName: true },
+      take: 8000,
     });
-    const map = new Map<string, string>();
+    const patientsByCpf = new Map<string, string>();
+    const patientsByName = new Map<string, string>();
     for (const patient of patients) {
       const doc = normalizeDocument(patient.cpf);
-      if (doc) map.set(doc, patient.id);
+      if (doc) patientsByCpf.set(doc, patient.id);
+      const nameKey = normalizePatientNameKey(patient.fullName);
+      if (nameKey && nameKey !== normalizePatientNameKey(NIBO_FALLBACK_PATIENT_NAME) && !patientsByName.has(nameKey)) {
+        patientsByName.set(nameKey, patient.id);
+      }
     }
-    return map;
+    return { patientsByCpf, patientsByName };
+  }
+
+  private async resolveNiboPatientId(input: {
+    organizationId: string;
+    clinicId: string;
+    item: NiboScheduleItem;
+    fallbackPatientId: string;
+    patientsByCpf: Map<string, string>;
+    patientsByName: Map<string, string>;
+  }): Promise<{ patientId: string; created: boolean }> {
+    const decision = decideNiboPatientLink({
+      stakeholderName: input.item.stakeholderName,
+      stakeholderDocument: input.item.stakeholderDocument,
+      patientsByCpf: input.patientsByCpf,
+      patientsByName: input.patientsByName,
+    });
+    if (decision.action === 'use_existing') {
+      await prisma.patientClinic.upsert({
+        where: { patientId_clinicId: { patientId: decision.patientId, clinicId: input.clinicId } },
+        create: { patientId: decision.patientId, clinicId: input.clinicId, status: 'ACTIVE' },
+        update: { status: 'ACTIVE' },
+      });
+      return { patientId: decision.patientId, created: false };
+    }
+    if (decision.action === 'fallback') {
+      return { patientId: input.fallbackPatientId, created: false };
+    }
+
+    try {
+      const created = await prisma.patient.create({
+        data: {
+          organizationId: input.organizationId,
+          fullName: decision.fullName,
+          cpf: decision.cpf,
+          primaryPhone: NIBO_IMPORT_PATIENT_PHONE,
+          status: 'ACTIVE',
+          clinics: { create: { clinicId: input.clinicId, status: 'ACTIVE' } },
+        },
+        select: { id: true, fullName: true, cpf: true },
+      });
+      if (created.cpf) input.patientsByCpf.set(normalizeDocument(created.cpf), created.id);
+      const nameKey = normalizePatientNameKey(created.fullName);
+      if (nameKey) input.patientsByName.set(nameKey, created.id);
+      return { patientId: created.id, created: true };
+    } catch {
+      // Concorrência em CPF único: reutiliza o existente.
+      if (decision.cpf) {
+        const existing = await prisma.patient.findFirst({
+          where: { organizationId: input.organizationId, cpf: decision.cpf, status: { not: 'ARCHIVED' } },
+          select: { id: true },
+        });
+        if (existing) {
+          input.patientsByCpf.set(decision.cpf, existing.id);
+          await prisma.patientClinic.upsert({
+            where: { patientId_clinicId: { patientId: existing.id, clinicId: input.clinicId } },
+            create: { patientId: existing.id, clinicId: input.clinicId, status: 'ACTIVE' },
+            update: { status: 'ACTIVE' },
+          });
+          return { patientId: existing.id, created: false };
+        }
+      }
+      return { patientId: input.fallbackPatientId, created: false };
+    }
+  }
+
+  /** Materializa Payment para o fluxo de caixa quando o schedule Nibo está pago/parcial. */
+  private async ensureNiboReceivableSettlement(receivableId: string, item: NiboScheduleItem): Promise<boolean> {
+    if (!shouldCreateNiboSettlement(item)) return false;
+    const key = niboPaymentIdempotencyKey(item.scheduleId);
+    const existing = await prisma.payment.findUnique({ where: { idempotencyKey: key }, select: { id: true } });
+    if (existing) return false;
+    await prisma.payment.create({
+      data: {
+        receivableId,
+        amount: niboSettlementAmount(item),
+        method: 'NIBO',
+        provider: 'NIBO',
+        externalId: item.scheduleId,
+        idempotencyKey: key,
+        status: 'CONFIRMED',
+        paidAt: niboSettlementPaidAt(item),
+      },
+    });
+    return true;
+  }
+
+  private async ensureNiboPayableSettlement(payableId: string, item: NiboScheduleItem): Promise<boolean> {
+    if (!shouldCreateNiboSettlement(item)) return false;
+    const marker = niboPayablePaymentMarker(item.scheduleId);
+    const existing = await prisma.payablePayment.findFirst({
+      where: { payableId, notes: { contains: marker } },
+      select: { id: true },
+    });
+    if (existing) return false;
+    await prisma.payablePayment.create({
+      data: {
+        payableId,
+        amount: niboSettlementAmount(item),
+        method: 'NIBO',
+        notes: `Baixa importada do Nibo (${marker})`,
+        status: 'CONFIRMED',
+        paidAt: niboSettlementPaidAt(item),
+      },
+    });
+    return true;
   }
 
   private async ensureNiboFallbackPatient(organizationId: string, clinicId: string): Promise<string> {
@@ -832,7 +975,7 @@ export class IntegrationsService {
       connectionId,
       authorizeUrl,
       redirectUri: oauth.redirectUri,
-      message: `Abra authorizeUrl para conceder acesso. Redirect URI (cole no Google Cloud Console): ${oauth.redirectUri}`,
+      message: `Redirecione o usuário para authorizeUrl (mesma aba). Redirect URI (cole no Google Cloud Console): ${oauth.redirectUri}`,
     };
   }
 

@@ -7,6 +7,7 @@ export type DuplicateReason =
   | 'SAME_PASSPORT'
   | 'SAME_PHONE'
   | 'SAME_EMAIL'
+  | 'SAME_NAME'
   | 'SAME_NAME_BIRTHDATE'
   | 'SIMILAR_NAME_BIRTHDATE'
   | 'SIMILAR_NAME_PHONE';
@@ -31,6 +32,7 @@ const REASON_SCORE: Record<DuplicateReason, number> = {
   SAME_PASSPORT: 100,
   SAME_PHONE: 72,
   SAME_EMAIL: 68,
+  SAME_NAME: 62,
   SAME_NAME_BIRTHDATE: 78,
   SIMILAR_NAME_BIRTHDATE: 52,
   SIMILAR_NAME_PHONE: 55,
@@ -107,6 +109,7 @@ function detectReasons(a: PatientRow, b: PatientRow): DuplicateReason[] {
 
   if (exactName && sameBirth) reasons.push('SAME_NAME_BIRTHDATE');
   else if (similar && sameBirth) reasons.push('SIMILAR_NAME_BIRTHDATE');
+  else if (exactName && nameA.length >= 5) reasons.push('SAME_NAME');
 
   if (similar && samePhone && !exactName) reasons.push('SIMILAR_NAME_PHONE');
 

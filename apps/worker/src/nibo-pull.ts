@@ -10,10 +10,27 @@ import {
   readNiboApiKey,
   readNiboIdList,
 } from './nibo-sync';
+import {
+  NIBO_FALLBACK_PATIENT_NAME,
+  NIBO_FALLBACK_PATIENT_PHONE,
+  NIBO_IMPORT_PATIENT_PHONE,
+  amountString,
+  buildPayableDescription,
+  buildReceivableDescription,
+  decideNiboPatientLink,
+  dueDateOnly,
+  matchesFilters,
+  niboPayablePaymentMarker,
+  niboPaymentIdempotencyKey,
+  niboSettlementAmount,
+  niboSettlementPaidAt,
+  normalizeDocument,
+  normalizePatientNameKey,
+  scheduleStatus,
+  shouldCreateNiboSettlement,
+} from './nibo-import.utils';
 
 const NIBO_PULL_EVENT = 'finance.nibo-pull.requested';
-const FALLBACK_PATIENT_NAME = 'Importação Nibo (sem paciente)';
-const FALLBACK_PATIENT_PHONE = '00000000000';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 5;
 
@@ -168,44 +185,6 @@ async function fetchSchedules(apiKey: string, kind: 'credit' | 'debit'): Promise
   return items;
 }
 
-function matchesFilters(
-  item: ScheduleItem,
-  filters: { categoryIds: string[]; costCenterIds: string[] },
-): boolean {
-  if (filters.categoryIds.length) {
-    const categoryId = (item.categoryId ?? '').trim().toLowerCase();
-    if (!categoryId || !filters.categoryIds.includes(categoryId)) return false;
-  }
-  if (filters.costCenterIds.length) {
-    const costCenterId = (item.costCenterId ?? '').trim().toLowerCase();
-    if (!costCenterId || !filters.costCenterIds.includes(costCenterId)) return false;
-  }
-  return true;
-}
-
-function scheduleStatus(item: ScheduleItem): 'OPEN' | 'PARTIALLY_PAID' | 'PAID' {
-  if (item.isPaid || (item.value > 0 && item.paidValue >= item.value)) return 'PAID';
-  if (item.paidValue > 0) return 'PARTIALLY_PAID';
-  return 'OPEN';
-}
-
-function amountString(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return '0.00';
-  return value.toFixed(2);
-}
-
-function dueDateOnly(isoOrDate: string): string {
-  const trimmed = isoOrDate.trim();
-  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
-  const parsed = new Date(trimmed);
-  if (!Number.isFinite(parsed.getTime())) return new Date().toISOString().slice(0, 10);
-  return parsed.toISOString().slice(0, 10);
-}
-
-function normalizeDocument(value: string | null | undefined): string {
-  return (value ?? '').replace(/\D/g, '');
-}
-
 export type NiboPullEnqueueResult = {
   checked: number;
   enqueued: number;
@@ -342,7 +321,7 @@ async function ensureFallbackPatient(organizationId: string, clinicId: string): 
   const existing = await prisma.patient.findFirst({
     where: {
       organizationId,
-      fullName: FALLBACK_PATIENT_NAME,
+      fullName: NIBO_FALLBACK_PATIENT_NAME,
       status: { not: 'ARCHIVED' },
     },
     select: { id: true },
@@ -358,14 +337,130 @@ async function ensureFallbackPatient(organizationId: string, clinicId: string): 
   const created = await prisma.patient.create({
     data: {
       organizationId,
-      fullName: FALLBACK_PATIENT_NAME,
-      primaryPhone: FALLBACK_PATIENT_PHONE,
+      fullName: NIBO_FALLBACK_PATIENT_NAME,
+      primaryPhone: NIBO_FALLBACK_PATIENT_PHONE,
       status: 'ACTIVE',
       clinics: { create: { clinicId, status: 'ACTIVE' } },
     },
     select: { id: true },
   });
   return created.id;
+}
+
+async function loadPatientIndexes(organizationId: string) {
+  const patients = await prisma.patient.findMany({
+    where: { organizationId, status: { not: 'ARCHIVED' } },
+    select: { id: true, cpf: true, fullName: true },
+    take: 8000,
+  });
+  const patientsByCpf = new Map<string, string>();
+  const patientsByName = new Map<string, string>();
+  for (const patient of patients) {
+    const doc = normalizeDocument(patient.cpf);
+    if (doc) patientsByCpf.set(doc, patient.id);
+    const nameKey = normalizePatientNameKey(patient.fullName);
+    if (nameKey && nameKey !== normalizePatientNameKey(NIBO_FALLBACK_PATIENT_NAME) && !patientsByName.has(nameKey)) {
+      patientsByName.set(nameKey, patient.id);
+    }
+  }
+  return { patientsByCpf, patientsByName };
+}
+
+async function resolvePatientId(input: {
+  organizationId: string;
+  clinicId: string;
+  item: ScheduleItem;
+  fallbackPatientId: string;
+  patientsByCpf: Map<string, string>;
+  patientsByName: Map<string, string>;
+}): Promise<{ patientId: string; created: boolean }> {
+  const decision = decideNiboPatientLink({
+    stakeholderName: input.item.stakeholderName,
+    stakeholderDocument: input.item.stakeholderDocument,
+    patientsByCpf: input.patientsByCpf,
+    patientsByName: input.patientsByName,
+  });
+  if (decision.action === 'use_existing') {
+    await prisma.patientClinic.upsert({
+      where: { patientId_clinicId: { patientId: decision.patientId, clinicId: input.clinicId } },
+      create: { patientId: decision.patientId, clinicId: input.clinicId, status: 'ACTIVE' },
+      update: { status: 'ACTIVE' },
+    });
+    return { patientId: decision.patientId, created: false };
+  }
+  if (decision.action === 'fallback') {
+    return { patientId: input.fallbackPatientId, created: false };
+  }
+  try {
+    const created = await prisma.patient.create({
+      data: {
+        organizationId: input.organizationId,
+        fullName: decision.fullName,
+        cpf: decision.cpf,
+        primaryPhone: NIBO_IMPORT_PATIENT_PHONE,
+        status: 'ACTIVE',
+        clinics: { create: { clinicId: input.clinicId, status: 'ACTIVE' } },
+      },
+      select: { id: true, fullName: true, cpf: true },
+    });
+    if (created.cpf) input.patientsByCpf.set(normalizeDocument(created.cpf), created.id);
+    const nameKey = normalizePatientNameKey(created.fullName);
+    if (nameKey) input.patientsByName.set(nameKey, created.id);
+    return { patientId: created.id, created: true };
+  } catch {
+    if (decision.cpf) {
+      const existing = await prisma.patient.findFirst({
+        where: { organizationId: input.organizationId, cpf: decision.cpf, status: { not: 'ARCHIVED' } },
+        select: { id: true },
+      });
+      if (existing) {
+        input.patientsByCpf.set(decision.cpf, existing.id);
+        return { patientId: existing.id, created: false };
+      }
+    }
+    return { patientId: input.fallbackPatientId, created: false };
+  }
+}
+
+async function ensureReceivableSettlement(receivableId: string, item: ScheduleItem): Promise<boolean> {
+  if (!shouldCreateNiboSettlement(item)) return false;
+  const key = niboPaymentIdempotencyKey(item.scheduleId);
+  const existing = await prisma.payment.findUnique({ where: { idempotencyKey: key }, select: { id: true } });
+  if (existing) return false;
+  await prisma.payment.create({
+    data: {
+      receivableId,
+      amount: niboSettlementAmount(item),
+      method: 'NIBO',
+      provider: 'NIBO',
+      externalId: item.scheduleId,
+      idempotencyKey: key,
+      status: 'CONFIRMED',
+      paidAt: niboSettlementPaidAt(item),
+    },
+  });
+  return true;
+}
+
+async function ensurePayableSettlement(payableId: string, item: ScheduleItem): Promise<boolean> {
+  if (!shouldCreateNiboSettlement(item)) return false;
+  const marker = niboPayablePaymentMarker(item.scheduleId);
+  const existing = await prisma.payablePayment.findFirst({
+    where: { payableId, notes: { contains: marker } },
+    select: { id: true },
+  });
+  if (existing) return false;
+  await prisma.payablePayment.create({
+    data: {
+      payableId,
+      amount: niboSettlementAmount(item),
+      method: 'NIBO',
+      notes: `Baixa importada do Nibo (${marker})`,
+      status: 'CONFIRMED',
+      paidAt: niboSettlementPaidAt(item),
+    },
+  });
+  return true;
 }
 
 /**
@@ -416,7 +511,7 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
       : {};
   const categoryIds = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId');
   const costCenterIds = readNiboIdList(config, 'costCenterIds', 'costCenterId');
-  // Categorias filtram crédito e débito; centros de custo filtram só débito (a pagar).
+  // Categorias: crédito e débito. CC: só débito; item sem CC no Nibo passa o filtro.
   const creditFilters = { categoryIds, costCenterIds: [] as string[] };
   const debitFilters = { categoryIds, costCenterIds };
 
@@ -429,31 +524,20 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
   const debits = debitItems.filter((item) => matchesFilters(item, debitFilters));
 
   const fallbackPatientId = await ensureFallbackPatient(organizationId, clinicId);
-  const patients = await prisma.patient.findMany({
-    where: { organizationId, status: { not: 'ARCHIVED' }, cpf: { not: null } },
-    select: { id: true, cpf: true },
-    take: 5000,
-  });
-  const patientsByCpf = new Map<string, string>();
-  for (const patient of patients) {
-    const doc = normalizeDocument(patient.cpf);
-    if (doc) patientsByCpf.set(doc, patient.id);
-  }
+  const { patientsByCpf, patientsByName } = await loadPatientIndexes(organizationId);
 
   let receivablesCreated = 0;
   let receivablesUpdated = 0;
   let payablesCreated = 0;
   let payablesUpdated = 0;
+  let patientsCreated = 0;
+  let settlementsCreated = 0;
 
   for (const item of credits) {
     const amount = amountString(item.value);
     const dueDate = new Date(`${dueDateOnly(item.dueDate)}T00:00:00Z`);
     const status = scheduleStatus(item);
-    const stakeholder = item.stakeholderName?.trim();
-    const description =
-      stakeholder && !item.description.toLowerCase().includes(stakeholder.toLowerCase())
-        ? `${item.description} — ${stakeholder}`
-        : item.description;
+    const description = buildReceivableDescription(item);
 
     const existing = await prisma.receivable.findFirst({
       where: { organizationId, clinicId, externalId: item.scheduleId },
@@ -475,15 +559,23 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
         },
       });
       receivablesUpdated += 1;
+      if (await ensureReceivableSettlement(existing.id, item)) settlementsCreated += 1;
       continue;
     }
-    const doc = normalizeDocument(item.stakeholderDocument);
-    const patientId = (doc && patientsByCpf.get(doc)) || fallbackPatientId;
-    await prisma.receivable.create({
+    const resolved = await resolvePatientId({
+      organizationId,
+      clinicId,
+      item,
+      fallbackPatientId,
+      patientsByCpf,
+      patientsByName,
+    });
+    if (resolved.created) patientsCreated += 1;
+    const created = await prisma.receivable.create({
       data: {
         organizationId,
         clinicId,
-        patientId,
+        patientId: resolved.patientId,
         description,
         originalAmount: amount,
         discount: '0',
@@ -494,8 +586,10 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
         provider: 'NIBO',
         externalId: item.scheduleId,
       },
+      select: { id: true },
     });
     receivablesCreated += 1;
+    if (await ensureReceivableSettlement(created.id, item)) settlementsCreated += 1;
   }
 
   for (const item of debits) {
@@ -503,6 +597,7 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
     const paidAmount = amountString(Math.min(item.paidValue, item.value));
     const dueDate = new Date(`${dueDateOnly(item.dueDate)}T00:00:00Z`);
     const status = scheduleStatus(item);
+    const description = buildPayableDescription(item);
     const notes = [
       `Importado do Nibo (scheduleId=${item.scheduleId})`,
       item.stakeholderName ? `Fornecedor: ${item.stakeholderName}` : null,
@@ -519,7 +614,7 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
       await prisma.payable.update({
         where: { id: existing.id },
         data: {
-          description: item.description,
+          description,
           originalAmount: amount,
           paidAmount,
           dueDate,
@@ -530,13 +625,14 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
         },
       });
       payablesUpdated += 1;
+      if (await ensurePayableSettlement(existing.id, item)) settlementsCreated += 1;
       continue;
     }
-    await prisma.payable.create({
+    const created = await prisma.payable.create({
       data: {
         organizationId,
         clinicId,
-        description: item.description,
+        description,
         originalAmount: amount,
         paidAmount,
         dueDate,
@@ -546,8 +642,10 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
         provider: 'NIBO',
         externalId: item.scheduleId,
       },
+      select: { id: true },
     });
     payablesCreated += 1;
+    if (await ensurePayableSettlement(created.id, item)) settlementsCreated += 1;
   }
 
   const pulledAt = new Date().toISOString();
@@ -565,6 +663,8 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
           receivablesUpdated,
           payablesCreated,
           payablesUpdated,
+          patientsCreated,
+          settlementsCreated,
           creditFetched: creditItems.length,
           debitFetched: debitItems.length,
           creditMatchedFilters: credits.length,
@@ -586,11 +686,13 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
     debitMatchedFilters: debits.length,
     message: [
       `Pull Nibo: R ${receivablesCreated}+${receivablesUpdated} / P ${payablesCreated}+${payablesUpdated}`,
+      patientsCreated ? `pacientes+${patientsCreated}` : null,
+      settlementsCreated ? `baixas+${settlementsCreated}` : null,
       `(fetched C${creditItems.length}/D${debitItems.length}, matched C${credits.length}/D${debits.length})`,
       categoryIds.length || costCenterIds.length
-        ? `filtros: ${categoryIds.length} cat, ${costCenterIds.length} CC`
+        ? `filtros: ${categoryIds.length} cat, ${costCenterIds.length} CC (débitos sem CC passam)`
         : 'sem filtros de categoria/CC',
-    ].join(' '),
+    ].filter(Boolean).join(' '),
   };
 }
 

@@ -140,6 +140,8 @@ export function SettingsView() {
   const [rules, setRules] = useState<RecordValue[]>([]);
   const [deliveries, setDeliveries] = useState<RecordValue[]>([]);
   const [integrations, setIntegrations] = useState<RecordValue[]>([]);
+  const [integrationCatalog, setIntegrationCatalog] = useState<RecordValue[]>([]);
+  const [showAddIntegrationMenu, setShowAddIntegrationMenu] = useState(false);
   const [branding, setBranding] = useState<RecordValue | null>(null);
   const [businessHours, setBusinessHours] = useState<BusinessHours>(DEFAULT_BUSINESS_HOURS);
   const [businessHoursDraft, setBusinessHoursDraft] = useState<BusinessHours>(DEFAULT_BUSINESS_HOURS);
@@ -234,7 +236,8 @@ export function SettingsView() {
         setProcedures(list(nextProcedures));
         setRules(list(nextRules));
         setDeliveries(list(nextDeliveries));
-        setIntegrations([...list(nextIntegrations.configured), ...list(nextIntegrations.bootstrap)]);
+        setIntegrations(list(nextIntegrations.configured));
+        setIntegrationCatalog(list(nextIntegrations.bootstrap));
         setBranding(nextBranding);
         const hours = normalizeBusinessHours(nextBusinessHours);
         setBusinessHours(hours);
@@ -747,20 +750,19 @@ export function SettingsView() {
   async function startGoogleOauth(id: string) {
     setIntegrationMenuId(null);
     try {
-      const result = await api.post<{ authorizeUrl?: string; message?: string; redirectUri?: string }>(
+      const result = await api.post<{ authorizeUrl?: string; message?: string; redirectUri?: string; success?: boolean }>(
         `/integrations/${id}/oauth/start`,
         {},
       );
       if (result.authorizeUrl) {
-        window.open(result.authorizeUrl, '_blank', 'noopener,noreferrer');
-        showSuccess(
-          result.redirectUri
-            ? `Autorize no Google. Se falhar, confira no Console o redirect URI: ${result.redirectUri}`
-            : (result.message ?? 'Autorize o acesso no Google na janela aberta.'),
-        );
+        // Mesma aba (estilo N8N): popup costuma ser bloqueado; callback redireciona de volta ao app.
+        window.location.assign(result.authorizeUrl);
         return;
       }
-      showFailure(result.message ?? 'Não foi possível iniciar a conexão com o Google Agenda.');
+      const missingUrlHint = result.redirectUri
+        ? `Credenciais ok, mas faltou a URL de autorização. Confira API_URL / GOOGLE_REDIRECT_URI (callback esperado: ${result.redirectUri}).`
+        : 'Credenciais podem estar salvas, mas a API não retornou authorizeUrl. Defina API_URL (ou GOOGLE_REDIRECT_URI) no serviço api e tente de novo.';
+      showFailure(result.message ?? missingUrlHint);
     } catch (cause) {
       const message = cause instanceof ApiError ? cause.message : 'Conexão com Google Agenda indisponível.';
       showFailure(message);
@@ -1978,15 +1980,47 @@ export function SettingsView() {
               description="Provedores externos com status e sincronização."
             >
               <p className="muted-note" style={{ padding: '0 14px' }}>
-                Conecte o Google Agenda e outros provedores. Use sincronizar agora quando precisar atualizar os dados.
+                Só listamos integrações ativas ou com erro. Use “Adicionar” para configurar um provedor novo ou reativar um desativado. Duplicados de pacientes criados pelo Nibo: Configurações → Pacientes duplicados.
               </p>
+              {(() => {
+                const visibleIntegrations = integrations.filter((item) => {
+                  if (!item.id) return false;
+                  const status = text(item.status);
+                  return status === 'ACTIVE' || status === 'ERROR';
+                });
+                const configuredProviders = new Set(
+                  integrations
+                    .filter((item) => item.id && text(item.status) !== 'DISABLED')
+                    .map((item) => text(item.provider)),
+                );
+                const addableProviders = [
+                  'GOOGLE_CALENDAR',
+                  'NIBO',
+                  'ABACATEPAY',
+                  'EVOLUTION',
+                  'CHATWOOT',
+                  'OPENAI',
+                ].filter((provider) => {
+                  if (provider === 'GOOGLE_CALENDAR') return true; // múltiplos escopos (clínica/profissional)
+                  return !configuredProviders.has(provider);
+                });
+                const providerLabel: Record<string, string> = {
+                  GOOGLE_CALENDAR: 'Google Agenda',
+                  NIBO: 'Nibo',
+                  ABACATEPAY: 'AbacatePay',
+                  EVOLUTION: 'Evolution (WhatsApp)',
+                  CHATWOOT: 'Chatwoot',
+                  OPENAI: 'OpenAI',
+                };
+                return (
+                  <>
               {loading && <div className="state-message">Carregando integrações…</div>}
-              {!loading && integrations.length === 0 && (
-                <EmptyState title="Nenhuma integração" description="Configure um provedor para sincronizar dados ou enviar mensagens." />
+              {!loading && visibleIntegrations.length === 0 && (
+                <EmptyState title="Nenhuma integração ativa" description="Clique em Adicionar para conectar um provedor." />
               )}
-              {integrations.length > 0 && (
+              {visibleIntegrations.length > 0 && (
                 <div className="settings-list">
-                  {integrations.map((item, index) => {
+                  {visibleIntegrations.map((item, index) => {
                     const rowId = text(item.id, `${text(item.provider)}-${index}`);
                     const hasId = Boolean(item.id);
                     const isGoogle = text(item.provider) === 'GOOGLE_CALENDAR';
@@ -2186,11 +2220,69 @@ export function SettingsView() {
                   })}
                 </div>
               )}
-              <div className="modal-footer">
-                <button className="button primary" type="button" onClick={() => openIntegrationConfig()}>
-                  Configurar integração
-                </button>
+              <div className="modal-footer" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <div className="row-menu" style={{ position: 'relative' }}>
+                  <button
+                    className="button primary"
+                    type="button"
+                    aria-expanded={showAddIntegrationMenu}
+                    onClick={() => setShowAddIntegrationMenu((open) => !open)}
+                  >
+                    <Plus size={15} /> Adicionar
+                  </button>
+                  {showAddIntegrationMenu ? (
+                    <div className="row-menu-popover" role="menu" style={{ right: 0, left: 'auto', minWidth: 220 }}>
+                      {addableProviders.length === 0 ? (
+                        <button type="button" role="menuitem" disabled>
+                          Todos os provedores já estão na lista
+                        </button>
+                      ) : (
+                        addableProviders.map((provider) => (
+                          <button
+                            key={provider}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setShowAddIntegrationMenu(false);
+                              openIntegrationConfig(provider);
+                            }}
+                          >
+                            {providerLabel[provider] ?? provider}
+                          </button>
+                        ))
+                      )}
+                      {integrations.some((item) => text(item.status) === 'DISABLED') ? (
+                        <>
+                          <hr style={{ margin: '4px 0', border: 0, borderTop: '1px solid var(--border, #ddd)' }} />
+                          {integrations
+                            .filter((item) => text(item.status) === 'DISABLED')
+                            .map((item) => (
+                              <button
+                                key={String(item.id)}
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setShowAddIntegrationMenu(false);
+                                  openIntegrationConfig(item);
+                                }}
+                              >
+                                Reativar {providerLabel[text(item.provider)] ?? text(item.provider)}
+                              </button>
+                            ))}
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                {integrationCatalog.length > 0 ? (
+                  <span className="muted-note" style={{ margin: 0 }}>
+                    Catálogo ambiente: {integrationCatalog.map((item) => text(item.provider)).join(', ')}
+                  </span>
+                ) : null}
               </div>
+                  </>
+                );
+              })()}
             </Panel>
           )}
 

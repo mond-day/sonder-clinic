@@ -39,6 +39,7 @@ const REASON_LABEL: Record<string, string> = {
   SAME_PASSPORT: 'Mesmo passaporte',
   SAME_PHONE: 'Mesmo telefone',
   SAME_EMAIL: 'Mesmo e-mail',
+  SAME_NAME: 'Mesmo nome (possível importação Nibo)',
   SAME_NAME_BIRTHDATE: 'Nome e nascimento iguais',
   SIMILAR_NAME_BIRTHDATE: 'Nome semelhante + nascimento',
   SIMILAR_NAME_PHONE: 'Nome semelhante + telefone',
