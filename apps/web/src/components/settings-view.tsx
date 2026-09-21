@@ -949,12 +949,14 @@ export function SettingsView() {
               && (editingIntegration.credentials as RecordValue).configured,
             ),
             credentialValues: (() => {
+              const credentialValues: Record<string, string> = {};
               const creds = editingIntegration.credentials;
-              if (!creds || typeof creds !== 'object') return {};
+              if (!creds || typeof creds !== 'object') return credentialValues;
               const clientId = (creds as RecordValue).clientId;
-              return typeof clientId === 'string' && clientId.trim()
-                ? { clientId: clientId.trim() }
-                : {};
+              if (typeof clientId === 'string' && clientId.trim()) {
+                credentialValues.clientId = clientId.trim();
+              }
+              return credentialValues;
             })(),
             configuration: editingIntegration.configuration && typeof editingIntegration.configuration === 'object'
               ? editingIntegration.configuration as Record<string, unknown>
