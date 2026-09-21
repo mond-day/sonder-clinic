@@ -492,15 +492,11 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
     try {
       const result = await api.post<{ authorizeUrl?: string; message?: string; redirectUri?: string }>(
         `/integrations/${initialIntegration.id}/oauth/start`,
-        {},
+        { redirectUri: googleRedirectUri },
       );
       if (result.authorizeUrl) {
-        window.open(result.authorizeUrl, '_blank', 'noopener,noreferrer');
-        setMessage(
-          result.redirectUri
-            ? `Autorize no Google. Se falhar, confira no Console o Redirect URI: ${result.redirectUri}`
-            : (result.message ?? 'Autorize o acesso no Google na janela aberta.'),
-        );
+        // Mesma aba (estilo N8N): popup costuma ser bloqueado; callback redireciona de volta ao app.
+        window.location.assign(result.authorizeUrl);
         return;
       }
       setError(result.message ?? 'Não foi possível iniciar a autenticação Google.');
@@ -1096,6 +1092,9 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           setError('Selecione o profissional para vincular a agenda.');
           return;
         }
+        if (integrationProvider === 'GOOGLE_CALENDAR') {
+          credentials.redirectUri = googleRedirectUri;
+        }
         void run(() => api.post('/integrations', {
           clinicId,
           provider: integrationProvider,
@@ -1226,13 +1225,19 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
               />
             ) : null}
             <div className="secure-notice" style={{ display: 'grid', gap: 6 }}>
-              <strong>Redirect URI (cole no Google Cloud Console)</strong>
+              <strong>URL de redirecionamento OAuth</strong>
               <code style={{ wordBreak: 'break-all' }}>{googleRedirectUri}</code>
               <span className="field-hint">
-                Em APIs e serviços → Credenciais → cliente OAuth → Authorized redirect URIs, cadastre exatamente este valor.
-                Você pode salvar Client ID/Secret mesmo se o Redirect URI ainda não estiver certo no servidor;
-                o OAuth só inicia depois que a API tiver API_URL (ou GOOGLE_REDIRECT_URI).
+                Cole esta URL no Google Cloud Console → Credenciais → URIs de redirecionamento.
+                Não é necessário definir API_URL no Swarm só por causa do OAuth Google — a UI envia esta URL ao salvar e ao conectar.
               </span>
+              {/localhost|127\.0\.0\.1/i.test(googleRedirectUri)
+                && typeof window !== 'undefined'
+                && !/localhost|127\.0\.0\.1/i.test(window.location.hostname) ? (
+                <span className="field-hint" style={{ color: 'var(--danger, #b42318)' }}>
+                  Atenção: a API pública do browser aponta para localhost. Ajuste NEXT_PUBLIC_API_URL no serviço web antes de conectar em produção.
+                </span>
+              ) : null}
             </div>
           </div>
         ) : null}

@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, Res, UnauthorizedException, UseGuards, type RawBodyRequest } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
-import { IsBoolean, IsIn, IsObject, IsOptional, IsUUID } from 'class-validator';
+import { IsBoolean, IsIn, IsObject, IsOptional, IsString, IsUUID } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
 import { IntegrationsService, type Provider, type SaveConnectionInput } from './integrations.service';
@@ -21,6 +21,12 @@ class SaveIntegrationDto {
 
 class PatchIntegrationDto {
   @IsIn(['ACTIVE', 'DISABLED']) status!: 'ACTIVE' | 'DISABLED';
+}
+
+class StartOauthDto {
+  @IsOptional()
+  @IsString()
+  redirectUri?: string;
 }
 
 @ApiTags('integrations')
@@ -59,8 +65,16 @@ export class IntegrationsController {
 
   @Post(':id/oauth/start')
   @RequirePermissions('integration.manage')
-  startOauth(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
-    return this.integrations.startGoogleCalendarOauth(request.auth.organizationId, id);
+  startOauth(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: StartOauthDto,
+  ) {
+    return this.integrations.startGoogleCalendarOauth(
+      request.auth.organizationId,
+      id,
+      body?.redirectUri,
+    );
   }
 
   @Post(':id/calendar/pull-sync')
@@ -108,7 +122,7 @@ export class IntegrationsController {
 
 /**
  * Callback OAuth + webhook push Google — sem AuthGuard.
- * OAuth: redirect canônico (GOOGLE_REDIRECT_URI / API_URL) + client da conexão ou env.
+ * OAuth: redirect da conexão/UI (estilo N8N) ou fallback GOOGLE_REDIRECT_URI / API_URL.
  * Webhook: GOOGLE_CALENDAR_WEBHOOK_URL.
  */
 @ApiTags('integrations-oauth')

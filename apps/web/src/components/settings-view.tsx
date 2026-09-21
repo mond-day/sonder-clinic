@@ -750,9 +750,10 @@ export function SettingsView() {
   async function startGoogleOauth(id: string) {
     setIntegrationMenuId(null);
     try {
+      const redirectUri = `${getApiUrl().replace(/\/$/, '')}/integrations/google/callback`;
       const result = await api.post<{ authorizeUrl?: string; message?: string; redirectUri?: string; success?: boolean }>(
         `/integrations/${id}/oauth/start`,
-        {},
+        { redirectUri },
       );
       if (result.authorizeUrl) {
         // Mesma aba (estilo N8N): popup costuma ser bloqueado; callback redireciona de volta ao app.
@@ -760,8 +761,8 @@ export function SettingsView() {
         return;
       }
       const missingUrlHint = result.redirectUri
-        ? `Credenciais ok, mas faltou a URL de autorização. Confira API_URL / GOOGLE_REDIRECT_URI (callback esperado: ${result.redirectUri}).`
-        : 'Credenciais podem estar salvas, mas a API não retornou authorizeUrl. Defina API_URL (ou GOOGLE_REDIRECT_URI) no serviço api e tente de novo.';
+        ? `Credenciais ok, mas faltou a URL de autorização. Confira se a URL de redirecionamento no Google Console é exatamente: ${result.redirectUri}`
+        : 'Credenciais podem estar salvas, mas a API não retornou authorizeUrl. Confira Client ID/Secret e a URL de redirecionamento exibida na UI.';
       showFailure(result.message ?? missingUrlHint);
     } catch (cause) {
       const message = cause instanceof ApiError ? cause.message : 'Conexão com Google Agenda indisponível.';
@@ -2049,9 +2050,10 @@ export function SettingsView() {
                                 const rowOauth = item.oauth && typeof item.oauth === 'object'
                                   ? item.oauth as RecordValue
                                   : googleOauthStatus;
+                                const browserRedirectUri = `${getApiUrl().replace(/\/$/, '')}/integrations/google/callback`;
                                 const redirectUri = text(rowOauth?.redirectUri)
                                   || text(googleOauthStatus?.redirectUri)
-                                  || `${getApiUrl().replace(/\/$/, '')}/integrations/google/callback`;
+                                  || browserRedirectUri;
                                 const oauthMessage = text(rowOauth?.message) || text(googleOauthStatus?.message);
                                 const expLabel = (() => {
                                   if (!expiration) return 'não configuradas — use sincronização manual';
@@ -2059,16 +2061,27 @@ export function SettingsView() {
                                   const expDate = Number.isFinite(expMs) ? new Date(expMs) : new Date(String(expiration));
                                   return `ativas · expira ${Number.isNaN(expDate.getTime()) ? String(expiration) : expDate.toLocaleString('pt-BR')}`;
                                 })();
+                                const localhostMismatch = /localhost|127\.0\.0\.1/i.test(browserRedirectUri)
+                                  && typeof window !== 'undefined'
+                                  && !/localhost|127\.0\.0\.1/i.test(window.location.hostname);
                                 return (
                                   <div className="muted-note" style={{ display: 'grid', gap: 4 }}>
                                     <span>Provedor: Google Agenda</span>
                                     <span>Calendário: {calendarId}</span>
                                     <span>Atualizações automáticas: {expLabel}</span>
                                     <span>
-                                      Redirect URI (cole no Google Cloud Console):
+                                      URL de redirecionamento OAuth:
                                       {' '}
                                       <code style={{ wordBreak: 'break-all' }}>{redirectUri}</code>
                                     </span>
+                                    <span>
+                                      Cole esta URL no Google Cloud Console → Credenciais → URIs de redirecionamento.
+                                    </span>
+                                    {localhostMismatch ? (
+                                      <span style={{ color: 'var(--danger, #b42318)' }}>
+                                        Atenção: NEXT_PUBLIC_API_URL aponta para localhost neste browser — ajuste no serviço web.
+                                      </span>
+                                    ) : null}
                                     {oauthMessage ? <span>Status OAuth: {oauthMessage}</span> : null}
                                     {rowOauth?.mock === true || rowOauth?.mock === false ? (
                                       <span>

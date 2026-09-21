@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildGoogleAuthorizeUrl,
   googleCalendarMockInfo,
+  isAllowedGoogleOAuthRedirectUri,
   isGoogleCalendarMock,
   isSonderClinicSyncedEvent,
   mergeTokenCredentials,
@@ -65,6 +66,42 @@ describe('google-calendar.utils', () => {
     ).toMatchObject({ clientId: 'conn-id', clientSecret: 'conn-secret', redirectUri: 'http://localhost/cb' });
   });
 
+  it('ordem de redirect: conexão → body → env GOOGLE_REDIRECT_URI → API_URL', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('WEB_URL', 'https://app.example.com');
+    vi.stubEnv('CORS_ORIGIN', 'https://app.example.com');
+    vi.stubEnv('GOOGLE_REDIRECT_URI', 'https://api.env.example/api/v1/integrations/google/callback');
+    vi.stubEnv('API_URL', 'https://api.url.example/api/v1');
+
+    const connUri = 'https://api.conn.example/api/v1/integrations/google/callback';
+    const bodyUri = 'https://api.body.example/api/v1/integrations/google/callback';
+
+    expect(
+      resolveGoogleOAuthCredentials(
+        { clientId: 'id', clientSecret: 'secret', redirectUri: connUri },
+        process.env,
+        { requestRedirectUri: bodyUri },
+      )?.redirectUri,
+    ).toBe(connUri);
+
+    expect(
+      resolveGoogleOAuthCredentials(
+        { clientId: 'id', clientSecret: 'secret' },
+        process.env,
+        { requestRedirectUri: bodyUri },
+      )?.redirectUri,
+    ).toBe(bodyUri);
+
+    expect(
+      resolveGoogleOAuthCredentials({ clientId: 'id', clientSecret: 'secret' })?.redirectUri,
+    ).toBe('https://api.env.example/api/v1/integrations/google/callback');
+
+    delete process.env.GOOGLE_REDIRECT_URI;
+    expect(
+      resolveGoogleOAuthCredentials({ clientId: 'id', clientSecret: 'secret' })?.redirectUri,
+    ).toBe('https://api.url.example/api/v1/integrations/google/callback');
+  });
+
   it('override de redirectUri da conexão tem prioridade sobre env', () => {
     vi.stubEnv('GOOGLE_REDIRECT_URI', 'https://api.env.example/api/v1/integrations/google/callback');
     expect(
@@ -76,6 +113,25 @@ describe('google-calendar.utils', () => {
     ).toMatchObject({
       redirectUri: 'https://api.conn.example/api/v1/integrations/google/callback',
     });
+  });
+
+  it('isAllowedGoogleOAuthRedirectUri exige callback path e bloqueia open redirect', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('WEB_URL', 'https://app.example.com');
+    vi.stubEnv('API_URL', 'https://api.example.com/api/v1');
+    expect(isAllowedGoogleOAuthRedirectUri(
+      'https://api.example.com/api/v1/integrations/google/callback',
+    )).toBe(true);
+    expect(isAllowedGoogleOAuthRedirectUri(
+      'https://other.example.com/api/v1/integrations/google/callback',
+    )).toBe(true); // HTTPS + sufixo canônico (UI / NEXT_PUBLIC_API_URL)
+    expect(isAllowedGoogleOAuthRedirectUri('https://evil.example/oauth')).toBe(false);
+    expect(isAllowedGoogleOAuthRedirectUri(
+      'http://api.example.com/api/v1/integrations/google/callback',
+    )).toBe(false);
+    expect(isAllowedGoogleOAuthRedirectUri(
+      'https://localhost/api/v1/integrations/google/callback',
+    )).toBe(false);
   });
 
   it('resolveCanonicalGoogleRedirectUri deriva de API_URL com ou sem /api/v1', () => {

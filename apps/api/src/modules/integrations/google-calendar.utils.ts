@@ -38,6 +38,8 @@ const SCOPES = [
 ].join(' ');
 
 export const GOOGLE_OAUTH_CALLBACK_PATH = '/api/v1/integrations/google/callback';
+/** Sufixo canônico (com ou sem prefixo `/api/v1`). */
+export const GOOGLE_OAUTH_CALLBACK_SUFFIX = '/integrations/google/callback';
 
 function pickString(...values: unknown[]): string {
   for (const value of values) {
@@ -46,10 +48,86 @@ function pickString(...values: unknown[]): string {
   return '';
 }
 
+function isProductionEnv(env: NodeJS.ProcessEnv): boolean {
+  return (env.NODE_ENV ?? '').toLowerCase() === 'production';
+}
+
+function hostnameFromUrlOrHost(raw: string): string {
+  const trimmed = raw.trim().replace(/\/$/, '');
+  if (!trimmed) return '';
+  try {
+    const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    return new URL(withProtocol).hostname.toLowerCase();
+  } catch {
+    return trimmed.replace(/^https?:\/\//i, '').split('/')[0]?.toLowerCase() ?? '';
+  }
+}
+
+/** Hosts permitidos para redirect OAuth (CORS / WEB_URL / API_URL / API_HOST). */
+export function googleOAuthRedirectAllowlistHosts(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const hosts = new Set<string>();
+  const add = (value: string) => {
+    const host = hostnameFromUrlOrHost(value);
+    if (host) hosts.add(host);
+  };
+  for (const part of pickString(env.CORS_ORIGIN).split(',')) {
+    if (part.trim()) add(part);
+  }
+  add(pickString(env.WEB_URL));
+  add(pickString(env.API_URL));
+  add(pickString(env.API_PUBLIC_URL));
+  add(pickString(env.API_HOST));
+  if (!isProductionEnv(env)) {
+    hosts.add('localhost');
+    hosts.add('127.0.0.1');
+  }
+  return [...hosts];
+}
+
 /**
- * Redirect URI canônico para o Google Cloud Console.
+ * Valida redirect URI enviado pela UI / armazenado na conexão (anti open-redirect).
+ * Exige path terminando em `/integrations/google/callback` e HTTPS em produção
+ * (HTTP só localhost em não-prod). Aceita se o host está na allowlist (CORS/WEB/API)
+ * OU se é HTTPS com o sufixo canônico do callback Google.
+ */
+export function isAllowedGoogleOAuthRedirectUri(
+  uri: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const trimmed = pickString(uri);
+  if (!trimmed) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return false;
+  }
+  const path = parsed.pathname.replace(/\/$/, '') || '/';
+  if (!path.endsWith(GOOGLE_OAUTH_CALLBACK_SUFFIX)) return false;
+
+  const host = parsed.hostname.toLowerCase();
+  const isLocal = host === 'localhost' || host === '127.0.0.1';
+  if (isProductionEnv(env)) {
+    if (parsed.protocol !== 'https:') return false;
+    if (isLocal) return false;
+  } else if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return false;
+  } else if (parsed.protocol === 'http:' && !isLocal) {
+    return false;
+  }
+
+  const allowlist = googleOAuthRedirectAllowlistHosts(env);
+  if (allowlist.includes(host)) return true;
+  // N8N-like: browser envia a API pública (NEXT_PUBLIC_API_URL) mesmo sem API_URL no Swarm.
+  return parsed.protocol === 'https:' && path.endsWith(GOOGLE_OAUTH_CALLBACK_SUFFIX);
+}
+
+/**
+ * Redirect URI canônico a partir do env do servidor.
  * Ordem: GOOGLE_REDIRECT_URI → API_URL/API_PUBLIC_URL → API_HOST → localhost (dev).
- * Client ID/Secret NÃO vêm daqui — preferir conexão (UI) com fallback de env.
+ * Em 1.3.13+ a UI envia/persiste redirectUri; este canônico é fallback ops.
  */
 export function resolveCanonicalGoogleRedirectUri(
   env: NodeJS.ProcessEnv = process.env,
@@ -74,11 +152,11 @@ export function resolveCanonicalGoogleRedirectUri(
   const apiHost = pickString(env.API_HOST);
   if (apiHost) {
     const host = apiHost.replace(/^https?:\/\//i, '').replace(/\/$/, '');
-    const isProd = (env.NODE_ENV ?? '').toLowerCase() === 'production';
+    const isProd = isProductionEnv(env);
     return `${isProd ? 'https' : 'http'}://${host}${GOOGLE_OAUTH_CALLBACK_PATH}`;
   }
 
-  if ((env.NODE_ENV ?? '').toLowerCase() !== 'production') {
+  if (!isProductionEnv(env)) {
     return `http://localhost:4000${GOOGLE_OAUTH_CALLBACK_PATH}`;
   }
   return '';
@@ -104,25 +182,38 @@ export function resolveGoogleClientCredentials(
   return { clientId, clientSecret };
 }
 
+export type ResolveGoogleOAuthOptions = {
+  /** Redirect URI enviado no body (oauth/start ou save). */
+  requestRedirectUri?: string;
+};
+
 /**
  * Resolve clientId/secret/redirect para OAuth (authorize + token exchange).
  * Credenciais: conexão primeiro, depois env (fallback ops).
- * Redirect: override da conexão → canônico (env / API_URL / host).
+ * Redirect (1.3.13+): conexão → body requestRedirectUri → GOOGLE_REDIRECT_URI / API_URL.
+ * Cada candidato passa por isAllowedGoogleOAuthRedirectUri.
  * Retorna null se faltar client OU redirect — use resolveGoogleClientCredentials
  * para distinguir “credenciais ausentes” de “redirect ausente”.
  */
 export function resolveGoogleOAuthCredentials(
   connectionCredentials?: Record<string, string>,
   env: NodeJS.ProcessEnv = process.env,
+  options?: ResolveGoogleOAuthOptions,
 ): GoogleOAuthCredentials | null {
   const client = resolveGoogleClientCredentials(connectionCredentials, env);
   if (!client) return null;
-  const redirectUri = pickString(
-    connectionCredentials?.redirectUri,
-    resolveCanonicalGoogleRedirectUri(env),
-  );
-  if (!redirectUri) return null;
-  return { ...client, redirectUri };
+  const fromConnection = pickString(connectionCredentials?.redirectUri);
+  if (fromConnection && isAllowedGoogleOAuthRedirectUri(fromConnection, env)) {
+    return { ...client, redirectUri: fromConnection };
+  }
+  const fromRequest = pickString(options?.requestRedirectUri);
+  if (fromRequest && isAllowedGoogleOAuthRedirectUri(fromRequest, env)) {
+    return { ...client, redirectUri: fromRequest };
+  }
+  // Fallback ops: GOOGLE_REDIRECT_URI / API_URL — confiar no env (pode ser override custom).
+  const fromEnv = resolveCanonicalGoogleRedirectUri(env);
+  if (fromEnv) return { ...client, redirectUri: fromEnv };
+  return null;
 }
 
 export function googleCalendarMockInfo(env: NodeJS.ProcessEnv = process.env) {

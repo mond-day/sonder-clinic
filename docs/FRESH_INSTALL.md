@@ -203,7 +203,7 @@ Recuperação é operacional (SQL consciente / restore de backup), não um backd
 | Variável | Significado |
 |----------|-------------|
 | `WEB_URL` | URL pública HTTPS do frontend (e-mails, OAuth, QR) |
-| `API_URL` | URL pública da API para o browser (`NEXT_PUBLIC_API_URL`) |
+| `API_URL` | URL pública da API (e-mails, links, fallback de redirect Google). **OAuth Google 1.3.13+:** o redirect vem da UI (`NEXT_PUBLIC_API_URL`); `API_URL` no Swarm continua útil, mas não é obrigatório só para conectar o Google |
 | `CORS_ORIGIN` | origens autorizadas (no stack de prod = `WEB_URL`) |
 | `APP_HOST` / `API_HOST` | hosts do Traefik |
 | `COOKIE_SECURE` | obrigatório `true` em produção |
@@ -211,7 +211,7 @@ Recuperação é operacional (SQL consciente / restore de backup), não um backd
 | `DATABASE_ADMIN_URL` | só bootstrap, se o database alvo ainda não existir |
 | `GOOGLE_CALENDAR_MOCK` / `NIBO_MOCK` | em produção: **ausente ou `false`** (fail-fast só recusa `true`; `deploy.sh` também). Recomendado setar `false` no Portainer |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | **opcional** — fallback ops; preferir Client ID/Secret na UI (Integrações), criptografados na conexão |
-| `GOOGLE_REDIRECT_URI` | **opcional** se `API_URL` estiver definido — canônico: `https://<API_HOST>/api/v1/integrations/google/callback` (mesmo valor no Google Cloud Console) |
+| `GOOGLE_REDIRECT_URI` | **opcional** — fallback ops; preferir a URL exibida na UI (igual ao N8N). Canônico: `https://<API_HOST>/api/v1/integrations/google/callback` |
 | `NIBO_PULL_ENABLED` | pull automático Nibo→Financeiro no worker (default `true`) |
 
 `APP_URL` foi removido do stack; use `WEB_URL`.
@@ -232,17 +232,18 @@ O fail-fast **não** exige `GOOGLE_CLIENT_*`. Em **1.3.8+** também **não** exi
 | `QUEUE_DRIVER=redis` + `REDIS_URL` | env | Redis remoto |
 | `STORAGE_DRIVER=s3` (ou minio) + `S3_*` | env + secrets | não `local` |
 | `WEB_URL` + `CORS_ORIGIN` | env | HTTPS público (stack: CORS=`WEB_URL`) |
-| `API_URL` | env (stack) | URL pública da API; redirect Google deriva daqui |
+| `API_URL` | env (stack) | útil para e-mails/links; redirect Google OAuth vem da UI em 1.3.13+ |
 | `GOOGLE_CALENDAR_MOCK` / `NIBO_MOCK` | env | opcional; **não** use `true` |
 
 **Worker:** `NODE_ENV`, `DATABASE_URL`, `QUEUE_DRIVER`+`REDIS_URL`, `STORAGE_DRIVER`+`S3_*`, `ENCRYPTION_MASTER_KEY`, e opcionalmente `*_MOCK=false`.
 
 ### Google Calendar (produção)
 
-1. No `.env` / Portainer: `GOOGLE_CALENDAR_MOCK=false` (recomendado; ausência também é off em 1.3.8+). `GOOGLE_CLIENT_*` / `GOOGLE_REDIRECT_URI` são **opcionais** (redirect deriva de `API_URL` se omitido).
-2. No [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → OAuth 2.0 Client → **Authorized redirect URIs**: cole exatamente `https://api.<seu-dominio>/api/v1/integrations/google/callback` (a UI em Integrações mostra o valor canônico).
-3. Redeploy (`deploy.sh` recusa `MOCK=true`). Em Configurações → Integrações → Google Agenda: cole **Client ID** e **Client Secret**, salve, use **Conectar / Autenticar** e autorize.
-4. A UI mostra o redirect URI no formulário e em “Detalhes técnicos”.
+1. No `.env` / Portainer: `GOOGLE_CALENDAR_MOCK=false` (recomendado; ausência também é off em 1.3.8+). `GOOGLE_CLIENT_*` / `GOOGLE_REDIRECT_URI` / `API_URL` são **opcionais para o OAuth** se o serviço **web** já tiver `NEXT_PUBLIC_API_URL` correto (a UI envia o redirect).
+2. No app: Configurações → Integrações → Google Agenda — copie a **URL de redirecionamento OAuth** exibida.
+3. No [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → OAuth 2.0 Client → **Authorized redirect URIs**: cole exatamente a URL da UI (ex.: `https://api.<seu-dominio>/api/v1/integrations/google/callback`).
+4. Cole **Client ID** e **Client Secret** na UI, salve, use **Conectar / Autenticar** e autorize (mesma aba). Não é necessário editar Swarm só para o redirect.
+5. Redeploy se mudar MOCK (`deploy.sh` recusa `MOCK=true`).
 
 ### Nibo (produção)
 

@@ -16,7 +16,7 @@
 - Setup inicial: token informado no formulário; API exige `X-Setup-Token`; Next não injeta o secret.
 - Webhook AbacatePay: HMAC obrigatório (sem segredo na query). Google Calendar: token do canal obrigatório.
 - Import Nibo: API Key só via conexão criptografada; respostas de erro não ecoam o token; pull create/update por `externalId` (cancelados locais preservados); push soft-fail no outbox; logs estruturados no worker sem credenciais.
-- Google Calendar OAuth: Client ID/Secret preferencialmente na conexão (envelope encryption); `GOOGLE_CLIENT_*` no env é fallback opcional. Redirect HTTPS canônico (`GOOGLE_REDIRECT_URI` ou derivado de `API_URL`: `…/api/v1/integrations/google/callback`) idêntico ao cadastrado no Google Cloud Console. State OAuth assinado com `connectionId`. Client secret e tokens nunca em logs.
+- Google Calendar OAuth: Client ID/Secret preferencialmente na conexão (envelope encryption); `GOOGLE_CLIENT_*` no env é fallback opcional. Redirect: UI envia/persiste `redirectUri` (estilo N8N) com validação HTTPS + path `/integrations/google/callback`; fallback `GOOGLE_REDIRECT_URI` ou derivado de `API_URL`. State OAuth assinado com `connectionId`. Client secret e tokens nunca em logs.
 - Upload clínico: allowlist MIME; download só com antivírus `CLEAN`; S3 com `ServerSideEncryption: AES256`.
 - Exclusion constraints PostgreSQL (`btree_gist`) para sobreposição de profissional/cadeira na agenda.
 - Credenciais de integrações via UI (envelope encryption) e/ou variáveis de ambiente / secrets (fallback).

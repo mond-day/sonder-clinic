@@ -12,6 +12,7 @@ import {
   ensureFreshAccessToken,
   exchangeGoogleAuthCode,
   getGoogleCalendarEvent,
+  isAllowedGoogleOAuthRedirectUri,
   isGoogleCalendarMock,
   googleCalendarMockInfo,
   isSonderClinicSyncedEvent,
@@ -97,7 +98,12 @@ const providerCredentials = {
   ABACATEPAY: z.object({ apiKey: z.string().min(1), webhookSecret: z.string().min(1).optional() }),
   EVOLUTION: z.object({ apiKey: z.string().min(1), instanceName: z.string().min(1) }),
   CHATWOOT: z.object({ apiToken: z.string().min(1), webhookSecret: z.string().min(1).optional() }),
-  GOOGLE_CALENDAR: z.object({ clientId: z.string().min(1), clientSecret: z.string().min(1) }),
+  GOOGLE_CALENDAR: z.object({
+    clientId: z.string().min(1),
+    clientSecret: z.string().min(1),
+    /** Persistido pela UI (getApiUrl + /integrations/google/callback) — estilo N8N. */
+    redirectUri: z.string().url().optional(),
+  }),
   OPENAI: z.object({ apiKey: z.string().min(1) }),
 } as const;
 const json = (value: unknown) => value as Prisma.InputJsonValue;
@@ -837,7 +843,7 @@ export class IntegrationsService {
         ...envHints,
         message: redirectUri
           ? 'Preencha Client ID e Client Secret nesta integração (como no N8N), cadastre o Redirect URI abaixo no Google Cloud Console e use Conectar / Autenticar.'
-          : 'Preencha e salve Client ID e Client Secret nesta integração. O Redirect URI aparece quando API_URL ou GOOGLE_REDIRECT_URI estiver no servidor da API (salvar credenciais não depende disso).',
+          : 'Preencha e salve Client ID e Client Secret nesta integração. A URL de redirecionamento OAuth aparece na UI (derivada da API pública do browser) — cole-a no Google Cloud Console.',
       };
     }
 
@@ -854,7 +860,7 @@ export class IntegrationsService {
         mode: 'credentials_present',
         ...envHints,
         message:
-          'Client ID/Secret salvos. Defina API_URL (ou GOOGLE_REDIRECT_URI) no serviço api do Swarm e redeploy para gerar o Redirect URI do callback — depois use Conectar / Autenticar.',
+          'Client ID e Client Secret estão salvos. A URL de redirecionamento OAuth é a exibida na UI (copie para o Google Cloud Console → Credenciais → URIs de redirecionamento) e é enviada ao clicar em Conectar — não é necessário definir API_URL no Swarm só por causa disso.',
       };
     }
 
@@ -914,7 +920,11 @@ export class IntegrationsService {
     );
   }
 
-  async startGoogleCalendarOauth(organizationId: string, connectionId: string) {
+  async startGoogleCalendarOauth(
+    organizationId: string,
+    connectionId: string,
+    requestRedirectUri?: string,
+  ) {
     const connection = await prisma.integrationConnection.findFirst({
       where: { id: connectionId, clinic: { organizationId }, provider: 'GOOGLE_CALENDAR' },
     });
@@ -940,17 +950,18 @@ export class IntegrationsService {
         'Salve Client ID e Client Secret nesta integração (Integrações → Google Agenda) antes de autenticar.',
       );
     }
-    const redirectUri = resolveCanonicalGoogleRedirectUri()
-      || (typeof credentials.redirectUri === 'string' ? credentials.redirectUri.trim() : '');
-    if (!redirectUri) {
+    const trimmedRequest = typeof requestRedirectUri === 'string' ? requestRedirectUri.trim() : '';
+    if (trimmedRequest && !isAllowedGoogleOAuthRedirectUri(trimmedRequest)) {
       throw new BadRequestException(
-        'Client ID e Client Secret estão salvos. Defina API_URL (ou GOOGLE_REDIRECT_URI) no serviço api do Swarm e redeploy para o callback OAuth — o salvamento das credenciais não depende disso.',
+        'redirectUri inválido. Use HTTPS com path terminando em /integrations/google/callback (o valor exibido na UI).',
       );
     }
-    const oauth = resolveGoogleOAuthCredentials(credentials);
+    const oauth = resolveGoogleOAuthCredentials(credentials, process.env, {
+      requestRedirectUri: trimmedRequest || undefined,
+    });
     if (!oauth) {
       throw new BadRequestException(
-        'Não foi possível montar o OAuth Google. Confira Client ID/Secret salvos e o Redirect URI no servidor.',
+        'Client ID e Client Secret estão salvos, mas falta a URL de redirecionamento OAuth. Na UI, copie a URL exibida para o Google Cloud Console e tente Conectar de novo (a UI envia o redirectUri automaticamente).',
       );
     }
     const state = signOAuthState(connectionId, process.env.ENCRYPTION_MASTER_KEY!);
@@ -959,9 +970,18 @@ export class IntegrationsService {
       connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
         ? { ...(connection.configuration as Record<string, unknown>) }
         : {};
+    const shouldPersistRedirect = Boolean(
+      oauth.redirectUri
+      && (typeof credentials.redirectUri !== 'string'
+        || credentials.redirectUri.trim() !== oauth.redirectUri),
+    );
+    const nextCredentials = shouldPersistRedirect
+      ? { ...credentials, redirectUri: oauth.redirectUri }
+      : null;
     await prisma.integrationConnection.update({
       where: { id: connectionId },
       data: {
+        ...(nextCredentials ? { encryptedCredentials: this.encrypt(nextCredentials) } : {}),
         configuration: {
           ...prev,
           pendingOauthState: state,
@@ -1685,6 +1705,14 @@ export class IntegrationsService {
     let credentials = parseWithZod(schema, merged);
 
     if (provider === 'GOOGLE_CALENDAR') {
+      const redirectCandidate = typeof credentials.redirectUri === 'string'
+        ? credentials.redirectUri.trim()
+        : '';
+      if (redirectCandidate && !isAllowedGoogleOAuthRedirectUri(redirectCandidate)) {
+        throw new BadRequestException(
+          'redirectUri inválido. Use HTTPS com path terminando em /integrations/google/callback (o valor exibido na UI).',
+        );
+      }
       const tokens = tokensFromCredentials(previous);
       if (tokens) {
         credentials = mergeTokenCredentials(credentials, tokens);
