@@ -89,6 +89,11 @@ export function assertProductionEnvironment(env: NodeJS.ProcessEnv = process.env
   const storage = (env.STORAGE_DRIVER ?? 'local').toLowerCase();
   if (storage === 'local') {
     errors.push('STORAGE_DRIVER=local não é permitido em produção (use minio|s3).');
+  } else if (storage === 'minio' || storage === 's3') {
+    if (!env.S3_ENDPOINT?.trim()) errors.push('S3_ENDPOINT ausente (obrigatório com STORAGE_DRIVER=minio|s3).');
+    if (!env.S3_BUCKET?.trim()) errors.push('S3_BUCKET ausente (obrigatório com STORAGE_DRIVER=minio|s3).');
+    if (!env.S3_ACCESS_KEY?.trim()) errors.push('S3_ACCESS_KEY ausente (obrigatório com STORAGE_DRIVER=minio|s3).');
+    if (!env.S3_SECRET_KEY?.trim()) errors.push('S3_SECRET_KEY ausente (obrigatório com STORAGE_DRIVER=minio|s3).');
   }
 
   assertPublicHttpsUrl(env.CORS_ORIGIN, 'CORS_ORIGIN', errors);

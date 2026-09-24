@@ -4,12 +4,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Ban, Pencil, ShieldCheck } from 'lucide-react';
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
-import { initials, list, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
 import {
   INVITE_STATUS_LABELS,
   buildPermissionMatrix,
 } from '@/lib/permission-presentation';
 import { DirtyFormModal, Modal } from './modal';
+import { PersonAvatar } from './person-avatar';
+import { UploadableAvatar } from './uploadable-avatar';
 import { EmptyState, ErrorState, MetricCard, PageHeader, Panel, Skeleton, StatusBadge } from './ui';
 
 const inviteSchema = z.object({
@@ -238,6 +240,29 @@ export function UsersView() {
       setFormMessage('Usuário atualizado.');
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'Não foi possível atualizar o usuário.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadUserAvatar(userId: string, file: File) {
+    if (!file.type.startsWith('image/')) {
+      setFormError('Envie uma imagem (JPG, PNG ou WEBP).');
+      return;
+    }
+    setBusy(true);
+    setFormError('');
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      const uploaded = await api.postForm<RecordValue>(`/users/${userId}/avatar`, form);
+      setEditUser((current) => (current && String(current.id) === userId
+        ? { ...current, avatarUrl: uploaded.avatarUrl ?? `/users/${userId}/avatar`, avatarFileId: uploaded.avatarFileId }
+        : current));
+      await load();
+      setFormMessage('Foto atualizada.');
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : 'Não foi possível enviar a foto.');
     } finally {
       setBusy(false);
     }
@@ -492,6 +517,19 @@ export function UsersView() {
       >
         {editUser ? (
           <form className="mutation-form" key={String(editUser.id)} onSubmit={(event) => void submitEditUser(event)}>
+            <div className="span-2" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <UploadableAvatar
+                name={editUser.name}
+                photoUrl={text(editUser.avatarUrl, '') || null}
+                uploading={busy}
+                title={text(editUser.avatarUrl) ? 'Alterar foto do usuário' : 'Adicionar foto do usuário'}
+                onFile={(file) => uploadUserAvatar(String(editUser.id), file)}
+              />
+              <div>
+                <strong style={{ display: 'block' }}>Foto do usuário</strong>
+                <span className="field-hint">JPG, PNG ou WEBP · até 2 MB</span>
+              </div>
+            </div>
             <label className="span-2">Nome<input name="name" required defaultValue={text(editUser.name)} /></label>
             <label className="span-2">E-mail<input name="email" type="email" required defaultValue={text(editUser.email)} /></label>
             <label>Perfil
@@ -652,7 +690,7 @@ export function UsersView() {
                     <tr key={String(user.id)}>
                       <td>
                         <div className="person-cell">
-                          <div className="avatar">{initials(user.name)}</div>
+                          <PersonAvatar name={user.name} photoUrl={text(user.avatarUrl, '') || null} className="avatar" />
                           <div>
                             <strong>{text(user.name)}</strong>
                             <span>{text(user.email)}</span>

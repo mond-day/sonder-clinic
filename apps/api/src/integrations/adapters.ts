@@ -22,7 +22,9 @@ export function niboUrl(baseUrl: string, path: string, apiKey: string): string {
   return `${url}${separator}apitoken=${encodeURIComponent(apiKey)}`;
 }
 
-function asNamedList(body: unknown): Array<{ id: string; name: string }> {
+export type NiboCatalogEntry = { id: string; name: string; type?: string };
+
+function asNamedList(body: unknown): NiboCatalogEntry[] {
   const rows = Array.isArray(body)
     ? body
     : body && typeof body === 'object'
@@ -35,16 +37,25 @@ function asNamedList(body: unknown): Array<{ id: string; name: string }> {
   return rows.flatMap((row) => {
     if (!row || typeof row !== 'object') return [];
     const item = row as Record<string, unknown>;
-    const id = String(item.id ?? item.scheduleCategoryId ?? item.categoryId ?? item.costCenterId ?? '');
+    const id = String(
+      item.id
+      ?? item.accountId
+      ?? item.scheduleCategoryId
+      ?? item.categoryId
+      ?? item.costCenterId
+      ?? '',
+    );
     const name = String(item.name ?? item.description ?? item.title ?? '');
     if (!id || !name) return [];
-    return [{ id, name }];
+    const type = String(item.type ?? item.categoryType ?? '').trim();
+    return type ? [{ id, name, type }] : [{ id, name }];
   });
 }
 
 export async function fetchNiboCatalog(apiKey: string): Promise<{
-  categories: Array<{ id: string; name: string }>;
-  costCenters: Array<{ id: string; name: string }>;
+  categories: NiboCatalogEntry[];
+  costCenters: NiboCatalogEntry[];
+  accounts: NiboCatalogEntry[];
   source: 'live' | 'unavailable';
   message?: string;
 }> {
@@ -54,6 +65,7 @@ export async function fetchNiboCatalog(apiKey: string): Promise<{
     return {
       categories: [],
       costCenters: [],
+      accounts: [],
       source: 'unavailable',
       message: mock
         ? 'Nibo em modo MOCK. Informe os IDs manualmente ou desative NIBO_MOCK para buscar categorias.'
@@ -62,7 +74,7 @@ export async function fetchNiboCatalog(apiKey: string): Promise<{
   }
   const baseUrl = (process.env.NIBO_BASE_URL ?? 'https://api.nibo.com.br/empresas/v1').replace(/\/$/, '');
   const headers = niboAuthHeaders(key);
-  async function tryPaths(paths: string[]): Promise<Array<{ id: string; name: string }>> {
+  async function tryPaths(paths: string[]): Promise<NiboCatalogEntry[]> {
     for (const path of paths) {
       try {
         const result = await fetchJson(niboUrl(baseUrl, path, key), { headers });
@@ -76,15 +88,20 @@ export async function fetchNiboCatalog(apiKey: string): Promise<{
     }
     return [];
   }
-  const categories = await tryPaths(['/categories', '/schedulescategories', '/financialcategories']);
-  const costCenters = await tryPaths(['/costcenters', '/costCenters']);
+  const [categories, costCenters, accounts] = await Promise.all([
+    tryPaths(['/categories', '/schedulescategories', '/financialcategories']),
+    tryPaths(['/costcenters', '/costCenters']),
+    tryPaths(['/accounts', '/Accounts']),
+  ]);
+  const hasAny = categories.length || costCenters.length || accounts.length;
   return {
     categories,
     costCenters,
-    source: categories.length || costCenters.length ? 'live' : 'unavailable',
-    message: categories.length || costCenters.length
+    accounts,
+    source: hasAny ? 'live' : 'unavailable',
+    message: hasAny
       ? undefined
-      : 'Não foi possível listar categorias do Nibo. Informe os IDs manualmente.',
+      : 'Não foi possível listar categorias, centros de custo ou contas do Nibo. Teste a conexão e tente novamente.',
   };
 }
 

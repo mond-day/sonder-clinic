@@ -15,7 +15,10 @@ import {
   normalizeDocument,
   payableFieldsFromNibo,
   readNiboIdList,
+  readNiboPayableCategoryIds,
+  readNiboReceivableCategoryIds,
   receivableFieldsFromNibo,
+  niboRecurrenceFieldsFromSchedule,
   shouldCreateNiboSettlement,
 } from './nibo-import.utils';
 import type { NiboScheduleItem } from '../../integrations/nibo-schedules';
@@ -34,6 +37,11 @@ const baseItem = (overrides: Partial<NiboScheduleItem> = {}): NiboScheduleItem =
   costCenterName: 'Clínica',
   stakeholderName: 'Ana',
   stakeholderDocument: '123.456.789-00',
+  hasRecurrence: false,
+  recurrenceId: null,
+  recurrenceInterval: null,
+  recurrenceIntervalType: null,
+  recurrenceEndDate: null,
   ...overrides,
 });
 
@@ -56,13 +64,43 @@ describe('nibo-import.utils', () => {
     ]);
   });
 
-  it('filtra por categoria; centro de custo não dropa item sem CC', () => {
+  it('separa categorias de recebíveis e pagáveis', () => {
+    const config = {
+      receivableCategoryIds: ['rec-1'],
+      payableCategoryIds: ['pay-1', 'pay-2'],
+    };
+    expect(readNiboReceivableCategoryIds(config)).toEqual(['rec-1']);
+    expect(readNiboPayableCategoryIds(config)).toEqual(['pay-1', 'pay-2']);
+    // Sem payableCategoryIds gravado: não herda as de receita (evita filtrar despesas a zero).
+    expect(readNiboPayableCategoryIds({ receivableCategoryIds: ['rec-1'] })).toEqual([]);
+  });
+
+  it('mapeia recorrência Nibo para campos locais sem gerar localmente', () => {
+    const fields = niboRecurrenceFieldsFromSchedule(
+      baseItem({
+        hasRecurrence: true,
+        recurrenceId: 'rec-99',
+        recurrenceInterval: 1,
+        recurrenceIntervalType: 2,
+        description: 'Aluguel',
+      }),
+      'PAYABLE',
+    );
+    expect(fields?.frequency).toBe('MONTHLY');
+    expect(fields?.metadata.source).toBe('NIBO');
+    expect(fields?.metadata.generateLocally).toBe(false);
+    expect(niboRecurrenceFieldsFromSchedule(baseItem(), 'PAYABLE')).toBeNull();
+  });
+
+  it('filtra por categoria; com CC selecionado exige match (sem CC = exclui)', () => {
     expect(matchesNiboFilters(baseItem(), { categoryIds: ['cat-a'], costCenterIds: [] })).toBe(true);
     expect(matchesNiboFilters(baseItem(), { categoryIds: ['other'], costCenterIds: [] })).toBe(false);
     expect(matchesNiboFilters(baseItem(), { categoryIds: [], costCenterIds: ['cc-1'] })).toBe(true);
-    // Sem costCenterId: passa mesmo com filtro de CC (despesas Nibo sem CC).
+    // Sem filtro de CC: importa todos (inclusive sem centro).
+    expect(matchesNiboFilters(baseItem({ costCenterId: null }), { categoryIds: [], costCenterIds: [] })).toBe(true);
+    // Com filtro de CC: item sem centro é excluído.
     expect(matchesNiboFilters(baseItem({ costCenterId: null }), { categoryIds: [], costCenterIds: ['cc-1'] })).toBe(
-      true,
+      false,
     );
     // CC diferente: exclui.
     expect(matchesNiboFilters(baseItem({ costCenterId: 'cc-other' }), { categoryIds: [], costCenterIds: ['cc-1'] })).toBe(
@@ -90,8 +128,10 @@ describe('nibo-import.utils', () => {
     expect(niboScheduleStatus(baseItem({ isPaid: true, paidValue: 100 }))).toBe('PAID');
     expect(shouldCreateNiboSettlement(baseItem())).toBe(false);
     expect(shouldCreateNiboSettlement(baseItem({ isPaid: true, paidValue: 100 }))).toBe(true);
+    expect(shouldCreateNiboSettlement(baseItem({ isPaid: true, paidValue: 0, value: 100 }))).toBe(true);
     expect(shouldCreateNiboSettlement(baseItem({ paidValue: 40 }))).toBe(true);
     expect(niboSettlementAmount(baseItem({ paidValue: 40, value: 100 }))).toBe('40.00');
+    expect(niboSettlementAmount(baseItem({ isPaid: true, paidValue: 0, value: 100 }))).toBe('100.00');
     expect(niboPaymentIdempotencyKey('sch-1')).toBe('nibo-schedule:sch-1');
   });
 

@@ -74,10 +74,19 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const [selectedReceivable, setSelectedReceivable] = useState<RecordValue | null>(null);
   const [selectedPayable, setSelectedPayable] = useState<RecordValue | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('open');
   const [dueFrom, setDueFrom] = useState('');
   const [dueTo, setDueTo] = useState('');
   const [patientQuery, setPatientQuery] = useState('');
+  const [originFilter, setOriginFilter] = useState('');
+  const [amountMin, setAmountMin] = useState('');
+  const [amountMax, setAmountMax] = useState('');
+  const [payableStatusFilter, setPayableStatusFilter] = useState('open');
+  const [payableQuery, setPayableQuery] = useState('');
+  const [payableDueFrom, setPayableDueFrom] = useState('');
+  const [payableDueTo, setPayableDueTo] = useState('');
+  const [payableOriginFilter, setPayableOriginFilter] = useState('');
+  const [payableFiltersOpen, setPayableFiltersOpen] = useState(false);
   const [closingId, setClosingId] = useState<string | null>(null);
   const [recurrenceBusy, setRecurrenceBusy] = useState<string | null>(null);
   const [recurrenceOpen, setRecurrenceOpen] = useState(false);
@@ -86,6 +95,17 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const [recurrenceKindFilter, setRecurrenceKindFilter] = useState('');
   const [cashflowPeriod, setCashflowPeriod] = useState<'7d' | '30d' | '90d' | 'year'>('30d');
   const [createReceivableOpen, setCreateReceivableOpen] = useState(false);
+  const [createPayableOpen, setCreatePayableOpen] = useState(false);
+  const [payableBusy, setPayableBusy] = useState(false);
+  const [payableForm, setPayableForm] = useState({
+    description: '',
+    dueDate: new Date().toISOString().slice(0, 10),
+    supplierName: '',
+    categoryId: '',
+    costCenterId: '',
+  });
+  const [financeCategories, setFinanceCategories] = useState<RecordValue[]>([]);
+  const [costCenters, setCostCenters] = useState<RecordValue[]>([]);
   const [receiveTarget, setReceiveTarget] = useState<RecordValue | null>(null);
   const [receivableBusy, setReceivableBusy] = useState(false);
   const [receivableForm, setReceivableForm] = useState({
@@ -144,8 +164,13 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
       canCommission ? api.get<RecordValue[]>(`/commission-events?clinicId=${clinicId}&from=${from}`).catch(() => []) : Promise.resolve([]),
       canCommission ? api.get<RecordValue[]>(`/commission-periods?clinicId=${clinicId}`).catch(() => []) : Promise.resolve([]),
       api.get<RecordValue[]>(`/patients?clinicId=${clinicId}`).catch(() => []),
+      canFinance ? api.get<RecordValue[]>('/finance-categories?kind=EXPENSE').catch(() => []) : Promise.resolve([]),
+      canFinance ? api.get<RecordValue[]>('/cost-centers').catch(() => []) : Promise.resolve([]),
     ])
-      .then(([nextReceivables, nextPayables, nextRecurrences, nextCashflow, nextRules, nextEvents, nextPeriods, nextPatients]) => {
+      .then(([
+        nextReceivables, nextPayables, nextRecurrences, nextCashflow, nextRules, nextEvents, nextPeriods, nextPatients,
+        nextCategories, nextCenters,
+      ]) => {
         setReceivables(list(nextReceivables));
         setPayables(list(nextPayables));
         setRecurrences(list(nextRecurrences));
@@ -154,6 +179,8 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
         setCommissionEvents(list(nextEvents));
         setCommissionPeriods(list(nextPeriods));
         setPatients(list(nextPatients));
+        setFinanceCategories(list(nextCategories).filter((row) => row.active !== false));
+        setCostCenters(list(nextCenters).filter((row) => row.active !== false));
       })
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao carregar o financeiro.'))
       .finally(() => setLoading(false));
@@ -253,6 +280,48 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o título.');
     } finally {
       setReceivableBusy(false);
+    }
+  };
+
+  const createPayable = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!clinicId || !canFinanceCreate) return;
+    const data = new FormData(event.currentTarget);
+    const description = String(data.get('description') || '').trim();
+    const originalAmount = moneyInputToApi(data.get('originalAmount'));
+    const dueDate = String(data.get('dueDate') || '');
+    const supplierName = String(data.get('supplierName') || '').trim();
+    const categoryId = String(data.get('categoryId') || '').trim();
+    const costCenterId = String(data.get('costCenterId') || '').trim();
+    if (description.length < 3 || !dueDate || Number(originalAmount) <= 0) {
+      setError('Informe descrição, vencimento e um valor válido.');
+      return;
+    }
+    setPayableBusy(true);
+    setError('');
+    try {
+      await api.post('/payables', {
+        clinicId,
+        description,
+        originalAmount,
+        dueDate,
+        supplierName: supplierName || undefined,
+        categoryId: categoryId || undefined,
+        costCenterId: costCenterId || undefined,
+      });
+      setCreatePayableOpen(false);
+      setPayableForm({
+        description: '',
+        dueDate: new Date().toISOString().slice(0, 10),
+        supplierName: '',
+        categoryId: '',
+        costCenterId: '',
+      });
+      load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível criar a conta a pagar.');
+    } finally {
+      setPayableBusy(false);
     }
   };
 
@@ -370,9 +439,47 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
     const query = patientQuery.trim().toLocaleLowerCase('pt-BR');
     const fromMs = dueFrom ? new Date(`${dueFrom}T00:00:00`).getTime() : null;
     const toMs = dueTo ? new Date(`${dueTo}T23:59:59`).getTime() : null;
+    const min = amountMin.trim() ? Number(amountMin.replace(',', '.')) : null;
+    const max = amountMax.trim() ? Number(amountMax.replace(',', '.')) : null;
     return receivables.filter((item) => {
       const status = String(item.effectiveStatus ?? item.status);
-      if (statusFilter && status !== statusFilter) return false;
+      if (statusFilter === 'open') {
+        if (['PAID', 'CANCELLED'].includes(status)) return false;
+      } else if (statusFilter && status !== statusFilter) {
+        return false;
+      }
+      if (originFilter === 'NIBO' && item.provider !== 'NIBO') return false;
+      if (originFilter === 'MANUAL' && item.provider === 'NIBO') return false;
+      if (fromMs != null || toMs != null) {
+        if (!item.dueDate) return false;
+        const dueMs = new Date(String(item.dueDate)).getTime();
+        if (Number.isNaN(dueMs)) return false;
+        if (fromMs != null && dueMs < fromMs) return false;
+        if (toMs != null && dueMs > toMs) return false;
+      }
+      const amount = Number(item.netAmount ?? item.originalAmount ?? 0);
+      if (min != null && Number.isFinite(min) && amount < min) return false;
+      if (max != null && Number.isFinite(max) && amount > max) return false;
+      if (!query) return true;
+      const patientName = text(nested(item, 'patient').fullName, '').toLocaleLowerCase('pt-BR');
+      const description = text(item.description).toLocaleLowerCase('pt-BR');
+      return patientName.includes(query) || description.includes(query);
+    });
+  }, [amountMax, amountMin, dueFrom, dueTo, originFilter, patientQuery, receivables, statusFilter]);
+
+  const filteredPayables = useMemo(() => {
+    const query = payableQuery.trim().toLocaleLowerCase('pt-BR');
+    const fromMs = payableDueFrom ? new Date(`${payableDueFrom}T00:00:00`).getTime() : null;
+    const toMs = payableDueTo ? new Date(`${payableDueTo}T23:59:59`).getTime() : null;
+    return payables.filter((item) => {
+      const status = String(item.status);
+      if (payableStatusFilter === 'open') {
+        if (['PAID', 'CANCELLED'].includes(status)) return false;
+      } else if (payableStatusFilter && status !== payableStatusFilter) {
+        return false;
+      }
+      if (payableOriginFilter === 'NIBO' && item.provider !== 'NIBO') return false;
+      if (payableOriginFilter === 'MANUAL' && item.provider === 'NIBO') return false;
       if (fromMs != null || toMs != null) {
         if (!item.dueDate) return false;
         const dueMs = new Date(String(item.dueDate)).getTime();
@@ -381,11 +488,12 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
         if (toMs != null && dueMs > toMs) return false;
       }
       if (!query) return true;
-      const patientName = text(nested(item, 'patient').fullName, '').toLocaleLowerCase('pt-BR');
       const description = text(item.description).toLocaleLowerCase('pt-BR');
-      return patientName.includes(query) || description.includes(query);
+      const supplier = text(item.supplierName, '').toLocaleLowerCase('pt-BR');
+      const notes = text(item.notes, '').toLocaleLowerCase('pt-BR');
+      return description.includes(query) || supplier.includes(query) || notes.includes(query);
     });
-  }, [dueFrom, dueTo, patientQuery, receivables, statusFilter]);
+  }, [payableDueFrom, payableDueTo, payableOriginFilter, payableQuery, payableStatusFilter, payables]);
 
   const filteredRecurrences = useMemo(() => {
     const query = recurrenceQuery.trim().toLocaleLowerCase('pt-BR');
@@ -535,36 +643,40 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   <div className="span-2" style={{ marginTop: 16 }}>
                     <small>Pagamentos e cobranças</small>
                     <div className="settings-list" style={{ marginTop: 8 }}>
-                      {(selectedReceivable.payments as RecordValue[]).map((payment) => {
-                        const data = nested(payment, 'providerData');
-                        return (
+                      {(selectedReceivable.payments as RecordValue[]).map((payment) => (
                           <div className="settings-row" key={String(payment.id)}>
                             <div>
                               <strong>{paymentMethodLabel(payment.method)} · {currency(payment.amount)}</strong>
                               <span>{presentationLabel(payment.status)}{payment.provider ? ` · ${String(payment.provider)}` : ''}</span>
-                              {text(data.brCodeBase64) ? (
-                                <div style={{ marginTop: 8 }}>
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img src={text(data.brCodeBase64)} alt="QR Code PIX" style={{ width: 140, height: 140 }} />
-                                </div>
-                              ) : null}
-                              {data.brCode ? <span className="field-hint">PIX: {text(data.brCode)}</span> : null}
-                              {data.barCode ? <span className="field-hint">Boleto: {text(data.barCode)}</span> : null}
-                              {data.url ? <a className="field-hint" href={text(data.url)} target="_blank" rel="noreferrer">Abrir boleto</a> : null}
                             </div>
-                            {canFinanceCreate && payment.status === 'PENDING' && payment.provider === 'ABACATEPAY' ? (
-                              <button
-                                type="button"
-                                className="button small"
-                                disabled={receivableBusy}
-                                onClick={() => void syncChargePayment(String(payment.id))}
-                              >
-                                Atualizar status
-                              </button>
-                            ) : null}
+                            <div className="row-actions">
+                              {canFinanceCreate && payment.status === 'PENDING' && payment.provider === 'ABACATEPAY' ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="button small"
+                                    onClick={() => {
+                                      setReceiveTarget(selectedReceivable);
+                                      setReceiveMode('charge');
+                                      setChargePayment(payment);
+                                      setSelectedReceivable(null);
+                                    }}
+                                  >
+                                    Ver cobrança
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="button small"
+                                    disabled={receivableBusy}
+                                    onClick={() => void syncChargePayment(String(payment.id))}
+                                  >
+                                    Atualizar status
+                                  </button>
+                                </>
+                              ) : null}
+                            </div>
                           </div>
-                        );
-                      })}
+                        ))}
                     </div>
                   </div>
                 ) : null}
@@ -738,10 +850,11 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                 value={statusFilter}
                 onChange={(event) => setStatusFilter(event.target.value)}
               >
+                <option value="open">Em aberto</option>
                 <option value="">Todos os status</option>
-                <option value="OPEN">Em aberto</option>
+                <option value="OPEN">Aberto</option>
                 <option value="PARTIALLY_PAID">Parcialmente pago</option>
-                <option value="PAID">Pago</option>
+                <option value="PAID">Pago / recebido</option>
                 <option value="OVERDUE">Vencido</option>
               </select>
               <input
@@ -754,31 +867,71 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
             </div>
             {filtersOpen ? (
               <div className="filters filter-advanced">
-                <label>
-                  Vencimento de
+                <select
+                  className="filter-select"
+                  aria-label="Filtrar por origem"
+                  value={originFilter}
+                  onChange={(event) => setOriginFilter(event.target.value)}
+                >
+                  <option value="">Todas as origens</option>
+                  <option value="NIBO">Importado do Nibo</option>
+                  <option value="MANUAL">Manual / outros</option>
+                </select>
+                <label className="filter-field">
+                  <span>Vencimento de</span>
                   <input
+                    className="filter-input"
                     type="date"
                     value={dueFrom}
                     onChange={(event) => setDueFrom(event.target.value)}
                     aria-label="Vencimento a partir de"
                   />
                 </label>
-                <label>
-                  Vencimento até
+                <label className="filter-field">
+                  <span>Vencimento até</span>
                   <input
+                    className="filter-input"
                     type="date"
                     value={dueTo}
                     onChange={(event) => setDueTo(event.target.value)}
                     aria-label="Vencimento até"
                   />
                 </label>
-                {(dueFrom || dueTo) ? (
+                <label className="filter-field">
+                  <span>Valor mín.</span>
+                  <input
+                    className="filter-input"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    value={amountMin}
+                    onChange={(event) => setAmountMin(event.target.value)}
+                    aria-label="Valor mínimo"
+                  />
+                </label>
+                <label className="filter-field">
+                  <span>Valor máx.</span>
+                  <input
+                    className="filter-input"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    value={amountMax}
+                    onChange={(event) => setAmountMax(event.target.value)}
+                    aria-label="Valor máximo"
+                  />
+                </label>
+                {(dueFrom || dueTo || originFilter || amountMin || amountMax) ? (
                   <button
                     type="button"
                     className="button small"
-                    onClick={() => { setDueFrom(''); setDueTo(''); }}
+                    onClick={() => {
+                      setDueFrom('');
+                      setDueTo('');
+                      setOriginFilter('');
+                      setAmountMin('');
+                      setAmountMax('');
+                    }}
                   >
-                    Limpar período
+                    Limpar filtros
                   </button>
                 ) : null}
               </div>
@@ -803,19 +956,9 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                       <tr key={String(item.id)} onClick={() => setSelectedReceivable(item)} style={{ cursor: 'pointer' }}>
                         <td>
                           <div>{text(item.description)}</div>
-                          {(() => {
-                            const pix = list(item.payments as RecordValue[]).map((payment) => nested(payment, 'providerData')).find((data) => text(data.brCodeBase64) || text(data.brCode) || text(data.url));
-                            if (!pix) return null;
-                            return (
-                              <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
-                                {text(pix.brCodeBase64) ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={text(pix.brCodeBase64)} alt="QR PIX" style={{ width: 56, height: 56 }} />
-                                ) : null}
-                                <span className="field-hint">{text(pix.brCode) ? 'PIX copia e cola disponível' : text(pix.url) ? 'Boleto disponível' : ''}</span>
-                              </div>
-                            );
-                          })()}
+                          {item.provider === 'NIBO' ? (
+                            <span className="field-hint">Nibo</span>
+                          ) : null}
                         </td>
                         <td>{dateOnly(item.dueDate)}</td>
                         <td>{currency(item.netAmount)}</td>
@@ -1015,6 +1158,47 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
       {tab === 'payable' && (
         <>
           <Modal
+            open={createPayableOpen}
+            title="Nova conta a pagar"
+            description="Cadastre uma despesa avulsa (além das importadas do Nibo)."
+            onClose={() => setCreatePayableOpen(false)}
+            confirmOnClose
+          >
+            <form className="mutation-form" onSubmit={(event) => void createPayable(event)}>
+              <label className="span-2">Descrição
+                <input name="description" required minLength={3} defaultValue={payableForm.description} />
+              </label>
+              <label>Valor<UncontrolledMoneyInput name="originalAmount" required /></label>
+              <label>Vencimento
+                <input name="dueDate" type="date" required defaultValue={payableForm.dueDate} />
+              </label>
+              <label className="span-2">Fornecedor (opcional)
+                <input name="supplierName" defaultValue={payableForm.supplierName} />
+              </label>
+              <label>Categoria (opcional)
+                <select name="categoryId" defaultValue={payableForm.categoryId}>
+                  <option value="">Não informado</option>
+                  {financeCategories.map((item) => (
+                    <option key={String(item.id)} value={String(item.id)}>{text(item.name)}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Centro de custo (opcional)
+                <select name="costCenterId" defaultValue={payableForm.costCenterId}>
+                  <option value="">Não informado</option>
+                  {costCenters.map((item) => (
+                    <option key={String(item.id)} value={String(item.id)}>{text(item.name)}</option>
+                  ))}
+                </select>
+              </label>
+              {error ? <p className="form-error span-2" role="alert">{error}</p> : null}
+              <div className="modal-footer span-2">
+                <button type="button" className="button" onClick={() => setCreatePayableOpen(false)}>Cancelar</button>
+                <button className="button primary" disabled={payableBusy}>{payableBusy ? 'Salvando…' : 'Criar despesa'}</button>
+              </div>
+            </form>
+          </Modal>
+          <Modal
             open={Boolean(selectedPayable)}
             title="Detalhes da conta a pagar"
             description="Valor, fornecedor, categoria e pagamentos vinculados."
@@ -1068,38 +1252,142 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
               </>
             ) : null}
           </Modal>
-          <Panel title="Contas a pagar" description="Títulos de saída da clínica.">
+          <Panel
+            title="Contas a pagar"
+            description="Despesas locais e importadas do Nibo. Parametrize categorias e centros em Configurações → Integrações → Nibo."
+            actions={(
+              <div className="heading-actions" style={{ marginLeft: 0 }}>
+                {canFinanceCreate ? (
+                  <button
+                    className="button primary small"
+                    type="button"
+                    onClick={() => { setError(''); setCreatePayableOpen(true); }}
+                  >
+                    <Plus size={14} /> Conta a pagar
+                  </button>
+                ) : null}
+                <button
+                  className="button small"
+                  type="button"
+                  aria-expanded={payableFiltersOpen}
+                  onClick={() => setPayableFiltersOpen((value) => !value)}
+                >
+                  <SlidersHorizontal size={14} />Filtros
+                </button>
+              </div>
+            )}
+          >
             {!canFinance ? (
               <div className="state-message error" role="alert">Sem permissão para ver o financeiro.</div>
-            ) : payables.length === 0 ? (
-              <EmptyState title="Nenhuma conta a pagar" description="Cadastre despesas pelo módulo financeiro quando necessário." />
             ) : (
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Descrição</th>
-                      <th>Vencimento</th>
-                      <th>Valor</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payables.map((item) => (
-                      <tr
-                        key={String(item.id)}
-                        onClick={() => setSelectedPayable(item)}
-                        style={{ cursor: 'pointer' }}
+              <>
+                <div className="filters filter-primary">
+                  <select
+                    className="filter-select"
+                    aria-label="Filtrar despesas por status"
+                    value={payableStatusFilter}
+                    onChange={(event) => setPayableStatusFilter(event.target.value)}
+                  >
+                    <option value="open">Em aberto</option>
+                    <option value="">Todos os status</option>
+                    <option value="OPEN">Aberto</option>
+                    <option value="PARTIALLY_PAID">Parcialmente pago</option>
+                    <option value="PAID">Pago</option>
+                  </select>
+                  <input
+                    className="filter-input"
+                    placeholder="Buscar descrição, fornecedor…"
+                    value={payableQuery}
+                    onChange={(event) => setPayableQuery(event.target.value)}
+                    aria-label="Buscar despesa"
+                  />
+                </div>
+                {payableFiltersOpen ? (
+                  <div className="filters filter-advanced">
+                    <select
+                      className="filter-select"
+                      aria-label="Filtrar despesas por origem"
+                      value={payableOriginFilter}
+                      onChange={(event) => setPayableOriginFilter(event.target.value)}
+                    >
+                      <option value="">Todas as origens</option>
+                      <option value="NIBO">Importado do Nibo</option>
+                      <option value="MANUAL">Manual / outros</option>
+                    </select>
+                    <label className="filter-field">
+                      <span>Vencimento de</span>
+                      <input
+                        className="filter-input"
+                        type="date"
+                        value={payableDueFrom}
+                        onChange={(event) => setPayableDueFrom(event.target.value)}
+                        aria-label="Vencimento a partir de"
+                      />
+                    </label>
+                    <label className="filter-field">
+                      <span>Vencimento até</span>
+                      <input
+                        className="filter-input"
+                        type="date"
+                        value={payableDueTo}
+                        onChange={(event) => setPayableDueTo(event.target.value)}
+                        aria-label="Vencimento até"
+                      />
+                    </label>
+                    {(payableDueFrom || payableDueTo || payableOriginFilter) ? (
+                      <button
+                        type="button"
+                        className="button small"
+                        onClick={() => {
+                          setPayableDueFrom('');
+                          setPayableDueTo('');
+                          setPayableOriginFilter('');
+                        }}
                       >
-                        <td>{text(item.description)}</td>
-                        <td>{dateOnly(item.dueDate)}</td>
-                        <td>{currency(item.originalAmount ?? item.netAmount)}</td>
-                        <td><StatusBadge tone={statusTone(String(item.status))}>{presentationLabel(item.status)}</StatusBadge></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        Limpar filtros
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {filteredPayables.length === 0 ? (
+                  <EmptyState
+                    title="Nenhuma conta a pagar"
+                    description={payables.length
+                      ? 'Nenhum resultado para os filtros.'
+                      : 'Crie com “Conta a pagar” ou importe do Nibo em Configurações → Integrações.'}
+                  />
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Descrição</th>
+                          <th>Vencimento</th>
+                          <th>Valor</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredPayables.map((item) => (
+                          <tr
+                            key={String(item.id)}
+                            onClick={() => setSelectedPayable(item)}
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <td>
+                              <div>{text(item.description)}</div>
+                              {item.provider === 'NIBO' ? <span className="field-hint">Nibo</span> : null}
+                            </td>
+                            <td>{dateOnly(item.dueDate)}</td>
+                            <td>{currency(item.originalAmount ?? item.netAmount)}</td>
+                            <td><StatusBadge tone={statusTone(String(item.status))}>{presentationLabel(item.status)}</StatusBadge></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </Panel>
         </>
@@ -1219,7 +1507,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
           </Modal>
           <Panel
             title="Recorrências"
-            description={`${recurrences.length} regras na clínica.`}
+            description="Regras locais e espelhos do Nibo (ocorrências importadas também aparecem em Contas a receber/pagar)."
             actions={(
               <div className="heading-actions" style={{ marginLeft: 0 }}>
                 <button
@@ -1280,9 +1568,15 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredRecurrences.map((item) => (
+                    {filteredRecurrences.map((item) => {
+                      const meta = nested(item, 'metadata');
+                      const fromNibo = text(meta.source) === 'NIBO';
+                      return (
                       <tr key={String(item.id)}>
-                        <td>{text(item.description)}</td>
+                        <td>
+                          <div>{text(item.description)}</div>
+                          {fromNibo ? <span className="field-hint">Espelho Nibo</span> : null}
+                        </td>
                         <td>{presentationLabel(item.kind)}</td>
                         <td>{currency(item.amount)}</td>
                         <td>{presentationLabel(item.frequency)} × {text(item.interval, '1')}</td>
@@ -1296,8 +1590,9 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                           <button
                             type="button"
                             className="button secondary"
-                            disabled={recurrenceBusy === String(item.id) || !canFinanceCreate || !item.active}
+                            disabled={recurrenceBusy === String(item.id) || !canFinanceCreate || !item.active || fromNibo}
                             onClick={() => void generateRecurrence(String(item.id))}
+                            title={fromNibo ? 'Parcelas vêm do Nibo automaticamente' : undefined}
                           >
                             Gerar agora
                           </button>
@@ -1311,7 +1606,8 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

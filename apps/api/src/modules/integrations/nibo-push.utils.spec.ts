@@ -44,9 +44,23 @@ describe('nibo-push.utils', () => {
       dueDate: '2026-09-20',
       amount: 150,
       categoryId: 'cat1',
+      costCenterId: null,
       reference: 'sonder:receivable:r1',
     })).toMatchObject({
       stakeholderId: 'st1',
+      categories: [{ categoryId: 'cat1', value: 150 }],
+    });
+    expect(buildCreditSchedulePayload({
+      stakeholderId: 'st1',
+      description: 'Consulta Odontologia',
+      dueDate: '2026-09-20',
+      amount: 150,
+      categoryId: 'cat1',
+      costCenterId: 'cc-odontologia',
+      reference: 'sonder:receivable:r1',
+    })).toMatchObject({
+      costCenterValueType: 0,
+      costCenters: [{ costCenterId: 'cc-odontologia', value: 150 }],
       categories: [{ categoryId: 'cat1', value: 150 }],
     });
     expect(buildDebitSchedulePayload({

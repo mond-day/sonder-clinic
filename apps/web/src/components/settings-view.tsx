@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { z } from 'zod';
 import {
   Building2,
+  Camera,
   CircleDollarSign,
   ClipboardList,
   Clock3,
@@ -40,6 +41,7 @@ import {
 } from '@/lib/business-hours';
 import { formatDnSummary } from '@/lib/dn-parse';
 import { currency, dateOnly, formatCpf, list, moneyInputToApi, presentationLabel, text, type RecordValue } from '@/lib/format';
+import { notifyBrandingUpdated, resolveMediaUrl } from '@/lib/branding';
 import { AnamnesisTemplateEditor } from '@/features/anamnesis/template-editor';
 import {
   ClinicsAdminPanel,
@@ -209,6 +211,76 @@ export function SettingsView() {
   function showFailure(message: string) {
     setNotice('');
     setError(message);
+  }
+
+  async function uploadClinicLogo(file: File) {
+    if (!clinicId) return;
+    if (!file.type.startsWith('image/')) {
+      showFailure('Envie uma imagem (JPG, PNG, WEBP, SVG ou ICO).');
+      return;
+    }
+    try {
+      const form = new FormData();
+      form.set('clinicId', clinicId);
+      form.set('kind', 'logo');
+      form.set('file', file);
+      const uploaded = await api.postForm<{ url: string }>('/settings/branding/assets', form);
+      const current = branding ?? {};
+      const nextBranding = {
+        name: text(current.name, clinic?.tradeName ?? 'Clínica'),
+        subtitle: text(current.subtitle, ''),
+        primaryColor: text(current.primaryColor, '#176B5B'),
+        logoUrl: uploaded.url,
+        faviconUrl: text(current.faviconUrl, '') || undefined,
+      };
+      await api.put('/settings/branding', { clinicId, ...nextBranding });
+      setBranding({ ...current, ...nextBranding, source: 'tenant' });
+      notifyBrandingUpdated(clinicId);
+      showSuccess('Foto da clínica atualizada.');
+    } catch (cause) {
+      showFailure(cause instanceof ApiError ? cause.message : 'Não foi possível enviar a foto da clínica.');
+    }
+  }
+
+  function ClinicStructureHead({
+    title,
+    meta,
+  }: {
+    title: string;
+    meta: string;
+  }) {
+    const logoUrl = resolveMediaUrl(text(branding?.logoUrl, '') || null);
+    const inputId = 'clinic-structure-logo-input';
+    return (
+      <header className="clinic-structure-head">
+        <button
+          type="button"
+          className="clinic-structure-icon clinic-structure-logo-upload"
+          title={logoUrl ? 'Alterar foto da clínica' : 'Adicionar foto da clínica'}
+          aria-label={logoUrl ? 'Alterar foto da clínica' : 'Adicionar foto da clínica'}
+          onClick={() => document.getElementById(inputId)?.click()}
+        >
+          {logoUrl ? <img src={logoUrl} alt="" /> : <Building2 size={18} />}
+          <span className="clinic-structure-logo-hint"><Camera size={14} /></span>
+        </button>
+        <input
+          id={inputId}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/svg+xml,image/x-icon"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) void uploadClinicLogo(file);
+          }}
+        />
+        <div>
+          <small>Clínica</small>
+          <strong>{title}</strong>
+          <span>{meta}</span>
+        </div>
+      </header>
+    );
   }
 
   const load = useCallback(() => {
@@ -1361,14 +1433,7 @@ export function SettingsView() {
               )}
               {!loading && clinic && (clinic.units.length ?? 0) === 0 && (
                 <div className="clinic-structure">
-                  <header className="clinic-structure-head">
-                    <div className="clinic-structure-icon" aria-hidden><Building2 size={18} /></div>
-                    <div>
-                      <small>Clínica</small>
-                      <strong>{clinic.tradeName}</strong>
-                      <span>0 unidades · 0 cadeiras</span>
-                    </div>
-                  </header>
+                  <ClinicStructureHead title={clinic.tradeName} meta="0 unidades · 0 cadeiras" />
                   <EmptyState
                     title="Nenhuma unidade nesta clínica"
                     description="Crie a primeira unidade física para alocar cadeiras na agenda."
@@ -1382,18 +1447,10 @@ export function SettingsView() {
               )}
               {(clinic?.units.length ?? 0) > 0 && (
                 <div className="clinic-structure">
-                  <header className="clinic-structure-head">
-                    <div className="clinic-structure-icon" aria-hidden><Building2 size={18} /></div>
-                    <div>
-                      <small>Clínica</small>
-                      <strong>{clinic?.tradeName}</strong>
-                      <span>
-                        {clinic?.units.length} {clinic?.units.length === 1 ? 'unidade' : 'unidades'}
-                        {' · '}
-                        {chairCount} {chairCount === 1 ? 'cadeira' : 'cadeiras'}
-                      </span>
-                    </div>
-                  </header>
+                  <ClinicStructureHead
+                    title={text(clinic?.tradeName)}
+                    meta={`${clinic?.units.length} ${clinic?.units.length === 1 ? 'unidade' : 'unidades'} · ${chairCount} ${chairCount === 1 ? 'cadeira' : 'cadeiras'}`}
+                  />
                   <div className="unit-hierarchy">
                   {clinic?.units.map((unit) => {
                     const selected = selectedUnitId === unit.id;
@@ -1510,7 +1567,7 @@ export function SettingsView() {
               )}
               <p className="muted-note" style={{ padding: '0 14px 14px' }}>
                 {clinics.length} {clinics.length === 1 ? 'clínica' : 'clínicas'} · {clinic?.units.length ?? 0} unidades · {chairCount} cadeiras.
-                {' '}Nome e logotipo do sistema ficam em Identidade visual, não nesta estrutura física.
+                {' '}Você também pode alterar o logotipo no ícone ao lado do nome da clínica acima, ou em Identidade visual.
                 {' '}
                 <button type="button" className="text-button" onClick={() => setSection('branding')}>Abrir identidade visual</button>
               </p>

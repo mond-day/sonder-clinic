@@ -2,9 +2,11 @@
  * Helpers puros para importação Nibo → Financeiro.
  *
  * Filtros:
- * - Categorias: aplicam em crédito e débito (item sem categoryId é excluído se houver filtro).
- * - Centros de custo: só débito. Item **sem** costCenterId no Nibo **passa** o filtro de CC
- *   (não descartar despesas válidas sem CC); item com CC fora da lista é excluído.
+ * - Categorias de recebíveis: só crédito.
+ * - Categorias de pagáveis: só débito (se não configuradas, não filtra débito por categoria —
+ *   evita sumir contas a pagar quando só categorias de receita estavam selecionadas).
+ * - Centros de custo: só débito. Sem centros selecionados → importa todos os débitos.
+ *   Com centros selecionados → só itens cujo costCenterId está na lista (sem CC no Nibo = exclui).
  */
 
 import type { NiboScheduleItem } from '../../integrations/nibo-schedules';
@@ -76,8 +78,28 @@ export function readNiboIdList(
 }
 
 /**
- * @param filters.costCenterIds — quando preenchido, só aplica a itens que **têm** costCenterId.
- *   Itens sem centro de custo no Nibo passam (evita dropar débitos válidos sem CC).
+ * Categorias de crédito (a receber).
+ */
+export function readNiboReceivableCategoryIds(config: Record<string, unknown> | undefined): string[] {
+  return readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId');
+}
+
+/**
+ * Categorias de débito (a pagar).
+ * Se `payableCategoryIds` nunca foi gravado, retorna lista vazia (= sem filtro de categoria no débito).
+ * Isso corrige o caso em que só categorias de receita estavam selecionadas e despesas sumiam.
+ */
+export function readNiboPayableCategoryIds(config: Record<string, unknown> | undefined): string[] {
+  if (!config) return [];
+  if (Array.isArray(config.payableCategoryIds) || typeof config.payableCategoryId === 'string') {
+    return readNiboIdList(config, 'payableCategoryIds', 'payableCategoryId');
+  }
+  return [];
+}
+
+/**
+ * @param filters.costCenterIds — vazio = sem filtro de CC.
+ *   Preenchido = exige costCenterId na lista (itens sem centro no Nibo são excluídos).
  */
 export function matchesNiboFilters(
   item: NiboScheduleItem,
@@ -89,8 +111,7 @@ export function matchesNiboFilters(
   }
   if (filters.costCenterIds.length) {
     const costCenterId = normalizeNiboId(item.costCenterId);
-    // Sem CC no Nibo: não excluir (despesas frequentemente vêm sem centro).
-    if (costCenterId && !filters.costCenterIds.includes(costCenterId)) return false;
+    if (!costCenterId || !filters.costCenterIds.includes(costCenterId)) return false;
   }
   return true;
 }
@@ -207,13 +228,66 @@ export function niboPayablePaymentMarker(scheduleId: string): string {
 /** PAID ou parcial com valor pago → materializar Payment/PayablePayment no fluxo de caixa. */
 export function shouldCreateNiboSettlement(item: Pick<NiboScheduleItem, 'paidValue' | 'value' | 'isPaid'>): boolean {
   const status = niboScheduleStatus(item as NiboScheduleItem);
-  return (status === 'PAID' || status === 'PARTIALLY_PAID') && item.paidValue > 0;
+  if (status !== 'PAID' && status !== 'PARTIALLY_PAID') return false;
+  // isPaid sem paidValue (quirk da API) → trata como valor integral.
+  return item.paidValue > 0 || item.isPaid;
 }
 
-export function niboSettlementAmount(item: Pick<NiboScheduleItem, 'paidValue' | 'value'>): string {
-  return amountString(Math.min(Math.max(item.paidValue, 0), Math.max(item.value, 0)));
+export function niboSettlementAmount(item: Pick<NiboScheduleItem, 'paidValue' | 'value' | 'isPaid'>): string {
+  const paid = item.paidValue > 0 ? item.paidValue : item.isPaid ? item.value : 0;
+  return amountString(Math.min(Math.max(paid, 0), Math.max(item.value, 0)));
 }
 
 export function niboSettlementPaidAt(item: Pick<NiboScheduleItem, 'dueDate'>): Date {
   return new Date(`${dueDateOnly(item.dueDate)}T12:00:00Z`);
+}
+
+/** Mapeia intervalType Nibo (0–3) → frequência Sonder. */
+export function niboRecurrenceFrequency(intervalType: number | null | undefined): 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY' {
+  switch (intervalType) {
+    case 0: return 'DAILY';
+    case 1: return 'WEEKLY';
+    case 3: return 'YEARLY';
+    case 2:
+    default: return 'MONTHLY';
+  }
+}
+
+export function niboRecurrenceFieldsFromSchedule(
+  item: NiboScheduleItem,
+  kind: 'PAYABLE' | 'RECEIVABLE',
+): {
+  kind: 'PAYABLE' | 'RECEIVABLE';
+  description: string;
+  amount: string;
+  frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+  interval: number;
+  nextOccurrence: Date;
+  endsAt: Date | null;
+  metadata: Record<string, unknown>;
+} | null {
+  if (!item.hasRecurrence) return null;
+  const recurrenceKey = normalizeNiboId(item.recurrenceId) || normalizeNiboId(item.scheduleId);
+  if (!recurrenceKey) return null;
+  const description = (item.description || '').trim() || `Recorrência Nibo ${recurrenceKey}`;
+  return {
+    kind,
+    description,
+    amount: amountString(item.value),
+    frequency: niboRecurrenceFrequency(item.recurrenceIntervalType),
+    interval: Math.max(1, item.recurrenceInterval ?? 1),
+    nextOccurrence: new Date(`${dueDateOnly(item.dueDate)}T00:00:00Z`),
+    endsAt: item.recurrenceEndDate
+      ? new Date(`${dueDateOnly(item.recurrenceEndDate)}T00:00:00Z`)
+      : null,
+    metadata: {
+      source: 'NIBO',
+      generateLocally: false,
+      niboRecurrenceId: recurrenceKey,
+      niboScheduleId: item.scheduleId,
+      categoryId: item.categoryId,
+      categoryName: item.categoryName,
+      supplierName: kind === 'PAYABLE' ? item.stakeholderName : undefined,
+    },
+  };
 }

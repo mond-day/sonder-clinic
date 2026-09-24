@@ -1,6 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, prisma } from '@sonder/database';
-import { createStorageAdapter } from '@sonder/storage';
+import { createStorageAdapter, describeStoragePutFailure } from '@sonder/storage';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
@@ -16,6 +16,12 @@ const brandingSchema = z.object({
 });
 const MAX_BRANDING_BYTES = 2 * 1024 * 1024;
 const ALLOWED_BRANDING_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon']);
+
+function normalizeBrandingMime(mimetype: string): string {
+  const mime = (mimetype || '').toLowerCase().trim();
+  if (mime === 'image/jpg') return 'image/jpeg';
+  return mime;
+}
 const hmSchema = z.string().regex(/^\d{1,2}:\d{2}$/, 'Use o formato HH:mm');
 const businessHoursRuleSchema = z.object({
   start: hmSchema,
@@ -175,6 +181,7 @@ export type LegalDocument = {
 
 @Injectable()
 export class SettingsService {
+  private readonly logger = new Logger(SettingsService.name);
   private readonly storage = createStorageAdapter();
   operationalContext(organizationId: string, clinicId?: string) {
     return Promise.all([
@@ -438,20 +445,27 @@ export class SettingsService {
     }
     if (!file?.buffer?.length) throw new BadRequestException('Envie um arquivo de imagem.');
     if (file.size > MAX_BRANDING_BYTES) throw new BadRequestException('A imagem deve ter no máximo 2 MB.');
-    const mime = file.mimetype || 'application/octet-stream';
+    const mime = normalizeBrandingMime(file.mimetype || 'application/octet-stream');
     if (!ALLOWED_BRANDING_TYPES.has(mime)) {
       throw new BadRequestException('Envie PNG, JPEG, WEBP, SVG ou ICO.');
     }
     const extension = file.originalname.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '';
-    const stored = await this.storage.putObject({
-      organizationId,
-      clinicId,
-      filename: `${kind}${extension || '.png'}`,
-      contentType: mime,
-      body: file.buffer,
-      keyPrefix: 'branding',
-      metadata: { kind: `branding-${kind}`, clinicId },
-    });
+    let stored;
+    try {
+      stored = await this.storage.putObject({
+        organizationId,
+        clinicId,
+        filename: `${kind}${extension || '.png'}`,
+        contentType: mime,
+        body: file.buffer,
+        keyPrefix: 'branding',
+        metadata: { kind: `branding-${kind}`, clinicId },
+      });
+    } catch (error) {
+      const failure = describeStoragePutFailure(error);
+      this.logger.error(`branding putObject failed: ${failure.logMessage}`);
+      throw new BadRequestException(failure.userMessage);
+    }
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
     const fileObject = await prisma.fileObject.create({
       data: {
@@ -464,7 +478,7 @@ export class SettingsService {
         sizeBytes: BigInt(file.size),
         checksum,
         status: 'AVAILABLE',
-        antivirusStatus: 'PENDING',
+        antivirusStatus: 'NOT_APPLICABLE',
         createdById: actorId,
         metadata: json({ kind: `branding-${kind}`, clinicId }),
       },

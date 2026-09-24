@@ -348,6 +348,7 @@ model User {
   email          String
   passwordHash   String
   status         UserStatus          @default(ACTIVE)
+  avatarFileId   String?             @db.Uuid
   lastLoginAt    DateTime?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
@@ -359,6 +360,7 @@ model User {
   passwordResets PasswordResetToken[]
 
   @@unique([organizationId, email])
+  @@index([avatarFileId])
 }
 
 model PasswordResetToken {

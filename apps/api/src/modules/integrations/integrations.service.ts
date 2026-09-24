@@ -52,8 +52,11 @@ import {
   niboSettlementPaidAt,
   normalizeDocument,
   normalizePatientNameKey,
+  niboRecurrenceFieldsFromSchedule,
   payableFieldsFromNibo,
   readNiboIdList,
+  readNiboPayableCategoryIds,
+  readNiboReceivableCategoryIds,
   receivableFieldsFromNibo,
   shouldCreateNiboSettlement,
 } from './nibo-import.utils';
@@ -341,6 +344,7 @@ export class IntegrationsService {
       return {
         categories: [],
         costCenters: [],
+        accounts: [],
         source: 'unavailable' as const,
         message: 'Salve a API Key do Nibo antes de buscar categorias.',
       };
@@ -351,6 +355,7 @@ export class IntegrationsService {
       return {
         categories: [],
         costCenters: [],
+        accounts: [],
         source: 'unavailable' as const,
         message: 'API Key do Nibo ausente nesta conexão.',
       };
@@ -385,16 +390,18 @@ export class IntegrationsService {
       connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
         ? (connection.configuration as Record<string, unknown>)
         : {};
-    const categoryIds = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId');
+    const receivableCategoryIds = readNiboReceivableCategoryIds(config);
+    const payableCategoryIds = readNiboPayableCategoryIds(config);
     const costCenterIds = readNiboIdList(config, 'costCenterIds', 'costCenterId');
-    // Categorias filtram crédito e débito; centros de custo reforçam o filtro só no débito (a pagar).
-    const creditFilters = { categoryIds, costCenterIds: [] as string[] };
-    const debitFilters = { categoryIds, costCenterIds };
+    // Categorias de receita só no crédito; de despesa só no débito; CC só no débito.
+    const creditFilters = { categoryIds: receivableCategoryIds, costCenterIds: [] as string[] };
+    const debitFilters = { categoryIds: payableCategoryIds, costCenterIds };
 
     this.logger.log({
       event: 'nibo.import.started',
       connectionId,
-      categoryFilterCount: categoryIds.length,
+      receivableCategoryFilterCount: receivableCategoryIds.length,
+      payableCategoryFilterCount: payableCategoryIds.length,
       costCenterFilterCount: costCenterIds.length,
     });
 
@@ -430,8 +437,13 @@ export class IntegrationsService {
     let payablesSkipped = 0;
     let patientsCreated = 0;
     let settlementsCreated = 0;
+    let recurrencesUpserted = 0;
+    const seenRecurrenceKeys = new Set<string>();
 
     for (const item of creditItems) {
+      if (await this.upsertNiboRecurrence(organizationId, connection.clinicId, item, 'RECEIVABLE', seenRecurrenceKeys)) {
+        recurrencesUpserted += 1;
+      }
       const fields = receivableFieldsFromNibo(item);
       const existing = await prisma.receivable.findFirst({
         where: {
@@ -482,6 +494,9 @@ export class IntegrationsService {
     }
 
     for (const item of debitItems) {
+      if (await this.upsertNiboRecurrence(organizationId, connection.clinicId, item, 'PAYABLE', seenRecurrenceKeys)) {
+        recurrencesUpserted += 1;
+      }
       const fields = payableFieldsFromNibo(item);
       const existing = await prisma.payable.findFirst({
         where: {
@@ -538,6 +553,7 @@ export class IntegrationsService {
             payablesSkipped,
             patientsCreated,
             settlementsCreated,
+            recurrencesUpserted,
             creditFetched: creditResult.items.length,
             debitFetched: debitResult.items.length,
           },
@@ -547,8 +563,8 @@ export class IntegrationsService {
 
     const warnings = [creditResult.message, debitResult.message].filter(Boolean);
     const filterMiss =
-      (creditResult.items.length > 0 && creditItems.length === 0 && categoryIds.length > 0)
-      || (debitResult.items.length > 0 && debitItems.length === 0 && (categoryIds.length > 0 || costCenterIds.length > 0));
+      (creditResult.items.length > 0 && creditItems.length === 0 && receivableCategoryIds.length > 0)
+      || (debitResult.items.length > 0 && debitItems.length === 0 && (payableCategoryIds.length > 0 || costCenterIds.length > 0));
     const sampleCreditCategories = [...new Set(
       creditResult.items.map((item) => item.categoryId).filter(Boolean),
     )].slice(0, 5) as string[];
@@ -563,6 +579,7 @@ export class IntegrationsService {
       receivablesUpdated,
       payablesCreated,
       payablesUpdated,
+      recurrencesUpserted,
       creditFetched: creditResult.items.length,
       debitFetched: debitResult.items.length,
       creditMatchedFilters: creditItems.length,
@@ -581,6 +598,7 @@ export class IntegrationsService {
       payablesSkipped,
       patientsCreated,
       settlementsCreated,
+      recurrencesUpserted,
       creditFetched: creditResult.items.length,
       debitFetched: debitResult.items.length,
       creditMatchedFilters: creditItems.length,
@@ -590,16 +608,20 @@ export class IntegrationsService {
         `${payablesCreated} despesa(s) criada(s), ${payablesUpdated} atualizada(s)`,
         patientsCreated ? `· ${patientsCreated} paciente(s) criado(s) a partir do contato Nibo` : '',
         settlementsCreated ? `· ${settlementsCreated} baixa(s) no fluxo de caixa` : '',
+        recurrencesUpserted ? `· ${recurrencesUpserted} recorrência(s) espelhada(s)` : '',
         receivablesSkipped + payablesSkipped
           ? `(${receivablesSkipped + payablesSkipped} cancelado(s) locais preservados).`
           : '.',
         `Nibo retornou ${creditResult.items.length} a receber / ${debitResult.items.length} a pagar;`,
         `após filtros: ${creditItems.length} / ${debitItems.length}.`,
-        categoryIds.length
-          ? `Filtro de ${categoryIds.length} categoria(s) em recebíveis e despesas.`
-          : 'Sem filtro de categoria.',
+        receivableCategoryIds.length
+          ? `Filtro de ${receivableCategoryIds.length} categoria(s) em recebíveis.`
+          : 'Sem filtro de categoria em recebíveis.',
+        payableCategoryIds.length
+          ? `Filtro de ${payableCategoryIds.length} categoria(s) em despesas.`
+          : 'Sem filtro de categoria em despesas (todas as contas a pagar do Nibo).',
         costCenterIds.length
-          ? `Filtro de ${costCenterIds.length} centro(s) de custo nas despesas (itens sem centro de custo no Nibo continuam importados).`
+          ? `Filtro de ${costCenterIds.length} centro(s) de custo nas despesas (só itens desses centros; sem centro no Nibo são excluídos).`
           : '',
         filterMiss
           ? `Atenção: filtros não casaram com os IDs do Nibo. Exemplos de categoryId no Nibo (crédito): ${sampleCreditCategories.join(', ') || 'nenhum'}; (débito): ${sampleDebitCategories.join(', ') || 'nenhum'}. Revise as categorias salvas na integração.`
@@ -607,6 +629,73 @@ export class IntegrationsService {
         warnings.length ? warnings.join(' ') : '',
       ].filter(Boolean).join(' '),
     };
+  }
+
+  /**
+   * Espelha regra de recorrência Nibo em FinanceRecurrence (somente visualização/consulta).
+   * generateLocally=false — parcelas continuam vindo do pull Nibo, sem duplicar no worker.
+   */
+  private async upsertNiboRecurrence(
+    organizationId: string,
+    clinicId: string,
+    item: NiboScheduleItem,
+    kind: 'PAYABLE' | 'RECEIVABLE',
+    seen: Set<string>,
+  ): Promise<boolean> {
+    const fields = niboRecurrenceFieldsFromSchedule(item, kind);
+    if (!fields) return false;
+    const recurrenceKey = String(fields.metadata.niboRecurrenceId ?? '');
+    if (!recurrenceKey || seen.has(`${kind}:${recurrenceKey}`)) return false;
+    seen.add(`${kind}:${recurrenceKey}`);
+
+    const existing = await prisma.financeRecurrence.findMany({
+      where: { organizationId, clinicId, kind },
+      select: { id: true, metadata: true, nextOccurrence: true },
+      take: 200,
+    });
+    const match = existing.find((row) => {
+      const meta = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+      return String(meta.niboRecurrenceId ?? '').toLowerCase() === recurrenceKey;
+    });
+
+    if (match) {
+      const nextOccurrence = fields.nextOccurrence > match.nextOccurrence
+        ? fields.nextOccurrence
+        : match.nextOccurrence;
+      await prisma.financeRecurrence.update({
+        where: { id: match.id },
+        data: {
+          description: fields.description,
+          amount: fields.amount,
+          frequency: fields.frequency,
+          interval: fields.interval,
+          nextOccurrence,
+          endsAt: fields.endsAt,
+          active: true,
+          metadata: fields.metadata as Prisma.InputJsonValue,
+        },
+      });
+      return true;
+    }
+
+    await prisma.financeRecurrence.create({
+      data: {
+        organizationId,
+        clinicId,
+        kind: fields.kind,
+        description: fields.description,
+        amount: fields.amount,
+        frequency: fields.frequency,
+        interval: fields.interval,
+        nextOccurrence: fields.nextOccurrence,
+        endsAt: fields.endsAt,
+        active: true,
+        metadata: fields.metadata as Prisma.InputJsonValue,
+      },
+    });
+    return true;
   }
 
   private async niboPatientIndexes(organizationId: string): Promise<{

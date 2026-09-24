@@ -22,7 +22,7 @@ import {
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import { initials, list, formatPhone, text, type RecordValue } from '@/lib/format';
+import { list, formatPhone, text, type RecordValue } from '@/lib/format';
 import { useAuth } from './auth-provider';
 import { NotificationsDrawer } from './notifications-drawer';
 import { useSelection } from './selection-provider';
@@ -221,11 +221,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(handle);
   }, [query, clinicId]);
 
-  const userInitials = useMemo(
-    () => (user ? initials(user.name) : 'SC'),
-    [user],
-  );
-
   if (loading || !user) return <main className="loading-screen">Carregando sessão…</main>;
 
   const pendingTotal = badgeCounts.returns + badgeCounts.tasks + badgeCounts.lab;
@@ -313,7 +308,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             aria-label="Menu do usuário"
             onClick={() => setProfileOpen((current) => !current)}
           >
-            <span className="avatar">{userInitials}</span>
+            <PersonAvatar name={user.name} photoUrl={user.avatarUrl} className="avatar" />
             <div className="profile-text">
               <strong>{user.name}</strong>
               <small>{user.permissions.includes('organization.manage') ? 'Administrador' : 'Usuário'}</small>

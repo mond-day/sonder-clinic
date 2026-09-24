@@ -29,6 +29,7 @@ import {
   netPayablePaid,
   netPaidAmount,
   pendingReservedAmount,
+  remainingForManualSettlement,
   positiveMoney,
   refundedTotal,
 } from './operations-finance.utils';
@@ -129,6 +130,16 @@ const receivableSchema = z.object({
   surcharge: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
   dueDate: z.string().date(),
   paymentMethod: z.string().optional(),
+});
+const payableSchema = z.object({
+  clinicId: z.string().uuid(),
+  description: z.string().trim().min(3),
+  originalAmount: z.string().regex(/^(?!0+(?:\.0+)?$)\d+(\.\d{1,2})?$/),
+  dueDate: z.string().date(),
+  supplierName: z.string().trim().min(2).optional(),
+  notes: z.string().trim().min(2).optional(),
+  categoryId: z.string().uuid().optional(),
+  costCenterId: z.string().uuid().optional(),
 });
 const financeRecurrenceSchema = z.object({
   clinicId: z.string().uuid(),
@@ -2620,15 +2631,19 @@ export class OperationsService {
       await lockReceivableRow(tx, receivableId);
       if (receivable.status === 'CANCELLED') throw new ConflictException('Recebível cancelado.');
 
-      const alreadyPaid = confirmedNetPaid(receivable.payments);
+      // Baixa manual (já recebido na clínica) supersede cobranças PENDING (ex.: PIX AbacatePay).
+      // Sem isso o saldo fica reservado e POST /receivables/:id/payments falha com 409.
       const reserved = pendingReservedAmount(receivable.payments);
-      const remaining = receivable.netAmount.sub(alreadyPaid).sub(reserved);
+      if (reserved.gt(0)) {
+        await tx.payment.updateMany({
+          where: { receivableId, status: 'PENDING' },
+          data: { status: 'CANCELLED' },
+        });
+      }
+
+      const remaining = remainingForManualSettlement(receivable.netAmount, receivable.payments);
       if (amount.gt(remaining)) {
-        throw new ConflictException(
-          reserved.gt(0)
-            ? `Pagamento excede o saldo restante (${remaining.toFixed(2)}), considerando cobrança pendente de ${reserved.toFixed(2)}.`
-            : `Pagamento excede o saldo restante (${remaining.toFixed(2)}).`,
-        );
+        throw new ConflictException(`Pagamento excede o saldo restante (${remaining.toFixed(2)}).`);
       }
 
       const payment = await tx.payment.create({
@@ -3911,6 +3926,7 @@ export class OperationsService {
     clinicId: string; description: string; originalAmount: string; dueDate: string;
     supplierName?: string; notes?: string; categoryId?: string; costCenterId?: string;
   }) {
+    parseWithZod(payableSchema, input);
     const clinic = await prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId } });
     if (!clinic) throw new NotFoundException('Clínica não encontrada.');
     if (input.categoryId) {
@@ -3928,7 +3944,7 @@ export class OperationsService {
           clinicId: input.clinicId,
           description: input.description,
           originalAmount: money(input.originalAmount),
-          dueDate: new Date(input.dueDate),
+          dueDate: new Date(`${input.dueDate}T00:00:00Z`),
           supplierName: input.supplierName,
           notes: input.notes,
           categoryId: input.categoryId,

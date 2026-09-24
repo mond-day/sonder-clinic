@@ -22,6 +22,13 @@ export type NiboScheduleItem = {
   costCenterName: string | null;
   stakeholderName: string | null;
   stakeholderDocument: string | null;
+  /** Agendamento gerado por recorrência no Nibo. */
+  hasRecurrence: boolean;
+  recurrenceId: string | null;
+  recurrenceInterval: number | null;
+  /** 0 = dia, 1 = semana, 2 = mês, 3 = ano */
+  recurrenceIntervalType: number | null;
+  recurrenceEndDate: string | null;
 };
 
 export type FetchNiboSchedulesResult = {
@@ -84,6 +91,38 @@ function firstCategory(row: Record<string, unknown>): { id: string | null; name:
   return { id: null, name: null };
 }
 
+function parseRecurrence(row: Record<string, unknown>): {
+  hasRecurrence: boolean;
+  recurrenceId: string | null;
+  recurrenceInterval: number | null;
+  recurrenceIntervalType: number | null;
+  recurrenceEndDate: string | null;
+} {
+  const nested = asRecord(row.recurrence);
+  const hasRecurrence = row.hasRecurrence === true || Boolean(nested);
+  if (!hasRecurrence) {
+    return {
+      hasRecurrence: false,
+      recurrenceId: null,
+      recurrenceInterval: null,
+      recurrenceIntervalType: null,
+      recurrenceEndDate: null,
+    };
+  }
+  const interval = nested ? asNumber(nested.interval) : 0;
+  const intervalTypeRaw = nested ? nested.intervalType : null;
+  const intervalType = typeof intervalTypeRaw === 'number' && Number.isFinite(intervalTypeRaw)
+    ? intervalTypeRaw
+    : null;
+  return {
+    hasRecurrence: true,
+    recurrenceId: nested ? pickString(nested.id, nested.recurrenceId) || null : null,
+    recurrenceInterval: interval > 0 ? interval : 1,
+    recurrenceIntervalType: intervalType,
+    recurrenceEndDate: nested ? pickString(nested.endDate) || null : null,
+  };
+}
+
 export function parseNiboScheduleRow(raw: unknown): NiboScheduleItem | null {
   const row = asRecord(raw);
   if (!row) return null;
@@ -97,6 +136,7 @@ export function parseNiboScheduleRow(raw: unknown): NiboScheduleItem | null {
   const openValue = asNumber(row.openValue);
   const dueDate = pickString(row.dueDate, row.scheduleDate, row.accrualDate);
   if (!dueDate) return null;
+  const recurrence = parseRecurrence(row);
   return {
     scheduleId,
     description: pickString(row.description) || `Agendamento Nibo ${scheduleId}`,
@@ -113,6 +153,7 @@ export function parseNiboScheduleRow(raw: unknown): NiboScheduleItem | null {
     stakeholderDocument: stakeholder
       ? pickString(stakeholder.cpfCnpj, stakeholder.document, stakeholder.taxId) || null
       : null,
+    ...recurrence,
   };
 }
 

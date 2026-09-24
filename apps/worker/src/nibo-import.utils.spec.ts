@@ -17,10 +17,22 @@ describe('worker nibo-import.utils', () => {
     ).toBe('Ana — Consulta');
   });
 
-  it('filtro de CC não dropa item sem centro', () => {
+  it('filtro de CC exige match; sem filtro importa todos', () => {
     expect(
       matchesFilters(
         { categoryId: 'cat', costCenterId: null },
+        { categoryIds: [], costCenterIds: [] },
+      ),
+    ).toBe(true);
+    expect(
+      matchesFilters(
+        { categoryId: 'cat', costCenterId: null },
+        { categoryIds: [], costCenterIds: ['cc-1'] },
+      ),
+    ).toBe(false);
+    expect(
+      matchesFilters(
+        { categoryId: 'cat', costCenterId: 'cc-1' },
         { categoryIds: [], costCenterIds: ['cc-1'] },
       ),
     ).toBe(true);
@@ -34,6 +46,7 @@ describe('worker nibo-import.utils', () => {
 
   it('cria settlement quando pago', () => {
     expect(shouldCreateNiboSettlement({ isPaid: true, value: 10, paidValue: 10 })).toBe(true);
+    expect(shouldCreateNiboSettlement({ isPaid: true, value: 10, paidValue: 0 })).toBe(true);
     expect(shouldCreateNiboSettlement({ isPaid: false, value: 10, paidValue: 0 })).toBe(false);
   });
 

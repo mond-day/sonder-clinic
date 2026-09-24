@@ -9,6 +9,8 @@ import {
   isNiboMock,
   readNiboApiKey,
   readNiboIdList,
+  readNiboPayableCategoryIds,
+  readNiboReceivableCategoryIds,
 } from './nibo-sync';
 import {
   NIBO_FALLBACK_PATIENT_NAME,
@@ -102,9 +104,15 @@ type ScheduleItem = {
   isPaid: boolean;
   dueDate: string;
   categoryId: string | null;
+  categoryName: string | null;
   costCenterId: string | null;
   stakeholderName: string | null;
   stakeholderDocument: string | null;
+  hasRecurrence: boolean;
+  recurrenceId: string | null;
+  recurrenceInterval: number | null;
+  recurrenceIntervalType: number | null;
+  recurrenceEndDate: string | null;
 };
 
 function parseScheduleRow(raw: unknown): ScheduleItem | null {
@@ -116,13 +124,18 @@ function parseScheduleRow(raw: unknown): ScheduleItem | null {
   if (!dueDate) return null;
   const categoryList = Array.isArray(row.categories) ? row.categories : [];
   let categoryId: string | null = null;
+  let categoryName: string | null = null;
   const nestedCat = asRecord(row.category);
-  if (nestedCat) categoryId = pickString(nestedCat.id, nestedCat.categoryId) || null;
+  if (nestedCat) {
+    categoryId = pickString(nestedCat.id, nestedCat.categoryId) || null;
+    categoryName = pickString(nestedCat.name, nestedCat.categoryName, nestedCat.description) || null;
+  }
   if (!categoryId) {
     for (const entry of categoryList) {
       const item = asRecord(entry);
       if (!item || item.isDeleted === true) continue;
       categoryId = pickString(item.categoryId, item.id) || null;
+      categoryName = pickString(item.categoryName, item.name, item.description) || null;
       if (categoryId) break;
     }
   }
@@ -141,6 +154,9 @@ function parseScheduleRow(raw: unknown): ScheduleItem | null {
   const stakeholder = asRecord(row.stakeholder);
   const value = asNumber(row.value);
   const paidValue = asNumber(row.paidValue);
+  const recurrence = asRecord(row.recurrence);
+  const hasRecurrence = row.hasRecurrence === true || Boolean(recurrence);
+  const intervalTypeRaw = recurrence?.intervalType;
   return {
     scheduleId,
     description: pickString(row.description) || `Agendamento Nibo ${scheduleId}`,
@@ -149,11 +165,17 @@ function parseScheduleRow(raw: unknown): ScheduleItem | null {
     isPaid: row.isPaid === true || (value > 0 && paidValue >= value),
     dueDate,
     categoryId,
+    categoryName,
     costCenterId,
     stakeholderName: stakeholder ? pickString(stakeholder.name) || null : null,
     stakeholderDocument: stakeholder
       ? pickString(stakeholder.cpfCnpj, stakeholder.document, stakeholder.taxId) || null
       : null,
+    hasRecurrence,
+    recurrenceId: recurrence ? pickString(recurrence.id, recurrence.recurrenceId) || null : null,
+    recurrenceInterval: recurrence && asNumber(recurrence.interval) > 0 ? asNumber(recurrence.interval) : hasRecurrence ? 1 : null,
+    recurrenceIntervalType: typeof intervalTypeRaw === 'number' && Number.isFinite(intervalTypeRaw) ? intervalTypeRaw : null,
+    recurrenceEndDate: recurrence ? pickString(recurrence.endDate) || null : null,
   };
 }
 
@@ -509,11 +531,12 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
     connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
       ? { ...(connection.configuration as Record<string, unknown>) }
       : {};
-  const categoryIds = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId');
+  const receivableCategoryIds = readNiboReceivableCategoryIds(config);
+  const payableCategoryIds = readNiboPayableCategoryIds(config);
   const costCenterIds = readNiboIdList(config, 'costCenterIds', 'costCenterId');
-  // Categorias: crédito e débito. CC: só débito; item sem CC no Nibo passa o filtro.
-  const creditFilters = { categoryIds, costCenterIds: [] as string[] };
-  const debitFilters = { categoryIds, costCenterIds };
+  // Receita → crédito; despesa → débito; CC só no débito.
+  const creditFilters = { categoryIds: receivableCategoryIds, costCenterIds: [] as string[] };
+  const debitFilters = { categoryIds: payableCategoryIds, costCenterIds };
 
   const [creditItems, debitItems] = await Promise.all([
     fetchSchedules(apiKey, 'credit'),
@@ -532,8 +555,13 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
   let payablesUpdated = 0;
   let patientsCreated = 0;
   let settlementsCreated = 0;
+  let recurrencesUpserted = 0;
+  const seenRecurrenceKeys = new Set<string>();
 
   for (const item of credits) {
+    if (await upsertNiboRecurrenceMirror(organizationId, clinicId, item, 'RECEIVABLE', seenRecurrenceKeys)) {
+      recurrencesUpserted += 1;
+    }
     const amount = amountString(item.value);
     const dueDate = new Date(`${dueDateOnly(item.dueDate)}T00:00:00Z`);
     const status = scheduleStatus(item);
@@ -593,6 +621,9 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
   }
 
   for (const item of debits) {
+    if (await upsertNiboRecurrenceMirror(organizationId, clinicId, item, 'PAYABLE', seenRecurrenceKeys)) {
+      recurrencesUpserted += 1;
+    }
     const amount = amountString(item.value);
     const paidAmount = amountString(Math.min(item.paidValue, item.value));
     const dueDate = new Date(`${dueDateOnly(item.dueDate)}T00:00:00Z`);
@@ -665,6 +696,7 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
           payablesUpdated,
           patientsCreated,
           settlementsCreated,
+          recurrencesUpserted,
           creditFetched: creditItems.length,
           debitFetched: debitItems.length,
           creditMatchedFilters: credits.length,
@@ -688,12 +720,93 @@ export async function processNiboPullConnection(connectionId: string): Promise<{
       `Pull Nibo: R ${receivablesCreated}+${receivablesUpdated} / P ${payablesCreated}+${payablesUpdated}`,
       patientsCreated ? `pacientes+${patientsCreated}` : null,
       settlementsCreated ? `baixas+${settlementsCreated}` : null,
+      recurrencesUpserted ? `recorrências+${recurrencesUpserted}` : null,
       `(fetched C${creditItems.length}/D${debitItems.length}, matched C${credits.length}/D${debits.length})`,
-      categoryIds.length || costCenterIds.length
-        ? `filtros: ${categoryIds.length} cat, ${costCenterIds.length} CC (débitos sem CC passam)`
+      receivableCategoryIds.length || payableCategoryIds.length || costCenterIds.length
+        ? `filtros: ${receivableCategoryIds.length} cat-rec, ${payableCategoryIds.length} cat-pag, ${costCenterIds.length} CC`
         : 'sem filtros de categoria/CC',
     ].filter(Boolean).join(' '),
   };
+}
+
+async function upsertNiboRecurrenceMirror(
+  organizationId: string,
+  clinicId: string,
+  item: ScheduleItem,
+  kind: 'PAYABLE' | 'RECEIVABLE',
+  seen: Set<string>,
+): Promise<boolean> {
+  if (!item.hasRecurrence) return false;
+  const recurrenceKey = (item.recurrenceId || item.scheduleId).trim().toLowerCase();
+  if (!recurrenceKey || seen.has(`${kind}:${recurrenceKey}`)) return false;
+  seen.add(`${kind}:${recurrenceKey}`);
+
+  const frequency = item.recurrenceIntervalType === 0
+    ? 'DAILY'
+    : item.recurrenceIntervalType === 1
+      ? 'WEEKLY'
+      : item.recurrenceIntervalType === 3
+        ? 'YEARLY'
+        : 'MONTHLY';
+  const nextOccurrence = new Date(`${dueDateOnly(item.dueDate)}T00:00:00Z`);
+  const endsAt = item.recurrenceEndDate
+    ? new Date(`${dueDateOnly(item.recurrenceEndDate)}T00:00:00Z`)
+    : null;
+  const metadata = {
+    source: 'NIBO',
+    generateLocally: false,
+    niboRecurrenceId: recurrenceKey,
+    niboScheduleId: item.scheduleId,
+    categoryId: item.categoryId,
+    categoryName: item.categoryName,
+    supplierName: kind === 'PAYABLE' ? item.stakeholderName : undefined,
+  };
+
+  const existing = await prisma.financeRecurrence.findMany({
+    where: { organizationId, clinicId, kind },
+    select: { id: true, metadata: true, nextOccurrence: true },
+    take: 200,
+  });
+  const match = existing.find((row) => {
+    const meta = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+    return String(meta.niboRecurrenceId ?? '').toLowerCase() === recurrenceKey;
+  });
+
+  if (match) {
+    await prisma.financeRecurrence.update({
+      where: { id: match.id },
+      data: {
+        description: item.description,
+        amount: amountString(item.value),
+        frequency,
+        interval: Math.max(1, item.recurrenceInterval ?? 1),
+        nextOccurrence: nextOccurrence > match.nextOccurrence ? nextOccurrence : match.nextOccurrence,
+        endsAt,
+        active: true,
+        metadata: metadata as Prisma.InputJsonValue,
+      },
+    });
+    return true;
+  }
+
+  await prisma.financeRecurrence.create({
+    data: {
+      organizationId,
+      clinicId,
+      kind,
+      description: item.description,
+      amount: amountString(item.value),
+      frequency,
+      interval: Math.max(1, item.recurrenceInterval ?? 1),
+      nextOccurrence,
+      endsAt,
+      active: true,
+      metadata: metadata as Prisma.InputJsonValue,
+    },
+  });
+  return true;
 }
 
 export { NIBO_PULL_EVENT };

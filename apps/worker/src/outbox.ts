@@ -27,6 +27,8 @@ import {
   readNiboAccountId,
   readNiboApiKey,
   readNiboIdList,
+  readNiboPayableCategoryIds,
+  readNiboReceivableCategoryIds,
   toNiboAmount,
   toNiboDate,
   upsertNiboSchedule,
@@ -578,7 +580,8 @@ async function processNiboSync(event: OutboxEvent): Promise<void> {
       connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
         ? (connection.configuration as Record<string, unknown>)
         : {};
-    const categoryId = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId')[0] ?? null;
+    const categoryId = readNiboReceivableCategoryIds(config)[0] ?? null;
+    const costCenterId = readNiboIdList(config, 'costCenterIds', 'costCenterId')[0] ?? null;
     if (!categoryId) {
       await markOutboxDone(
         event.id,
@@ -603,6 +606,7 @@ async function processNiboSync(event: OutboxEvent): Promise<void> {
         dueDate,
         amount,
         categoryId,
+        costCenterId,
         reference: niboReference('Receivable', receivable.id),
       }),
     });
@@ -658,12 +662,14 @@ async function processNiboSync(event: OutboxEvent): Promise<void> {
     connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
       ? (connection.configuration as Record<string, unknown>)
       : {};
-  const categoryId = readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId')[0] ?? null;
+  const categoryId = readNiboPayableCategoryIds(config)[0]
+    ?? readNiboReceivableCategoryIds(config)[0]
+    ?? null;
   const costCenterId = readNiboIdList(config, 'costCenterIds', 'costCenterId')[0] ?? null;
   if (!categoryId) {
     await markOutboxDone(
       event.id,
-      'Configure ao menos uma categoria Nibo na integração para espelhar contas a pagar.',
+      'Configure ao menos uma categoria Nibo de pagáveis (ou recebíveis) na integração para espelhar contas a pagar.',
     );
     return;
   }

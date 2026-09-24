@@ -8,6 +8,7 @@ export type AuthUser = {
   email: string;
   organizationId: string;
   permissions: string[];
+  avatarUrl?: string | null;
 };
 
 export function getApiUrl(): string {

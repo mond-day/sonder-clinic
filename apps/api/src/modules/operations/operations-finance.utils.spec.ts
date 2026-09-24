@@ -15,6 +15,7 @@ import {
   pendingReservedAmount,
   positiveMoney,
   refundedTotal,
+  remainingForManualSettlement,
 } from './operations-finance.utils';
 
 describe('operations-finance.utils (P0 financeiro)', () => {
@@ -59,6 +60,16 @@ describe('operations-finance.utils (P0 financeiro)', () => {
       { amount: money('50'), status: 'CONFIRMED' },
       { amount: money('20'), status: 'FAILED' },
     ]).toString()).toBe('100');
+  });
+
+  it('remainingForManualSettlement ignora PENDING (baixa manual supersede cobrança)', () => {
+    expect(remainingForManualSettlement(money('100'), [
+      { amount: money('100'), status: 'PENDING' },
+    ]).toString()).toBe('100');
+    expect(remainingForManualSettlement(money('100'), [
+      { amount: money('40'), status: 'CONFIRMED', refunds: [] },
+      { amount: money('60'), status: 'PENDING' },
+    ]).toString()).toBe('60');
   });
 
   it('outstandingAmount nunca é negativo', () => {

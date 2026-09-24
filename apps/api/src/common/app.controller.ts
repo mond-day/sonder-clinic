@@ -78,8 +78,10 @@ export class AppController {
     const storageDriver = (process.env.STORAGE_DRIVER ?? 'local').toLowerCase();
     if (isProd || storageDriver !== 'local') {
       checks.storage = {
-        ok: Boolean(storage.storage),
-        detail: typeof storage.storage === 'string' ? storage.storage : undefined,
+        ok: storage.storage.enabled,
+        detail: storage.storage.enabled
+          ? `${storage.storage.driver}:${storage.storage.bucket ?? '?'}`
+          : (storage.storage.disabledReason ?? 'storage disabled'),
       };
     } else {
       checks.storage = { ok: true, detail: 'local' };

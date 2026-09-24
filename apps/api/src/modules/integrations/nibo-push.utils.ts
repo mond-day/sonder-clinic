@@ -73,9 +73,10 @@ export function buildCreditSchedulePayload(input: {
   dueDate: string;
   amount: number;
   categoryId: string;
+  costCenterId: string | null;
   reference: string;
 }) {
-  return {
+  const payload: Record<string, unknown> = {
     stakeholderId: input.stakeholderId,
     description: input.description.slice(0, 500),
     reference: input.reference,
@@ -84,6 +85,11 @@ export function buildCreditSchedulePayload(input: {
     accrualDate: input.dueDate,
     categories: [{ categoryId: input.categoryId, value: input.amount }],
   };
+  if (input.costCenterId) {
+    payload.costCenterValueType = 0;
+    payload.costCenters = [{ costCenterId: input.costCenterId, value: input.amount }];
+  }
+  return payload;
 }
 
 export function buildDebitSchedulePayload(input: {

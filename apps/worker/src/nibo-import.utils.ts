@@ -78,7 +78,7 @@ export function buildPayableDescription(item: {
 }
 
 /**
- * Centros de custo: item sem costCenterId passa o filtro (não dropar débitos sem CC no Nibo).
+ * Centros de custo: vazio = importa todos; preenchido = só IDs da lista (sem CC = exclui).
  */
 export function matchesFilters(
   item: { categoryId: string | null; costCenterId: string | null },
@@ -90,7 +90,7 @@ export function matchesFilters(
   }
   if (filters.costCenterIds.length) {
     const costCenterId = (item.costCenterId ?? '').trim().toLowerCase();
-    if (costCenterId && !filters.costCenterIds.includes(costCenterId)) return false;
+    if (!costCenterId || !filters.costCenterIds.includes(costCenterId)) return false;
   }
   return true;
 }
@@ -144,11 +144,14 @@ export function shouldCreateNiboSettlement(item: {
   isPaid: boolean;
 }): boolean {
   const status = scheduleStatus(item);
-  return (status === 'PAID' || status === 'PARTIALLY_PAID') && item.paidValue > 0;
+  if (status !== 'PAID' && status !== 'PARTIALLY_PAID') return false;
+  // isPaid sem paidValue (quirk da API) → trata como valor integral.
+  return item.paidValue > 0 || item.isPaid;
 }
 
-export function niboSettlementAmount(item: { paidValue: number; value: number }): string {
-  return amountString(Math.min(Math.max(item.paidValue, 0), Math.max(item.value, 0)));
+export function niboSettlementAmount(item: { paidValue: number; value: number; isPaid?: boolean }): string {
+  const paid = item.paidValue > 0 ? item.paidValue : item.isPaid ? item.value : 0;
+  return amountString(Math.min(Math.max(paid, 0), Math.max(item.value, 0)));
 }
 
 export function niboSettlementPaidAt(item: { dueDate: string }): Date {

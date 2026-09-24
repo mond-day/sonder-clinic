@@ -3,6 +3,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsArray, IsDateString, IsHexColor, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import type { Response } from 'express';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
@@ -136,7 +137,10 @@ export class SettingsController {
 
   @Post('branding/assets')
   @RequirePermissions('clinic.manage')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024, files: 1 } }))
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: 2 * 1024 * 1024, files: 1 },
+  }))
   uploadBrandingAsset(
     @Req() req: AuthenticatedRequest,
     @UploadedFile() file: { originalname: string; size: number; buffer: Buffer; mimetype: string },

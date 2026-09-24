@@ -490,6 +490,18 @@ td.row-actions > div {
 }
 .filters.filter-advanced {
   background: var(--surface-alt);
+  align-items: flex-end;
+}
+.filters .filter-field {
+  display: grid;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.filters .filter-field .filter-input,
+.filters .filter-field .filter-select {
+  min-width: 140px;
 }
 .filter-input, .filter-select {
   height: 38px; border: 1px solid var(--line); background: var(--input-bg); border-radius: 9px;
@@ -805,7 +817,15 @@ td.row-actions > div {
   font-size: 20px; font-weight: 900; box-shadow: 0 4px 14px rgba(0, 0, 0, .1);
   position: relative; overflow: hidden; flex: 0 0 auto;
 }
-.patient-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.patient-avatar img,
+.patient-avatar .patient-avatar-inner,
+.patient-avatar .patient-avatar-inner img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.patient-avatar .patient-avatar-inner {
+  border: 0; box-shadow: none; border-radius: 0; width: 100%; height: 100%;
+  font-size: inherit; background: transparent;
+}
 .patient-avatar-upload {
   border: 0; padding: 0; cursor: pointer; color: inherit;
 }
@@ -3395,7 +3415,21 @@ textarea.question-input {
   place-items: center;
   background: var(--accent-soft);
   color: var(--accent-dark);
+  overflow: hidden;
+  position: relative;
 }
+.clinic-structure-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.clinic-structure-icon.clinic-structure-logo-upload {
+  border: 0; padding: 0; cursor: pointer;
+}
+.clinic-structure-icon.clinic-structure-logo-upload:hover { filter: brightness(.96); }
+.clinic-structure-logo-hint {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: rgba(16, 47, 54, .45); color: #fff; opacity: 0;
+  transition: opacity .15s ease;
+}
+.clinic-structure-logo-upload:hover .clinic-structure-logo-hint,
+.clinic-structure-logo-upload:focus-visible .clinic-structure-logo-hint { opacity: 1; }
 .clinic-structure-head strong { display: block; font-size: 15px; }
 .clinic-structure-head small {
   display: block;

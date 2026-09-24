@@ -1,8 +1,15 @@
 import {
-  BadRequestException, ConflictException, Injectable, NotFoundException,
+  BadRequestException, ConflictException, Injectable, Logger, NotFoundException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { prisma } from '@sonder/database';
+import { createHash } from 'node:crypto';
+import { Prisma, prisma } from '@sonder/database';
+import {
+  antivirusStatusFromScan,
+  createAntivirusScanner,
+  createStorageAdapter,
+  describeStoragePutFailure,
+} from '@sonder/storage';
 import { assertSmtpConfigured, sendMail } from '../../common/mail';
 import { assertPasswordPolicy } from '../../common/password-policy';
 import { resolvePublicWebUrl } from '../../common/public-web-url';
@@ -15,31 +22,51 @@ import {
   inviteExpiresAt,
 } from './users-invitations.utils';
 
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const ALLOWED_AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+function normalizeAvatarMime(mimetype: string): string {
+  const mime = (mimetype || '').toLowerCase().trim();
+  if (mime === 'image/jpg') return 'image/jpeg';
+  return mime;
+}
+
+function withAvatarUrl<T extends { id: string; avatarFileId?: string | null }>(user: T) {
+  return {
+    ...user,
+    avatarUrl: user.avatarFileId ? `/users/${user.id}/avatar` : null,
+  };
+}
+
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+  private readonly storage = createStorageAdapter();
+  private readonly antivirus = createAntivirusScanner();
+
   list(organizationId: string) {
     return prisma.user.findMany({
       where: { organizationId },
       select: {
-        id: true, name: true, email: true, status: true, lastLoginAt: true, createdAt: true,
+        id: true, name: true, email: true, status: true, lastLoginAt: true, createdAt: true, avatarFileId: true,
         roles: { include: { role: { select: { id: true, name: true, code: true } } } },
         professional: { select: { id: true, croNumber: true, croState: true, professionalType: true, status: true } },
       },
       orderBy: { name: 'asc' },
-    });
+    }).then((users) => users.map(withAvatarUrl));
   }
 
   async get(organizationId: string, id: string) {
     const user = await prisma.user.findFirst({
       where: { id, organizationId },
       select: {
-        id: true, name: true, email: true, status: true, lastLoginAt: true, createdAt: true,
+        id: true, name: true, email: true, status: true, lastLoginAt: true, createdAt: true, avatarFileId: true,
         roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } },
         professional: true,
       },
     });
     if (!user) throw new NotFoundException('Usuário não encontrado.');
-    return user;
+    return withAvatarUrl(user);
   }
 
   async create(organizationId: string, input: {
@@ -444,5 +471,109 @@ export class UsersService {
 
   listPermissions() {
     return prisma.permission.findMany({ orderBy: { code: 'asc' } });
+  }
+
+  async uploadAvatar(
+    organizationId: string,
+    userId: string,
+    actorId: string,
+    file: { originalname: string; size: number; buffer: Buffer; mimetype: string },
+  ) {
+    await this.get(organizationId, userId);
+    if (!this.storage.enabled) {
+      throw new BadRequestException(
+        this.storage.disabledReason
+          ?? 'Storage desabilitado — configure STORAGE_DRIVER=local ou MinIO/S3 com credenciais.',
+      );
+    }
+    if (!file?.buffer?.length) throw new BadRequestException('Envie uma imagem.');
+    if (file.size > MAX_AVATAR_BYTES) throw new BadRequestException('A foto deve ter no máximo 2 MB.');
+    const mime = normalizeAvatarMime(file.mimetype);
+    if (!ALLOWED_AVATAR_MIME.has(mime)) {
+      throw new BadRequestException('Envie JPG, PNG ou WEBP.');
+    }
+    const scan = await this.antivirus.scan(file.buffer);
+    if (scan.infected) {
+      throw new BadRequestException(
+        `Arquivo rejeitado pelo antivírus${scan.detail ? `: ${scan.detail}` : '.'}`,
+      );
+    }
+    const antivirusStatus = antivirusStatusFromScan(scan);
+    const extension = file.originalname.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '.jpg';
+    const checksum = createHash('sha256').update(file.buffer).digest('hex');
+    let stored;
+    try {
+      stored = await this.storage.putObject({
+        organizationId,
+        filename: `avatar${extension}`,
+        contentType: mime,
+        body: file.buffer,
+        keyPrefix: 'user-avatars',
+        metadata: { kind: 'user-avatar', userId },
+      });
+    } catch (error) {
+      const failure = describeStoragePutFailure(error);
+      this.logger.error(`user-avatar putObject failed: ${failure.logMessage}`);
+      throw new BadRequestException(failure.userMessage);
+    }
+
+    const previous = await prisma.user.findFirst({
+      where: { id: userId, organizationId },
+      select: { avatarFileId: true },
+    });
+
+    try {
+      const fileObject = await prisma.fileObject.create({
+        data: {
+          organizationId,
+          bucket: stored.bucket,
+          objectKey: stored.objectKey,
+          originalName: file.originalname,
+          mimeType: mime,
+          extension: extension || null,
+          sizeBytes: BigInt(file.size),
+          checksum,
+          status: 'AVAILABLE',
+          antivirusStatus,
+          createdById: actorId,
+          metadata: { kind: 'user-avatar', userId } as Prisma.InputJsonValue,
+        },
+      });
+      await prisma.user.update({
+        where: { id: userId },
+        data: { avatarFileId: fileObject.id },
+      });
+      if (previous?.avatarFileId) {
+        const old = await prisma.fileObject.findFirst({ where: { id: previous.avatarFileId, organizationId } });
+        if (old) {
+          await this.storage.deleteObject(old.objectKey).catch(() => undefined);
+          await prisma.fileObject.delete({ where: { id: old.id } }).catch(() => undefined);
+        }
+      }
+      return withAvatarUrl({ id: userId, avatarFileId: fileObject.id });
+    } catch (error) {
+      await this.storage.deleteObject(stored.objectKey).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async downloadAvatar(organizationId: string, userId: string) {
+    const user = await prisma.user.findFirst({
+      where: { id: userId, organizationId },
+      select: { avatarFileId: true },
+    });
+    if (!user?.avatarFileId) throw new NotFoundException('Foto do usuário não encontrada.');
+    const file = await prisma.fileObject.findFirst({
+      where: { id: user.avatarFileId, organizationId },
+    });
+    if (!file) throw new NotFoundException('Foto do usuário não encontrada.');
+    if (file.antivirusStatus === 'INFECTED') {
+      throw new ConflictException('Arquivo rejeitado pelo antivírus.');
+    }
+    if (!this.storage.enabled) {
+      throw new BadRequestException('O armazenamento de arquivos não está configurado.');
+    }
+    const content = await this.storage.getObject(file.objectKey);
+    return { content, contentType: file.mimeType, filename: file.originalName };
   }
 }

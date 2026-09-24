@@ -29,6 +29,8 @@ type AgendaViewType = 'calendar' | 'list';
 
 const AGENDA_VIEW_KEY = 'centerClinic.agenda.view';
 const AGENDA_PREFS_KEY = 'centerClinic.agenda.prefs';
+/** Preferência deste navegador (não sincroniza entre dispositivos). */
+const AGENDA_GOOGLE_EVENTS_KEY = 'sonder.agenda.showGoogleEvents';
 
 type AgendaPrefs = {
   hideCancelled: boolean;
@@ -41,6 +43,38 @@ const DEFAULT_AGENDA_PREFS: AgendaPrefs = {
   dimPast: true,
   showWaiting: false,
 };
+
+/** null = nunca escolheu; true/false = escolha explícita neste navegador. */
+function readShowGoogleEvents(): boolean | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(AGENDA_GOOGLE_EVENTS_KEY);
+    if (raw === '1') return true;
+    if (raw === '0') return false;
+    // Migra chave antiga por clínica (tentativa anterior).
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (!key?.startsWith('centerClinic.agenda.showGoogleEvents:')) continue;
+      const legacy = window.localStorage.getItem(key);
+      if (legacy === '1' || legacy === '0') {
+        window.localStorage.setItem(AGENDA_GOOGLE_EVENTS_KEY, legacy);
+        return legacy === '1';
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function writeShowGoogleEvents(value: boolean) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(AGENDA_GOOGLE_EVENTS_KEY, value ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+}
 
 const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
@@ -215,7 +249,8 @@ export function AgendaView() {
   const [editUnitId, setEditUnitId] = useState('');
   const [editChairId, setEditChairId] = useState('');
   const [businessHours, setBusinessHours] = useState<BusinessHours>(DEFAULT_BUSINESS_HOURS);
-  const [showPersonalCalendar, setShowPersonalCalendar] = useState(false);
+  const [showPersonalCalendar, setShowPersonalCalendar] = useState(true);
+  const [googleEventsHydrated, setGoogleEventsHydrated] = useState(false);
   const [personalCalendarAvailable, setPersonalCalendarAvailable] = useState(false);
   const [personalEvents, setPersonalEvents] = useState<RecordValue[]>([]);
   const [personalCalendarMessage, setPersonalCalendarMessage] = useState('');
@@ -234,6 +269,10 @@ export function AgendaView() {
       /* ignore */
     }
     setPrefs(readAgendaPrefs());
+    // Preferência Google: ler no cliente sem esperar API (evita default false sobrescrever).
+    const googlePref = readShowGoogleEvents();
+    setShowPersonalCalendar(googlePref ?? true);
+    setGoogleEventsHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -310,27 +349,28 @@ export function AgendaView() {
   useEffect(() => {
     if (!clinicId) {
       setPersonalCalendarAvailable(false);
-      setShowPersonalCalendar(false);
       setPersonalEvents([]);
       return;
     }
+    let cancelled = false;
     api.get<{ available?: boolean }>(`/appointments/personal-calendar/status?clinicId=${clinicId}`)
       .then((status) => {
+        if (cancelled) return;
         setPersonalCalendarAvailable(Boolean(status.available));
-        if (!status.available) {
-          setShowPersonalCalendar(false);
-          setPersonalEvents([]);
-        }
+        // Não sobrescreve a preferência do usuário — só controla disponibilidade do toggle.
       })
       .catch(() => {
+        if (cancelled) return;
         setPersonalCalendarAvailable(false);
-        setShowPersonalCalendar(false);
         setPersonalEvents([]);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [clinicId]);
 
   useEffect(() => {
-    if (!clinicId || !showPersonalCalendar || !personalCalendarAvailable) {
+    if (!clinicId || !showPersonalCalendar || !personalCalendarAvailable || !googleEventsHydrated) {
       setPersonalEvents([]);
       setPersonalCalendarMessage('');
       return;
@@ -352,7 +392,7 @@ export function AgendaView() {
           cause instanceof ApiError ? cause.message : 'Não foi possível carregar eventos do Google Agenda.',
         );
       });
-  }, [clinicId, showPersonalCalendar, personalCalendarAvailable, range.from, range.to, professionalFilter]);
+  }, [clinicId, showPersonalCalendar, personalCalendarAvailable, googleEventsHydrated, range.from, range.to, professionalFilter]);
 
   useEffect(() => {
     if (searchParams.get('new') === '1' || searchParams.get('patientId')) {
@@ -653,7 +693,11 @@ export function AgendaView() {
           <input
             type="checkbox"
             checked={showPersonalCalendar}
-            onChange={(event) => setShowPersonalCalendar(event.target.checked)}
+            onChange={(event) => {
+              const next = event.target.checked;
+              setShowPersonalCalendar(next);
+              writeShowGoogleEvents(next);
+            }}
           />
           Eventos do Google
         </label>
@@ -665,7 +709,6 @@ export function AgendaView() {
           setProfessionalFilter('');
           setStatusFilter('');
           setUnitFilter('');
-          setShowPersonalCalendar(false);
         }}
       >Limpar filtros</button>
     </div>

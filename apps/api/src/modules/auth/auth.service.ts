@@ -16,7 +16,14 @@ import { hashInviteToken } from '../users/users-invitations.utils';
 type LoginResult = {
   accessToken: string;
   refreshToken: string;
-  user: { id: string; name: string; email: string; organizationId: string; permissions: string[] };
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    organizationId: string;
+    permissions: string[];
+    avatarUrl?: string | null;
+  };
 };
 
 type UserWithRoles = {
@@ -25,8 +32,20 @@ type UserWithRoles = {
   email: string;
   organizationId: string;
   status: string;
+  avatarFileId?: string | null;
   roles: Array<{ role: { permissions: Array<{ permission: { code: string } }> } }>;
 };
+
+function toAuthUser(user: UserWithRoles, permissions: string[]) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    organizationId: user.organizationId,
+    permissions,
+    avatarUrl: user.avatarFileId ? `/users/${user.id}/avatar` : null,
+  };
+}
 
 @Injectable()
 export class AuthService {
@@ -64,7 +83,7 @@ export class AuthService {
     return {
       accessToken,
       refreshToken,
-      user: { id: user.id, name: user.name, email: user.email, organizationId: user.organizationId, permissions },
+      user: toAuthUser(user, permissions),
     };
   }
 
@@ -125,7 +144,7 @@ export class AuthService {
       role.permissions.map(({ permission }) => permission.code),
     ))];
     return {
-      user: { id: user.id, name: user.name, email: user.email, organizationId: user.organizationId, permissions },
+      user: toAuthUser(user, permissions),
     };
   }
 
@@ -349,13 +368,7 @@ export class AuthService {
     return {
       accessToken,
       refreshToken: nextRefresh,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        organizationId: user.organizationId,
-        permissions,
-      },
+      user: toAuthUser(user, permissions),
     };
   }
 

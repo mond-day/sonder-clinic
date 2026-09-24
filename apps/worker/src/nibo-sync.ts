@@ -88,6 +88,19 @@ export function readNiboIdList(
   return [];
 }
 
+export function readNiboReceivableCategoryIds(config: Record<string, unknown> | undefined): string[] {
+  return readNiboIdList(config, 'receivableCategoryIds', 'receivableCategoryId');
+}
+
+/** Se payableCategoryIds nunca foi gravado, não filtra débito por categoria (evita sumir despesas). */
+export function readNiboPayableCategoryIds(config: Record<string, unknown> | undefined): string[] {
+  if (!config) return [];
+  if (Array.isArray(config.payableCategoryIds) || typeof config.payableCategoryId === 'string') {
+    return readNiboIdList(config, 'payableCategoryIds', 'payableCategoryId');
+  }
+  return [];
+}
+
 export function toNiboDate(value: Date | string): string {
   if (typeof value === 'string') {
     if (/^\d{4}-\d{2}-\d{2}/.test(value.trim())) return value.trim().slice(0, 10);
@@ -292,9 +305,10 @@ export function buildCreditPayload(input: {
   dueDate: string;
   amount: number;
   categoryId: string;
+  costCenterId: string | null;
   reference: string;
 }) {
-  return {
+  const payload: Record<string, unknown> = {
     stakeholderId: input.stakeholderId,
     description: input.description.slice(0, 500),
     reference: input.reference,
@@ -303,6 +317,11 @@ export function buildCreditPayload(input: {
     accrualDate: input.dueDate,
     categories: [{ categoryId: input.categoryId, value: input.amount }],
   };
+  if (input.costCenterId) {
+    payload.costCenterValueType = 0;
+    payload.costCenters = [{ costCenterId: input.costCenterId, value: input.amount }];
+  }
+  return payload;
 }
 
 export function buildDebitPayload(input: {

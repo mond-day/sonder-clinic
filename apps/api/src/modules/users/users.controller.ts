@@ -1,6 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Put, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { IsArray, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
+import type { Response } from 'express';
+import { memoryStorage } from 'multer';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { MIN_PASSWORD_LENGTH } from '../../common/password-policy';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
@@ -105,6 +108,39 @@ export class UsersController {
   @RequirePermissions('user.manage')
   update(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateUserDto) {
     return this.users.update(req.auth.organizationId, id, body);
+  }
+
+  @Post('users/:id/avatar')
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: 2 * 1024 * 1024 },
+  }))
+  uploadAvatar(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @UploadedFile() file: { originalname: string; size: number; buffer: Buffer; mimetype: string },
+  ) {
+    const canManage = req.auth.permissions.includes('user.manage');
+    if (req.auth.userId !== id && !canManage) {
+      throw new ForbiddenException('Você não possui permissão para esta operação.');
+    }
+    return this.users.uploadAvatar(req.auth.organizationId, id, req.auth.userId, file);
+  }
+
+  @Get('users/:id/avatar')
+  async downloadAvatar(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const canView = req.auth.permissions.includes('user.view') || req.auth.permissions.includes('user.manage');
+    if (req.auth.userId !== id && !canView) {
+      throw new ForbiddenException('Você não possui permissão para esta operação.');
+    }
+    const file = await this.users.downloadAvatar(req.auth.organizationId, id);
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(file.content);
   }
 
   @Post('users/:id/block')

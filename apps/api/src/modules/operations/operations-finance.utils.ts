@@ -38,6 +38,23 @@ export function pendingReservedAmount(
   }, money('0'));
 }
 
+/**
+ * Saldo disponível para baixa manual (CONFIRMED).
+ * Cobranças PENDING devem ser canceladas antes (ver registerPayment);
+ * este helper já ignora PENDING via confirmedNetPaid.
+ */
+export function remainingForManualSettlement(
+  netAmount: Prisma.Decimal,
+  payments: Array<{
+    amount: Prisma.Decimal;
+    status: string;
+    refunds?: Array<{ amount: Prisma.Decimal }>;
+    refundedAmount?: Prisma.Decimal;
+  }>,
+): Prisma.Decimal {
+  return outstandingAmount(netAmount, confirmedNetPaid(payments));
+}
+
 /** Soma dos valores líquidos de pagamentos confirmados / parcialmente estornados. */
 export function confirmedNetPaid(
   payments: Array<{

@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
-import { createAntivirusScanner, createStorageAdapter } from '@sonder/storage';
+import { createAntivirusScanner, createStorageAdapter, antivirusStatusFromScan } from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
 import { assertLabStatusTransition } from './workspace-lab.utils';
@@ -597,7 +597,7 @@ export class WorkspaceService {
         `Arquivo rejeitado pelo antivírus${scan.detail ? `: ${scan.detail}` : '.'}`,
       );
     }
-    const antivirusStatus = scan.clean ? 'CLEAN' : 'PENDING';
+    const antivirusStatus = antivirusStatusFromScan(scan);
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
     let stored;
     try {
@@ -935,7 +935,7 @@ export class WorkspaceService {
     if (scan.infected) {
       throw new BadRequestException(`Arquivo rejeitado pelo antivírus${scan.detail ? `: ${scan.detail}` : '.'}`);
     }
-    const antivirusStatus = scan.clean ? 'CLEAN' : 'PENDING';
+    const antivirusStatus = antivirusStatusFromScan(scan);
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
     let stored;
     try {

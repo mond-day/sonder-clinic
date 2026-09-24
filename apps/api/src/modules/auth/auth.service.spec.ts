@@ -147,6 +147,7 @@ describe('AuthService claims atômicos', () => {
       email: 'ana@example.com',
       organizationId: 'org-1',
       permissions: ['patients.view'],
+      avatarUrl: null,
     });
     expect(sessionCreate).not.toHaveBeenCalled();
     expect(sessionUpdateMany).not.toHaveBeenCalled();

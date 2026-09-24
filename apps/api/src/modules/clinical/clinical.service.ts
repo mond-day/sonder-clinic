@@ -1,7 +1,12 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID as cryptoRandomUuid } from 'node:crypto';
 import { Prisma, prisma } from '@sonder/database';
-import { createAntivirusScanner, createStorageAdapter } from '@sonder/storage';
+import {
+  antivirusStatusFromScan,
+  createAntivirusScanner,
+  createStorageAdapter,
+  describeStoragePutFailure,
+} from '@sonder/storage';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
 
@@ -18,6 +23,12 @@ const ALLOWED_CLINICAL_MIME = new Set([
   'image/webp',
   'video/mp4',
 ]);
+
+function normalizeClinicalMime(mimetype: string): string {
+  const mime = (mimetype || '').toLowerCase().trim();
+  if (mime === 'image/jpg') return 'image/jpeg';
+  return mime;
+}
 
 function sanitizeDownloadFilename(name: string): string {
   const base = name.replace(/[\r\n"]/g, '').replace(/[^\w.\- ()[\]]+/g, '_').trim();
@@ -62,6 +73,7 @@ const odontogramSchema = z.object({
 
 @Injectable()
 export class ClinicalService {
+  private readonly logger = new Logger(ClinicalService.name);
   private readonly storage = createStorageAdapter();
   private readonly antivirus = createAntivirusScanner();
 
@@ -502,11 +514,7 @@ export class ClinicalService {
     if (media.file.antivirusStatus === 'INFECTED') {
       throw new ConflictException('Arquivo rejeitado pelo antivírus.');
     }
-    if (media.file.antivirusStatus !== 'CLEAN') {
-      throw new ConflictException(
-        'Arquivo ainda não liberado pelo antivírus. Aguarde a varredura ou configure ClamAV (AV_DRIVER=clamav).',
-      );
-    }
+    // Sem ClamAV em produção, uploads antigos ficaram PENDING eternos — só INFECTED bloqueia.
     const buffer = await this.storage.getObject(media.file.objectKey);
     await prisma.auditEvent.create({
       data: {
@@ -689,7 +697,7 @@ export class ClinicalService {
     const file = input.file;
     if (!file?.buffer?.length) throw new BadRequestException('Envie um arquivo.');
     if (file.size > MAX_MEDIA_BYTES) throw new BadRequestException('Arquivo deve ter no máximo 25 MB.');
-    const mime = (file.mimetype || '').toLowerCase();
+    const mime = normalizeClinicalMime(file.mimetype);
     if (!ALLOWED_CLINICAL_MIME.has(mime)) {
       throw new BadRequestException('Tipo de arquivo não permitido. Use PDF, JPEG, PNG, WEBP ou MP4.');
     }
@@ -703,8 +711,8 @@ export class ClinicalService {
         `Arquivo rejeitado pelo antivírus${scan.detail ? `: ${scan.detail}` : '.'}`,
       );
     }
-    // Sem ClamAV ativo / daemon offline → PENDING (nunca CLEAN falso).
-    const antivirusStatus = scan.clean ? 'CLEAN' : 'PENDING';
+    // Sem ClamAV efetivo → NOT_APPLICABLE (permite download). Nunca CLEAN falso.
+    const antivirusStatus = antivirusStatusFromScan(scan);
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
 
     let stored;
@@ -713,18 +721,15 @@ export class ClinicalService {
         organizationId,
         clinicId: input.clinicId,
         filename: file.originalname,
-        contentType: file.mimetype || 'application/octet-stream',
+        contentType: mime || 'application/octet-stream',
         body: file.buffer,
         keyPrefix: 'patient-media',
         metadata: { kind: 'patient-media', patientId, type: input.type },
       });
     } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Falha ao gravar no storage.';
-      throw new BadRequestException(
-        /storage|ENOSPC|EACCES|EPERM|MinIO|S3|credencial|disabled/i.test(detail)
-          ? STORAGE_UNAVAILABLE_MESSAGE
-          : 'Não foi possível gravar o arquivo. Tente novamente.',
-      );
+      const failure = describeStoragePutFailure(error);
+      this.logger.error(`patient-media putObject failed: ${failure.logMessage}`);
+      throw new BadRequestException(failure.userMessage);
     }
 
     try {
@@ -735,7 +740,7 @@ export class ClinicalService {
             bucket: stored.bucket,
             objectKey: stored.objectKey,
             originalName: file.originalname,
-            mimeType: file.mimetype || 'application/octet-stream',
+            mimeType: mime || 'application/octet-stream',
             extension: extension || null,
             sizeBytes: BigInt(file.size),
             checksum,

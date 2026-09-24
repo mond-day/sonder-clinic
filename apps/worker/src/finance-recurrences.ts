@@ -77,6 +77,19 @@ export async function materialize(recurrence: {
   }
 
   const metadata = (recurrence.metadata ?? {}) as Record<string, unknown>;
+  if (metadata.source === 'NIBO' || metadata.generateLocally === false) {
+    // Parcelas vêm do pull Nibo; só avança a data de exibição para não reprocessar eternamente.
+    const nextOccurrence = advanceOccurrence(occurrence, recurrence.frequency, recurrence.interval);
+    const exhausted = Boolean(recurrence.endsAt && nextOccurrence > recurrence.endsAt);
+    await prisma.financeRecurrence.updateMany({
+      where: { id: recurrence.id, nextOccurrence: occurrence, active: true },
+      data: {
+        nextOccurrence,
+        active: exhausted ? false : true,
+      },
+    });
+    return false;
+  }
   const dueDate = occurrence;
   const description = `${recurrence.description} (${dueDate.toISOString().slice(0, 10)})`;
   const nextOccurrence = advanceOccurrence(occurrence, recurrence.frequency, recurrence.interval);

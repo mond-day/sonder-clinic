@@ -70,6 +70,139 @@ function buildObjectKey(input: PutObjectInput): string {
   return parts.join('/');
 }
 
+/** Metadados S3 exigem ASCII (header HTTP). */
+function sanitizeS3Metadata(metadata?: Record<string, string>): Record<string, string> | undefined {
+  if (!metadata) return undefined;
+  const next: Record<string, string> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    const safeKey = key.toLowerCase().replaceAll(/[^a-z0-9-]/g, '').slice(0, 64);
+    if (!safeKey) continue;
+    next[safeKey] = String(value ?? '').replaceAll(/[^\x20-\x7E]/g, '_').slice(0, 256);
+  }
+  return Object.keys(next).length ? next : undefined;
+}
+
+/**
+ * SSE-S3 (AES256): padrão só em AWS sem endpoint custom.
+ * Com S3_ENDPOINT (MinIO/compat) o padrão é off — muitos rejeitam ServerSideEncryption.
+ * Override: S3_SERVER_SIDE_ENCRYPTION=AES256|off.
+ */
+function resolveSseMode(): 'AES256' | undefined {
+  const raw = process.env.S3_SERVER_SIDE_ENCRYPTION;
+  if (raw !== undefined) {
+    const normalized = raw.trim().toLowerCase();
+    if (!normalized || normalized === 'off' || normalized === 'none' || normalized === 'false') {
+      return undefined;
+    }
+    return 'AES256';
+  }
+  if (process.env.S3_ENDPOINT?.trim()) return undefined;
+  return 'AES256';
+}
+
+function isSseUnsupportedError(error: unknown): boolean {
+  const text = error instanceof Error
+    ? `${error.name} ${error.message}`
+    : String(error ?? '');
+  return /ServerSideEncryption|SSE|encryption.*(not|un)?supported|InvalidRequest.*encrypt|NotImplemented.*encrypt/i.test(text);
+}
+
+/** Código / nome seguro do erro S3 (sem credenciais). */
+export function storageErrorCode(error: unknown): string {
+  if (!error || typeof error !== 'object') return 'Unknown';
+  const record = error as {
+    name?: string;
+    Code?: string;
+    code?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  const code = record.Code || record.code || record.name;
+  if (code && code !== 'Error') return String(code);
+  const status = record.$metadata?.httpStatusCode;
+  if (status) return `HTTP_${status}`;
+  return 'Unknown';
+}
+
+export type StoragePutFailure = {
+  /** Mensagem segura para o cliente (sem segredos). */
+  userMessage: string;
+  /** Texto para log (código + mensagem sanitizada). */
+  logMessage: string;
+  code: string;
+  kind: 'config' | 'access' | 'network' | 'compat' | 'unknown';
+};
+
+/**
+ * Classifica falha de putObject para UI/log — nunca inclui secret/key.
+ * Cobre AccessDenied, bucket, rede e incompatibilidade de checksum (SDK ≥3.729 vs MinIO antigo).
+ */
+export function describeStoragePutFailure(error: unknown): StoragePutFailure {
+  const code = storageErrorCode(error);
+  const message = error instanceof Error ? error.message : String(error ?? 'Falha ao gravar no storage.');
+  const blob = `${code} ${message}`;
+  const logMessage = `${code}: ${message.replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED]').slice(0, 500)}`;
+
+  if (/disabled|não configurado|not configured|S3_ENDPOINT|S3_ACCESS_KEY|S3_SECRET_KEY/i.test(blob)) {
+    return {
+      code,
+      kind: 'config',
+      logMessage,
+      userMessage:
+        'O armazenamento de arquivos não está configurado. Não é possível enviar arquivos neste momento.',
+    };
+  }
+  if (/AccessDenied|InvalidAccessKey|SignatureDoesNotMatch|Forbidden|HTTP_403|NoSuchBucket|NoSuchKey|InvalidBucketName/i.test(blob)) {
+    return {
+      code,
+      kind: 'access',
+      logMessage,
+      userMessage:
+        'O armazenamento recusou o envio (permissão, credencial ou bucket). Contate o administrador.',
+    };
+  }
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|NetworkingError|Timeout|HTTP_5\d\d|socket/i.test(blob)) {
+    return {
+      code,
+      kind: 'network',
+      logMessage,
+      userMessage: 'Não foi possível conectar ao armazenamento. Tente novamente em instantes.',
+    };
+  }
+  // SDK JS v3.729+ envia CRC32 por padrão; MinIO antigo responde NotImplemented / InvalidRequest / XAmz*.
+  if (/Checksum|XAmzContentSHA256|InvalidDigest|BadDigest|NotImplemented|InvalidRequest|InvalidChunkSize|trailing checksum|crc32|crc64/i.test(blob)) {
+    return {
+      code,
+      kind: 'compat',
+      logMessage,
+      userMessage:
+        'O armazenamento rejeitou o upload (incompatibilidade S3/checksum). Contate o administrador.',
+    };
+  }
+  return {
+    code,
+    kind: 'unknown',
+    logMessage,
+    userMessage: `Não foi possível gravar o arquivo (${code}). Tente novamente.`,
+  };
+}
+
+export type AntivirusScanResult = {
+  clean: boolean;
+  infected: boolean;
+  engine: string;
+  detail?: string;
+};
+
+/**
+ * Status persistido após varredura síncrona.
+ * Sem ClamAV efetivo → NOT_APPLICABLE (download liberado); nunca deixa PENDING eterno.
+ */
+export function antivirusStatusFromScan(scan: AntivirusScanResult): 'CLEAN' | 'INFECTED' | 'NOT_APPLICABLE' {
+  if (scan.infected) return 'INFECTED';
+  if (scan.clean) return 'CLEAN';
+  return 'NOT_APPLICABLE';
+}
+
 class LocalStorageAdapter implements StorageAdapter {
   driver: StorageDriver = 'local';
   enabled = true;
@@ -141,6 +274,9 @@ class MinioStorageAdapter implements StorageAdapter {
         accessKeyId: accessKey!,
         secretAccessKey: secretKey!,
       },
+      // AWS SDK ≥3.729 calcula CRC32 por padrão; MinIO/S3-compat antigos rejeitam o PutObject.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
 
@@ -150,14 +286,30 @@ class MinioStorageAdapter implements StorageAdapter {
     }
     const objectKey = buildObjectKey(input);
     const body = await bodyToBuffer(input.body);
-    const result = await this.client.send(new PutObjectCommand({
+    const metadata = sanitizeS3Metadata(input.metadata);
+    const sse = resolveSseMode();
+
+    const send = async (withSse: boolean) => this.client!.send(new PutObjectCommand({
       Bucket: this.bucket,
       Key: objectKey,
       Body: body,
+      ContentLength: body.length,
       ContentType: input.contentType,
-      Metadata: input.metadata,
-      ServerSideEncryption: 'AES256',
+      Metadata: metadata,
+      ...(withSse && sse ? { ServerSideEncryption: sse } : {}),
     }));
+
+    let result;
+    try {
+      result = await send(Boolean(sse));
+    } catch (error) {
+      // Alguns S3-compatíveis rejeitam SSE-S3 — tenta sem criptografia de servidor.
+      if (sse && isSseUnsupportedError(error)) {
+        result = await send(false);
+      } else {
+        throw error;
+      }
+    }
     return {
       bucket: this.bucket,
       objectKey,
@@ -326,6 +478,9 @@ export const storageStatus = () => {
       driver: storage.driver,
       enabled: storage.enabled,
       disabledReason: storage.disabledReason ?? null,
+      bucket: process.env.S3_BUCKET ?? null,
+      endpointConfigured: Boolean(process.env.S3_ENDPOINT?.trim()),
+      sse: resolveSseMode() ?? 'off',
     },
     antivirus: {
       enabled: antivirus.enabled,
