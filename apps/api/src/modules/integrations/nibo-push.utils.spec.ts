@@ -33,6 +33,7 @@ describe('nibo-push.utils', () => {
   it('lê accountId da configuration', () => {
     expect(readNiboAccountId({ accountId: 'acc-1' })).toBe('acc-1');
     expect(readNiboAccountId({ defaultAccountId: 'acc-2' })).toBe('acc-2');
+    expect(readNiboAccountId({ accountIds: ['lista-1', 'lista-2'] })).toBe('lista-1');
     expect(readNiboAccountId({})).toBeNull();
   });
 

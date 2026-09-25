@@ -56,11 +56,20 @@ export function MultiSelect({
     );
   }, [options, query]);
 
-  const selectedLabels = options.filter((option) => selected.includes(option.value));
+  const selectedLabels = useMemo(() => {
+    return selected.map((id) => {
+      const exact = options.find((option) => option.value === id);
+      if (exact) return exact;
+      const caseMatch = options.find((option) => option.value.toLowerCase() === id.toLowerCase());
+      if (caseMatch) return { ...caseMatch, value: id };
+      return { value: id, label: id };
+    });
+  }, [options, selected]);
 
   function toggle(value: string) {
-    const next = selected.includes(value)
-      ? selected.filter((item) => item !== value)
+    const already = selected.some((item) => item === value || item.toLowerCase() === value.toLowerCase());
+    const next = already
+      ? selected.filter((item) => item !== value && item.toLowerCase() !== value.toLowerCase())
       : [...selected, value];
     if (!controlled) setInternalSelected(next);
     onChange?.(next);
@@ -102,7 +111,9 @@ export function MultiSelect({
             />
             <div id={`${id}-listbox`} className="multiselect-list" role="listbox" aria-multiselectable="true" aria-label={label}>
               {filtered.map((option) => {
-                const checked = selected.includes(option.value);
+                const checked = selected.some(
+                  (item) => item === option.value || item.toLowerCase() === option.value.toLowerCase(),
+                );
                 return (
                   <button
                     key={option.value}

@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID as cryptoRandomUuid } from 'node:crypto';
-import { Prisma, prisma } from '@sonder/database';
+import { Prisma, prisma, withTransientDbRetry } from '@sonder/database';
 import {
   antivirusStatusFromScan,
   createAntivirusScanner,
@@ -733,62 +733,77 @@ export class ClinicalService {
     }
 
     try {
-      const created = await prisma.$transaction(async (tx) => {
-        const fileObject = await tx.fileObject.create({
-          data: {
-            organizationId,
-            bucket: stored.bucket,
-            objectKey: stored.objectKey,
-            originalName: file.originalname,
-            mimeType: mime || 'application/octet-stream',
-            extension: extension || null,
-            sizeBytes: BigInt(file.size),
-            checksum,
-            status: 'AVAILABLE',
-            antivirusStatus,
-            createdById: actorId,
-            metadata: json({
-              kind: 'patient-media',
-              patientId,
-              type: input.type,
-              scanDetail: scan.detail ?? null,
-              scanEngine: scan.engine,
-            }),
-          },
-        });
-        return tx.patientMedia.create({
-          data: {
-            organizationId,
-            patientId,
-            fileId: fileObject.id,
-            type: input.type,
-            displayName: input.displayName,
-            toothFdi: input.toothFdi,
-            appointmentId: input.appointmentId,
-            treatmentId: input.treatmentId,
-            examDate: input.examDate ? new Date(`${input.examDate}T00:00:00Z`) : undefined,
-            notes: input.notes,
-            folderId: input.folderId,
-          },
-          include: {
-            file: {
-              select: {
-                id: true,
-                originalName: true,
-                mimeType: true,
-                sizeBytes: true,
-                status: true,
-                antivirusStatus: true,
-                createdAt: true,
-              },
+      const created = await withTransientDbRetry(
+        () => prisma.$transaction(async (tx) => {
+          const fileObject = await tx.fileObject.create({
+            data: {
+              organizationId,
+              bucket: stored.bucket,
+              objectKey: stored.objectKey,
+              originalName: file.originalname,
+              mimeType: mime || 'application/octet-stream',
+              extension: extension || null,
+              sizeBytes: BigInt(file.size),
+              checksum,
+              status: 'AVAILABLE',
+              antivirusStatus,
+              createdById: actorId,
+              metadata: json({
+                kind: 'patient-media',
+                patientId,
+                type: input.type,
+                scanDetail: scan.detail ?? null,
+                scanEngine: scan.engine,
+              }),
             },
-            folder: { select: { id: true, name: true } },
+          });
+          return tx.patientMedia.create({
+            data: {
+              organizationId,
+              patientId,
+              fileId: fileObject.id,
+              type: input.type,
+              displayName: input.displayName,
+              toothFdi: input.toothFdi,
+              appointmentId: input.appointmentId,
+              treatmentId: input.treatmentId,
+              examDate: input.examDate ? new Date(`${input.examDate}T00:00:00Z`) : undefined,
+              notes: input.notes,
+              folderId: input.folderId,
+            },
+            include: {
+              file: {
+                select: {
+                  id: true,
+                  originalName: true,
+                  mimeType: true,
+                  sizeBytes: true,
+                  status: true,
+                  antivirusStatus: true,
+                  createdAt: true,
+                },
+              },
+              folder: { select: { id: true, name: true } },
+            },
+          });
+        }),
+        {
+          onRetry: (error) => {
+            const detail = error instanceof Error ? error.message : String(error ?? '');
+            this.logger.warn(`patient-media DB retry after: ${detail.slice(0, 200)}`);
           },
-        });
-      });
+        },
+      );
       return serializeMediaFile(created);
     } catch (error) {
       await this.storage.deleteObject(stored.objectKey).catch(() => undefined);
+      const detail = error instanceof Error ? error.message : String(error ?? '');
+      this.logger.error(`patient-media DB persist failed: ${detail.slice(0, 400)}`);
+      if (/Connection reset|ECONNRESET|Can't reach database|P1001|P1017|P2024/i.test(detail)) {
+        throw new BadRequestException(
+          'Não foi possível salvar a foto (falha temporária no banco). Tente novamente em instantes.',
+        );
+      }
       throw error;
     }
   }

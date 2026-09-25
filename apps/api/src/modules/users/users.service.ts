@@ -3,7 +3,7 @@ import {
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { createHash } from 'node:crypto';
-import { Prisma, prisma } from '@sonder/database';
+import { Prisma, prisma, withTransientDbRetry } from '@sonder/database';
 import {
   antivirusStatusFromScan,
   createAntivirusScanner,
@@ -523,26 +523,34 @@ export class UsersService {
     });
 
     try {
-      const fileObject = await prisma.fileObject.create({
-        data: {
-          organizationId,
-          bucket: stored.bucket,
-          objectKey: stored.objectKey,
-          originalName: file.originalname,
-          mimeType: mime,
-          extension: extension || null,
-          sizeBytes: BigInt(file.size),
-          checksum,
-          status: 'AVAILABLE',
-          antivirusStatus,
-          createdById: actorId,
-          metadata: { kind: 'user-avatar', userId } as Prisma.InputJsonValue,
+      const fileObject = await withTransientDbRetry(
+        () => prisma.fileObject.create({
+          data: {
+            organizationId,
+            bucket: stored.bucket,
+            objectKey: stored.objectKey,
+            originalName: file.originalname,
+            mimeType: mime,
+            extension: extension || null,
+            sizeBytes: BigInt(file.size),
+            checksum,
+            status: 'AVAILABLE',
+            antivirusStatus,
+            createdById: actorId,
+            metadata: { kind: 'user-avatar', userId } as Prisma.InputJsonValue,
+          },
+        }),
+        {
+          onRetry: (error) => {
+            const detail = error instanceof Error ? error.message : String(error ?? '');
+            this.logger.warn(`user-avatar DB retry after: ${detail.slice(0, 200)}`);
+          },
         },
-      });
-      await prisma.user.update({
+      );
+      await withTransientDbRetry(() => prisma.user.update({
         where: { id: userId },
         data: { avatarFileId: fileObject.id },
-      });
+      }));
       if (previous?.avatarFileId) {
         const old = await prisma.fileObject.findFirst({ where: { id: previous.avatarFileId, organizationId } });
         if (old) {
@@ -553,6 +561,13 @@ export class UsersService {
       return withAvatarUrl({ id: userId, avatarFileId: fileObject.id });
     } catch (error) {
       await this.storage.deleteObject(stored.objectKey).catch(() => undefined);
+      const detail = error instanceof Error ? error.message : String(error ?? '');
+      this.logger.error(`user-avatar DB persist failed: ${detail.slice(0, 400)}`);
+      if (/Connection reset|ECONNRESET|Can't reach database|P1001|P1017|P2024/i.test(detail)) {
+        throw new BadRequestException(
+          'Não foi possível salvar a foto (falha temporária no banco). Tente novamente em instantes.',
+        );
+      }
       throw error;
     }
   }

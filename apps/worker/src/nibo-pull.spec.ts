@@ -38,6 +38,7 @@ describe('nibo-sync accountId e IDs', () => {
   it('readNiboAccountId', () => {
     expect(readNiboAccountId({ accountId: 'a1' })).toBe('a1');
     expect(readNiboAccountId({ niboAccountId: 'a2' })).toBe('a2');
+    expect(readNiboAccountId({ accountIds: ['x', 'y'] })).toBe('x');
     expect(readNiboAccountId(undefined)).toBeNull();
   });
 

@@ -571,6 +571,10 @@ export class IntegrationsService {
     const sampleDebitCategories = [...new Set(
       debitResult.items.map((item) => item.categoryId).filter(Boolean),
     )].slice(0, 5) as string[];
+    const sampleDebitCostCenters = [...new Set(
+      debitResult.items.map((item) => item.costCenterId).filter(Boolean),
+    )].slice(0, 5) as string[];
+    const sampleDebitWithoutCostCenter = debitResult.items.filter((item) => !item.costCenterId).length;
 
     this.logger.log({
       event: 'nibo.import.completed',
@@ -624,7 +628,7 @@ export class IntegrationsService {
           ? `Filtro de ${costCenterIds.length} centro(s) de custo nas despesas (só itens desses centros; sem centro no Nibo são excluídos).`
           : '',
         filterMiss
-          ? `Atenção: filtros não casaram com os IDs do Nibo. Exemplos de categoryId no Nibo (crédito): ${sampleCreditCategories.join(', ') || 'nenhum'}; (débito): ${sampleDebitCategories.join(', ') || 'nenhum'}. Revise as categorias salvas na integração.`
+          ? `Atenção: filtros não casaram com os IDs do Nibo. Exemplos categoryId crédito: ${sampleCreditCategories.join(', ') || 'nenhum'}; débito: ${sampleDebitCategories.join(', ') || 'nenhum'}; costCenterId débito: ${sampleDebitCostCenters.join(', ') || 'nenhum'}${sampleDebitWithoutCostCenter ? ` (${sampleDebitWithoutCostCenter} sem centro)` : ''}. Revise categorias/centros salvos na integração.`
           : '',
         warnings.length ? warnings.join(' ') : '',
       ].filter(Boolean).join(' '),

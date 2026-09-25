@@ -151,11 +151,19 @@ function parseScheduleRow(raw: unknown): ScheduleItem | null {
       if (costCenterId) break;
     }
   }
+  if (!costCenterId) {
+    costCenterId = pickString(row.costCenterId, row.CostCenterId) || null;
+  }
   const stakeholder = asRecord(row.stakeholder);
   const value = asNumber(row.value);
   const paidValue = asNumber(row.paidValue);
   const recurrence = asRecord(row.recurrence);
-  const hasRecurrence = row.hasRecurrence === true || Boolean(recurrence);
+  const recurrenceIdTop = pickString(row.recurrenceId, row.RecurrenceId);
+  const hasRecurrence = row.hasRecurrence === true
+    || row.isRecurrent === true
+    || row.isRecurring === true
+    || Boolean(recurrence)
+    || Boolean(recurrenceIdTop);
   const intervalTypeRaw = recurrence?.intervalType;
   return {
     scheduleId,
@@ -172,7 +180,7 @@ function parseScheduleRow(raw: unknown): ScheduleItem | null {
       ? pickString(stakeholder.cpfCnpj, stakeholder.document, stakeholder.taxId) || null
       : null,
     hasRecurrence,
-    recurrenceId: recurrence ? pickString(recurrence.id, recurrence.recurrenceId) || null : null,
+    recurrenceId: (recurrence ? pickString(recurrence.id, recurrence.recurrenceId) : '') || recurrenceIdTop || null,
     recurrenceInterval: recurrence && asNumber(recurrence.interval) > 0 ? asNumber(recurrence.interval) : hasRecurrence ? 1 : null,
     recurrenceIntervalType: typeof intervalTypeRaw === 'number' && Number.isFinite(intervalTypeRaw) ? intervalTypeRaw : null,
     recurrenceEndDate: recurrence ? pickString(recurrence.endDate) || null : null,

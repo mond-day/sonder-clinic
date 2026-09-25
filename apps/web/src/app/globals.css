@@ -549,6 +549,23 @@ td.row-actions > div {
   justify-content: flex-end;
   align-items: center;
 }
+.mutation-form .user-photo-field,
+.mutation-form .clinic-logo-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  grid-column: 1 / -1;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+.mutation-form .user-photo-field strong,
+.mutation-form .clinic-logo-field strong { display: block; font-size: 13px; }
+.mutation-form .user-photo-field .field-hint,
+.mutation-form .clinic-logo-field .field-hint {
+  display: block; margin-top: 2px; font-size: 11px; color: var(--muted);
+}
 .nested-modal-form,
 .modal-body .mutation-form.nested-modal-form {
   grid-template-columns: 1fr !important;

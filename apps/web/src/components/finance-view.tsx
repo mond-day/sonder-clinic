@@ -608,6 +608,10 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   <div><strong>Contas a receber</strong><span>Criar título e registrar pagamento</span></div>
                   <StatusBadge tone="blue">Abrir</StatusBadge>
                 </button>
+                <button className="billing-row" type="button" style={{ width: '100%', border: 0, background: 'transparent', textAlign: 'left' }} onClick={() => setTab('payable')}>
+                  <div><strong>Contas a pagar</strong><span>Criar despesa e acompanhar títulos</span></div>
+                  <StatusBadge tone="blue">Abrir</StatusBadge>
+                </button>
                 <button className="billing-row" type="button" style={{ width: '100%', border: 0, background: 'transparent', textAlign: 'left' }} onClick={() => setTab('recurring')}>
                   <div><strong>Recorrências</strong><span>Gerar títulos periódicos</span></div>
                   <StatusBadge tone="blue">Abrir</StatusBadge>

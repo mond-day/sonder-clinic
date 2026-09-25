@@ -20,7 +20,7 @@ describe('storage adapters', () => {
     expect(adapter.enabled).toBe(true);
   });
 
-  it('enables minio adapter only with credentials', () => {
+  it('enables minio adapter only with credentials', async () => {
     process.env.STORAGE_DRIVER = 'minio';
     delete process.env.S3_ENDPOINT;
     delete process.env.S3_ACCESS_KEY;
@@ -32,10 +32,14 @@ describe('storage adapters', () => {
     process.env.S3_ENDPOINT = 'http://localhost:9000';
     process.env.S3_ACCESS_KEY = 'minio';
     process.env.S3_SECRET_KEY = 'minio123';
+    delete process.env.AWS_REQUEST_CHECKSUM_CALCULATION;
+    delete process.env.AWS_RESPONSE_CHECKSUM_VALIDATION;
     const enabled = createStorageAdapter();
     expect(enabled.enabled).toBe(true);
     expect(storageStatus().storage.driver).toBe('minio');
     expect(storageStatus().storage.enabled).toBe(true);
+    expect(process.env.AWS_REQUEST_CHECKSUM_CALCULATION).toBe('WHEN_REQUIRED');
+    expect(process.env.AWS_RESPONSE_CHECKSUM_VALIDATION).toBe('WHEN_REQUIRED');
   });
 
   it('keeps antivirus disabled without clamav driver', () => {

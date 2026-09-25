@@ -76,6 +76,11 @@ function writeShowGoogleEvents(value: boolean) {
   }
 }
 
+function initialShowGoogleEvents(): boolean {
+  if (typeof window === 'undefined') return true;
+  return readShowGoogleEvents() ?? true;
+}
+
 const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 /** Altura de cada hora na grade (deve bater com `--slot-height` no CSS). */
@@ -249,8 +254,8 @@ export function AgendaView() {
   const [editUnitId, setEditUnitId] = useState('');
   const [editChairId, setEditChairId] = useState('');
   const [businessHours, setBusinessHours] = useState<BusinessHours>(DEFAULT_BUSINESS_HOURS);
-  const [showPersonalCalendar, setShowPersonalCalendar] = useState(true);
-  const [googleEventsHydrated, setGoogleEventsHydrated] = useState(false);
+  const [showPersonalCalendar, setShowPersonalCalendar] = useState(initialShowGoogleEvents);
+  const [googleEventsHydrated, setGoogleEventsHydrated] = useState(() => typeof window !== 'undefined');
   const [personalCalendarAvailable, setPersonalCalendarAvailable] = useState(false);
   const [personalEvents, setPersonalEvents] = useState<RecordValue[]>([]);
   const [personalCalendarMessage, setPersonalCalendarMessage] = useState('');
@@ -269,11 +274,20 @@ export function AgendaView() {
       /* ignore */
     }
     setPrefs(readAgendaPrefs());
-    // Preferência Google: ler no cliente sem esperar API (evita default false sobrescrever).
+    // Releitura no cliente (SSR começa com default; navegação client-side já usa lazy init).
     const googlePref = readShowGoogleEvents();
-    setShowPersonalCalendar(googlePref ?? true);
+    if (googlePref !== null) setShowPersonalCalendar(googlePref);
+    else setShowPersonalCalendar(true);
     setGoogleEventsHydrated(true);
   }, []);
+
+  // Sem escolha explícita: se Google conecta, permanece marcado e grava a preferência.
+  useEffect(() => {
+    if (!googleEventsHydrated || !personalCalendarAvailable) return;
+    if (readShowGoogleEvents() !== null) return;
+    setShowPersonalCalendar(true);
+    writeShowGoogleEvents(true);
+  }, [googleEventsHydrated, personalCalendarAvailable]);
 
   useEffect(() => {
     if (!prefsOpen) return;

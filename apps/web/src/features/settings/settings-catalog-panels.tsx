@@ -3,9 +3,11 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Eye, Pencil, Power } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import { notifyBrandingUpdated, resolveMediaUrl } from '@/lib/branding';
 import { currency, dateOnly, list, nested, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { EmptyState, StatusBadge } from '@/components/ui';
 import { Modal } from '@/components/modal';
+import { UploadableAvatar } from '@/components/uploadable-avatar';
 import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-inputs';
 
 type Props = {
@@ -22,6 +24,9 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
   const [editing, setEditing] = useState<RecordValue | null>(null);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [pendingLogoFile, setPendingLogoFile] = useState<File | null>(null);
+  const [pendingLogoPreview, setPendingLogoPreview] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -33,6 +38,58 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
   }, []);
 
   useEffect(load, [load]);
+
+  useEffect(() => {
+    if (!open || !editing?.id) {
+      setLogoUrl(null);
+      return;
+    }
+    let cancelled = false;
+    api.get<RecordValue>(`/settings/branding?clinicId=${String(editing.id)}`)
+      .then((branding) => {
+        if (cancelled) return;
+        setLogoUrl(resolveMediaUrl(text(branding.logoUrl, '') || null) ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setLogoUrl(null);
+      });
+    return () => { cancelled = true; };
+  }, [open, editing?.id]);
+
+  function clearPendingLogo() {
+    setPendingLogoFile(null);
+    setPendingLogoPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current);
+      return null;
+    });
+  }
+
+  function closeClinicModal() {
+    clearPendingLogo();
+    setLogoUrl(null);
+    setOpen(false);
+    setEditing(null);
+    setFormError('');
+  }
+
+  async function persistClinicLogo(clinicId: string, file: File, tradeName: string) {
+    const form = new FormData();
+    form.set('clinicId', clinicId);
+    form.set('kind', 'logo');
+    form.set('file', file);
+    const uploaded = await api.postForm<{ url: string }>('/settings/branding/assets', form);
+    const current = await api.get<RecordValue>(`/settings/branding?clinicId=${clinicId}`).catch(() => ({} as RecordValue));
+    await api.put('/settings/branding', {
+      clinicId,
+      name: text(current.name, tradeName),
+      subtitle: text(current.subtitle, ''),
+      primaryColor: text(current.primaryColor, '#176B5B'),
+      logoUrl: uploaded.url,
+      faviconUrl: text(current.faviconUrl, '') || undefined,
+    });
+    notifyBrandingUpdated(clinicId);
+    return resolveMediaUrl(uploaded.url) ?? uploaded.url;
+  }
 
   async function createClinic(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -47,10 +104,16 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
       phone: String(data.get('phone') || '').trim() || undefined,
     };
     try {
-      if (editing) await api.patch(`/settings/clinics/${String(editing.id)}`, body);
-      else await api.post('/settings/clinics', body);
-      setOpen(false);
-      setEditing(null);
+      let clinicId = editing ? String(editing.id) : '';
+      if (editing) await api.patch(`/settings/clinics/${clinicId}`, body);
+      else {
+        const created = await api.post<RecordValue>('/settings/clinics', body);
+        clinicId = String(created.id);
+      }
+      if (pendingLogoFile && clinicId) {
+        await persistClinicLogo(clinicId, pendingLogoFile, body.tradeName);
+      }
+      closeClinicModal();
       load();
       onClinicsChanged?.();
     } catch (cause) {
@@ -58,6 +121,32 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
     } finally {
       setBusy(false);
     }
+  }
+
+  async function onClinicLogoFile(file: File) {
+    if (!file.type.startsWith('image/')) {
+      setFormError('Envie uma imagem (JPG, PNG, WEBP, SVG ou ICO).');
+      return;
+    }
+    setFormError('');
+    if (editing?.id) {
+      setBusy(true);
+      try {
+        const nextUrl = await persistClinicLogo(String(editing.id), file, text(editing.tradeName, 'Clínica'));
+        setLogoUrl(nextUrl);
+        clearPendingLogo();
+      } catch (cause) {
+        setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível enviar a logo.');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    setPendingLogoPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current);
+      return URL.createObjectURL(file);
+    });
+    setPendingLogoFile(file);
   }
 
   async function toggleStatus(row: RecordValue) {
@@ -75,7 +164,7 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
   return (
     <div className="disclosure-panel">
       <header style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-        <button className="button small primary" type="button" onClick={() => setOpen(true)}>Nova clínica</button>
+        <button className="button small primary" type="button" onClick={() => { clearPendingLogo(); setEditing(null); setFormError(''); setOpen(true); }}>Nova clínica</button>
       </header>
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
       {loading ? <div className="state-message">Carregando clínicas…</div> : null}
@@ -98,7 +187,7 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
                 <StatusBadge tone={row.status === 'ACTIVE' ? 'green' : 'gray'}>
                   {presentationLabel(row.status)}
                 </StatusBadge>
-                <button className="button small" type="button" onClick={() => { setEditing(row); setFormError(''); setOpen(true); }}>
+                <button className="button small" type="button" onClick={() => { clearPendingLogo(); setEditing(row); setFormError(''); setOpen(true); }}>
                   Editar
                 </button>
                 <button className="button small" type="button" onClick={() => void toggleStatus(row)}>
@@ -114,11 +203,28 @@ export function ClinicsAdminPanel({ clinics, onClinicsChanged }: Pick<Props, 'cl
         open={open}
         title={editing ? 'Editar clínica' : 'Nova clínica'}
         description="Cadastro administrativo da unidade."
-        onClose={() => { setOpen(false); setEditing(null); }}
+        onClose={closeClinicModal}
         size="small"
         confirmOnClose
       >
-        <form className="mutation-form" onSubmit={createClinic} key={editing ? String(editing.id) : 'new'}>
+        <form className="mutation-form" onSubmit={(event) => void createClinic(event)} key={editing ? String(editing.id) : 'new'}>
+          <div className="clinic-logo-field">
+            <UploadableAvatar
+              name={editing ? text(editing.tradeName, 'Clínica') : 'Nova clínica'}
+              photoUrl={pendingLogoPreview || logoUrl}
+              uploading={busy}
+              title={pendingLogoPreview || logoUrl ? 'Alterar foto da organização' : 'Adicionar foto da organização'}
+              onFile={(file) => void onClinicLogoFile(file)}
+            />
+            <div>
+              <strong>Foto da organização</strong>
+              <span className="field-hint">
+                {editing
+                  ? 'JPG, PNG, WEBP, SVG ou ICO · até 2 MB · salva ao escolher'
+                  : 'Opcional · enviada ao criar a clínica'}
+              </span>
+            </div>
+          </div>
           <label className="span-2">Nome fantasia<input name="tradeName" minLength={2} required autoFocus defaultValue={text(editing?.tradeName, '')} /></label>
           <label className="span-2">Razão social<input name="legalName" minLength={2} required defaultValue={text(editing?.legalName, '')} /></label>
           <label>CNPJ<input name="taxId" defaultValue={text(editing?.taxId, '')} /></label>

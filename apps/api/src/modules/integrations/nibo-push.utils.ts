@@ -64,6 +64,13 @@ export function readNiboAccountId(config: Record<string, unknown> | undefined): 
     const value = config[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
+  // Compat: lista persistida (accountIds / niboAccountIds) — baixa Nibo usa só a primeira.
+  for (const key of ['accountIds', 'niboAccountIds']) {
+    const raw = config[key];
+    if (!Array.isArray(raw)) continue;
+    const first = raw.map((item) => String(item ?? '').trim()).find(Boolean);
+    if (first) return first;
+  }
   return null;
 }
 

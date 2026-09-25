@@ -266,6 +266,13 @@ class MinioStorageAdapter implements StorageAdapter {
       this.disabledReason = 'MinIO/S3 não configurado (S3_ENDPOINT/S3_ACCESS_KEY/S3_SECRET_KEY).';
       return;
     }
+    // Env + client: o SDK também lê AWS_* ; garante deploy mesmo se o option for ignorado.
+    if (!process.env.AWS_REQUEST_CHECKSUM_CALCULATION?.trim()) {
+      process.env.AWS_REQUEST_CHECKSUM_CALCULATION = 'WHEN_REQUIRED';
+    }
+    if (!process.env.AWS_RESPONSE_CHECKSUM_VALIDATION?.trim()) {
+      process.env.AWS_RESPONSE_CHECKSUM_VALIDATION = 'WHEN_REQUIRED';
+    }
     this.client = new S3Client({
       region,
       endpoint,

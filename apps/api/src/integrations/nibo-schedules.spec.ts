@@ -31,4 +31,24 @@ describe('parseNiboScheduleRow', () => {
     expect(parseNiboScheduleRow({ description: 'x', value: 1 })).toBeNull();
     expect(parseNiboScheduleRow({ scheduleId: 'x', value: 1 })).toBeNull();
   });
+
+  it('lê costCenterId no topo e recorrência por isRecurrent/recurrenceId', () => {
+    const withTopCc = parseNiboScheduleRow({
+      scheduleId: 'd-1',
+      description: 'Aluguel',
+      value: 100,
+      paidValue: 0,
+      dueDate: '2026-10-01',
+      costCenterId: 'cc-top',
+      costCenterDescription: 'Odontologia',
+      isRecurrent: true,
+      recurrenceId: 'rec-1',
+    });
+    expect(withTopCc).toMatchObject({
+      costCenterId: 'cc-top',
+      costCenterName: 'Odontologia',
+      hasRecurrence: true,
+      recurrenceId: 'rec-1',
+    });
+  });
 });

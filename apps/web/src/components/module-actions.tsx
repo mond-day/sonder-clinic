@@ -17,6 +17,15 @@ import {
 } from '@/lib/format';
 import { lookupViaCep } from '@/lib/via-cep';
 import { notifyBrandingUpdated } from '@/lib/branding';
+import {
+  alignIdsToCatalog,
+  buildNiboNameMap,
+  enrichNiboNamesFromCatalog,
+  niboIdList,
+  niboNameMap,
+  niboOptions,
+  readNiboSelectedAccountIds,
+} from '@/lib/nibo-integration-form';
 import type { Clinic, Professional } from './selection-provider';
 import { SearchableSelect } from './searchable-select';
 import { MultiSelect } from './multi-select';
@@ -187,105 +196,6 @@ const providerCredentialKeys: Record<IntegrationProvider, string[]> = {
   OPENAI: ['apiKey'],
 };
 
-function niboIdList(config: Record<string, unknown> | undefined, arrayKey: string, singularKey: string): string[] {
-  const raw = config?.[arrayKey];
-  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
-  const one = config?.[singularKey];
-  if (typeof one === 'string' && one.trim()) return [one.trim()];
-  return [];
-}
-
-function niboNameMap(config: Record<string, unknown> | undefined, key: string): Record<string, string> {
-  const raw = config?.[key];
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const out: Record<string, string> = {};
-  for (const [id, name] of Object.entries(raw as Record<string, unknown>)) {
-    if (id && typeof name === 'string' && name.trim() && name.trim() !== id) out[id] = name.trim();
-  }
-  return out;
-}
-
-function lookupNiboName(
-  id: string,
-  rows: Array<{ id: string; name: string }>,
-  savedNames: Record<string, string>,
-): string {
-  const needle = id.trim().toLowerCase();
-  if (!needle) return id;
-  const fromCatalog = rows.find((row) => row.id.toLowerCase() === needle);
-  if (fromCatalog?.name) return fromCatalog.name;
-  for (const [savedId, name] of Object.entries(savedNames)) {
-    if (savedId.toLowerCase() === needle && name) return name;
-  }
-  return id;
-}
-
-function niboOptions(
-  rows: Array<{ id: string; name: string; type?: string }>,
-  selectedIds: string[],
-  savedNames: Record<string, string> = {},
-) {
-  const byNorm = new Map<string, { value: string; label: string; description?: string }>();
-  for (const row of rows) {
-    if (!row.id) continue;
-    byNorm.set(row.id.toLowerCase(), {
-      value: row.id,
-      label: row.name || lookupNiboName(row.id, rows, savedNames),
-      description: row.type || undefined,
-    });
-  }
-  for (const id of selectedIds) {
-    if (!id) continue;
-    const key = id.toLowerCase();
-    const existing = byNorm.get(key);
-    if (existing) {
-      // Mantém o id selecionado (casing salvo) para o MultiSelect casar selected.includes.
-      byNorm.set(key, {
-        ...existing,
-        value: id,
-        label: existing.label !== existing.value
-          ? existing.label
-          : lookupNiboName(id, rows, savedNames),
-      });
-    } else {
-      byNorm.set(key, {
-        value: id,
-        label: lookupNiboName(id, rows, savedNames),
-      });
-    }
-  }
-  return [...byNorm.values()];
-}
-
-function buildNiboNameMap(
-  ids: string[],
-  catalogRows: Array<{ id: string; name: string }>,
-  previous: Record<string, string>,
-) {
-  const next: Record<string, string> = {};
-  for (const id of ids) {
-    if (!id) continue;
-    const name = lookupNiboName(id, catalogRows, previous);
-    if (name && name !== id) next[id] = name;
-  }
-  return next;
-}
-
-function enrichNiboNamesFromCatalog(
-  ids: string[],
-  catalogRows: Array<{ id: string; name: string }>,
-  previous: Record<string, string>,
-): Record<string, string> {
-  return buildNiboNameMap(ids, catalogRows, previous);
-}
-
-function alignIdsToCatalog(ids: string[], catalogRows: Array<{ id: string; name: string }>): string[] {
-  return ids.map((id) => {
-    const match = catalogRows.find((row) => row.id.toLowerCase() === id.toLowerCase());
-    return match?.id ?? id;
-  });
-}
-
 function fields(form: HTMLFormElement) {
   return new FormData(form);
 }
@@ -352,11 +262,11 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [niboCategoryIds, setNiboCategoryIds] = useState<string[]>([]);
   const [niboPayableCategoryIds, setNiboPayableCategoryIds] = useState<string[]>([]);
   const [niboCostCenterIds, setNiboCostCenterIds] = useState<string[]>([]);
-  const [niboAccountId, setNiboAccountId] = useState('');
+  const [niboAccountIds, setNiboAccountIds] = useState<string[]>([]);
   const [niboCategoryNames, setNiboCategoryNames] = useState<Record<string, string>>({});
   const [niboPayableCategoryNames, setNiboPayableCategoryNames] = useState<Record<string, string>>({});
   const [niboCostCenterNames, setNiboCostCenterNames] = useState<Record<string, string>>({});
-  const [niboAccountName, setNiboAccountName] = useState('');
+  const [niboAccountNames, setNiboAccountNames] = useState<Record<string, string>>({});
   const [niboTesting, setNiboTesting] = useState(false);
   const [niboImporting, setNiboImporting] = useState(false);
   const [googleOauthBusy, setGoogleOauthBusy] = useState(false);
@@ -484,10 +394,12 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
     setNiboCategoryIds(niboIdList(cfg, 'receivableCategoryIds', 'receivableCategoryId'));
     setNiboPayableCategoryIds(niboIdList(cfg, 'payableCategoryIds', 'payableCategoryId'));
     setNiboCostCenterIds(niboIdList(cfg, 'costCenterIds', 'costCenterId'));
-    setNiboAccountId(String(cfg.accountId ?? cfg.defaultAccountId ?? '').trim());
+    const selectedAccounts = readNiboSelectedAccountIds(cfg);
+    setNiboAccountIds(selectedAccounts);
     const receivableNames = niboNameMap(cfg, 'receivableCategoryNames');
     const payableNames = niboNameMap(cfg, 'payableCategoryNames');
     const centerNames = niboNameMap(cfg, 'costCenterNames');
+    const accountNames = niboNameMap(cfg, 'accountNames');
     // Fallbacks de nomes singulares (configs antigas / primeiro item).
     if (typeof cfg.receivableCategoryId === 'string' && typeof cfg.receivableCategoryName === 'string' && cfg.receivableCategoryName) {
       receivableNames[cfg.receivableCategoryId] = cfg.receivableCategoryName;
@@ -498,11 +410,14 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
     if (typeof cfg.costCenterId === 'string' && typeof cfg.costCenterName === 'string' && cfg.costCenterName) {
       centerNames[cfg.costCenterId] = cfg.costCenterName;
     }
+    if (typeof cfg.accountId === 'string' && typeof cfg.accountName === 'string' && cfg.accountName) {
+      accountNames[cfg.accountId] = cfg.accountName;
+    }
     setNiboCategoryNames(receivableNames);
     setNiboPayableCategoryNames(payableNames);
     setNiboCostCenterNames(centerNames);
-    setNiboAccountName(String(cfg.accountName ?? '').trim());
-  }, [initialIntegration?.id]);
+    setNiboAccountNames(accountNames);
+  }, [initialIntegration?.id, initialIntegration?.configuration]);
 
   useEffect(() => {
     if (configurationKind !== 'integration' || integrationProvider !== 'NIBO') {
@@ -545,13 +460,10 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
       return nextIds;
     });
     if (accounts.length) {
-      setNiboAccountId((prev) => {
-        const match = accounts.find((row) => row.id.toLowerCase() === prev.toLowerCase());
-        if (match) {
-          setNiboAccountName(match.name);
-          return match.id;
-        }
-        return prev;
+      setNiboAccountIds((prevIds) => {
+        const nextIds = alignIdsToCatalog(prevIds, accounts);
+        setNiboAccountNames((prevNames) => enrichNiboNamesFromCatalog(nextIds, accounts, prevNames));
+        return nextIds;
       });
     }
     return { categories, costCenters, accounts, message: payload.message };
@@ -1235,42 +1147,42 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           configuration.costCenterNames = nextCostCenterNames;
           if (niboCategoryIds[0]) {
             configuration.receivableCategoryId = niboCategoryIds[0];
-            configuration.receivableCategoryName = lookupNiboName(
-              niboCategoryIds[0],
-              niboCatalog?.categories ?? [],
-              nextReceivableNames,
-            );
+            configuration.receivableCategoryName = nextReceivableNames[niboCategoryIds[0]] || '';
+          } else {
+            configuration.receivableCategoryId = '';
+            configuration.receivableCategoryName = '';
           }
           if (niboPayableCategoryIds[0]) {
             configuration.payableCategoryId = niboPayableCategoryIds[0];
-            configuration.payableCategoryName = lookupNiboName(
-              niboPayableCategoryIds[0],
-              niboCatalog?.categories ?? [],
-              nextPayableNames,
-            );
+            configuration.payableCategoryName = nextPayableNames[niboPayableCategoryIds[0]] || '';
+          } else {
+            configuration.payableCategoryId = '';
+            configuration.payableCategoryName = '';
           }
           if (niboCostCenterIds[0]) {
             configuration.costCenterId = niboCostCenterIds[0];
-            configuration.costCenterName = lookupNiboName(
-              niboCostCenterIds[0],
-              niboCatalog?.costCenters ?? [],
-              nextCostCenterNames,
-            );
+            configuration.costCenterName = nextCostCenterNames[niboCostCenterIds[0]] || '';
+          } else {
+            configuration.costCenterId = '';
+            configuration.costCenterName = '';
           }
-          if (niboAccountId.trim()) {
-            configuration.accountId = niboAccountId.trim();
-            const accountFromCatalog = (niboCatalog?.accounts ?? []).find(
-              (row) => row.id.toLowerCase() === niboAccountId.trim().toLowerCase(),
-            );
-            configuration.accountName = accountFromCatalog?.name || niboAccountName || '';
+          const nextAccountNames = buildNiboNameMap(niboAccountIds, niboCatalog?.accounts ?? [], niboAccountNames);
+          configuration.accountIds = niboAccountIds;
+          configuration.niboAccountIds = niboAccountIds;
+          configuration.accountNames = nextAccountNames;
+          if (niboAccountIds[0]) {
+            configuration.accountId = niboAccountIds[0];
+            configuration.niboAccountId = niboAccountIds[0];
+            configuration.accountName = nextAccountNames[niboAccountIds[0]] || '';
           } else {
             configuration.accountId = '';
+            configuration.niboAccountId = '';
             configuration.accountName = '';
           }
           setNiboCategoryNames(nextReceivableNames);
           setNiboPayableCategoryNames(nextPayableNames);
           setNiboCostCenterNames(nextCostCenterNames);
-          setNiboAccountName(String(configuration.accountName ?? ''));
+          setNiboAccountNames(nextAccountNames);
         }
         if (integrationProvider === 'GOOGLE_CALENDAR' && googleScopeType === 'PROFESSIONAL' && !googleScopeProfessionalId) {
           setMessage('');
@@ -1434,7 +1346,10 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
                 label="Categorias de recebíveis no Nibo"
                 options={niboOptions(niboCatalog?.categories ?? [], niboCategoryIds, niboCategoryNames)}
                 values={niboCategoryIds}
-                onChange={setNiboCategoryIds}
+                onChange={(ids) => {
+                  setNiboCategoryIds(ids);
+                  setNiboCategoryNames((prev) => enrichNiboNamesFromCatalog(ids, niboCatalog?.categories ?? [], prev));
+                }}
                 disabled={!niboCatalog?.categories.length && !niboCategoryIds.length}
                 placeholder={niboCatalog?.categories.length ? 'Selecionar categorias…' : 'Carregando ou teste a conexão…'}
               />
@@ -1448,7 +1363,10 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
                 label="Categorias de pagáveis no Nibo"
                 options={niboOptions(niboCatalog?.categories ?? [], niboPayableCategoryIds, niboPayableCategoryNames)}
                 values={niboPayableCategoryIds}
-                onChange={setNiboPayableCategoryIds}
+                onChange={(ids) => {
+                  setNiboPayableCategoryIds(ids);
+                  setNiboPayableCategoryNames((prev) => enrichNiboNamesFromCatalog(ids, niboCatalog?.categories ?? [], prev));
+                }}
                 disabled={!niboCatalog?.categories.length && !niboPayableCategoryIds.length}
                 placeholder={niboCatalog?.categories.length ? 'Selecionar categorias de despesa…' : 'Carregando ou teste a conexão…'}
               />
@@ -1463,7 +1381,10 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
                 label="Centros de custo no Nibo"
                 options={niboOptions(niboCatalog?.costCenters ?? [], niboCostCenterIds, niboCostCenterNames)}
                 values={niboCostCenterIds}
-                onChange={setNiboCostCenterIds}
+                onChange={(ids) => {
+                  setNiboCostCenterIds(ids);
+                  setNiboCostCenterNames((prev) => enrichNiboNamesFromCatalog(ids, niboCatalog?.costCenters ?? [], prev));
+                }}
                 disabled={!niboCatalog?.costCenters.length && !niboCostCenterIds.length}
                 placeholder={niboCatalog?.costCenters.length ? 'Selecionar centros de custo…' : 'Carregando ou teste a conexão…'}
               />
@@ -1472,43 +1393,32 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
                 com seleção = só débitos desses centros. A primeira é o padrão do espelho Sonder→Nibo.
               </span>
             </div>
-            <label className="span-2">
-              Conta bancária Nibo
-              <select
-                name="niboAccountId"
-                value={niboAccountId}
-                onChange={(event) => {
-                  const nextId = event.target.value;
-                  setNiboAccountId(nextId);
-                  const fromCatalog = (niboCatalog?.accounts ?? []).find((row) => row.id === nextId)?.name;
-                  setNiboAccountName(fromCatalog || (nextId === niboAccountId ? niboAccountName : ''));
+            <div className="span-2">
+              <MultiSelect
+                name="niboAccountIds"
+                label="Contas bancárias Nibo"
+                options={niboOptions(niboCatalog?.accounts ?? [], niboAccountIds, niboAccountNames)}
+                values={niboAccountIds}
+                onChange={(ids) => {
+                  setNiboAccountIds(ids);
+                  setNiboAccountNames((prev) => enrichNiboNamesFromCatalog(ids, niboCatalog?.accounts ?? [], prev));
                 }}
-              >
-                <option value="">
-                  {niboCatalog?.accounts.length
-                    ? 'Selecionar conta…'
-                    : niboAccountId
-                      ? (niboAccountName || 'Conta salva (catálogo indisponível)')
-                      : 'Teste a conexão para listar contas'}
-                </option>
-                {niboAccountId && !(niboCatalog?.accounts ?? []).some((row) => row.id === niboAccountId) ? (
-                  <option value={niboAccountId}>{niboAccountName || 'Conta salva'}</option>
-                ) : null}
-                {(niboCatalog?.accounts ?? []).map((account) => (
-                  <option key={account.id} value={account.id}>{account.name}</option>
-                ))}
-              </select>
+                disabled={!niboCatalog?.accounts.length && !niboAccountIds.length}
+                placeholder={niboCatalog?.accounts.length ? 'Selecionar contas…' : 'Carregando ou teste a conexão…'}
+              />
               {niboCatalog?.source === 'unavailable' || (niboCatalog && !niboCatalog.accounts.length) ? (
                 <span className="field-hint" style={{ color: 'var(--danger, #b42318)' }}>
                   {niboCatalog?.message
-                    || 'Não foi possível listar contas do Nibo. Mantendo a conta já salva, se houver.'}
+                    || 'Não foi possível listar contas do Nibo. Mantendo as contas já salvas, se houver.'}
                 </span>
               ) : (
                 <span className="field-hint">
-                  Obrigatória para espelhar baixas (pagamento de recebível / despesa). Contas vêm da API Nibo (`/accounts`).
+                  Obrigatória ao menos uma para espelhar baixas (pagamento de recebível / despesa).
+                  A API Nibo aceita uma conta por lançamento: usa a conta do título quando houver; senão a primeira selecionada.
+                  Contas vêm do GET `/accounts` do Nibo.
                 </span>
               )}
-            </label>
+            </div>
             <p className="muted-note span-2">
               Sync bidirecional: “Importar do Nibo” (e pull automático do worker) cria e atualiza títulos locais e espelha recorrências em Financeiro → Recorrências;
               criar/editar/pagar/cancelar no Sonder espelha no Nibo (categoria/centro/conta configurados).

@@ -74,6 +74,8 @@ export function UsersView() {
   const [smtpConfigured, setSmtpConfigured] = useState<boolean | null>(null);
   const [teamSearch, setTeamSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [pendingAvatarFile, setPendingAvatarFile] = useState<File | null>(null);
+  const [pendingAvatarPreview, setPendingAvatarPreview] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -173,6 +175,27 @@ export function UsersView() {
     }
   }
 
+  function clearPendingAvatar() {
+    setPendingAvatarFile(null);
+    setPendingAvatarPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current);
+      return null;
+    });
+  }
+
+  function pickPendingAvatar(file: File) {
+    if (!file.type.startsWith('image/')) {
+      setFormError('Envie uma imagem (JPG, PNG ou WEBP).');
+      return;
+    }
+    setFormError('');
+    setPendingAvatarPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current);
+      return URL.createObjectURL(file);
+    });
+    setPendingAvatarFile(file);
+  }
+
   async function submitUserForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError('');
@@ -196,10 +219,16 @@ export function UsersView() {
           return;
         }
         const { roleId, ...rest } = parsed.data;
-        await api.post('/users', { ...rest, roleIds: [roleId] });
+        const created = await api.post<RecordValue>('/users', { ...rest, roleIds: [roleId] });
+        if (pendingAvatarFile && created?.id) {
+          const form = new FormData();
+          form.set('file', pendingAvatarFile);
+          await api.postForm(`/users/${String(created.id)}/avatar`, form);
+        }
         setFormMessage('Usuário criado.');
         setTab('team');
       }
+      clearPendingAvatar();
       await load();
       setInviteOpen(false);
     } catch (err) {
@@ -479,13 +508,28 @@ export function UsersView() {
         description={inviteMode === 'invite'
           ? 'O usuário receberá um e-mail para criar a própria senha.'
           : 'Cria o usuário ativo com senha inicial.'}
-        onClose={() => setInviteOpen(false)}
+        onClose={() => { clearPendingAvatar(); setInviteOpen(false); }}
       >
         <div className="choice-pills">
           <button type="button" className={inviteMode === 'invite' ? 'active' : ''} onClick={() => setInviteMode('invite')}>Convite</button>
           <button type="button" className={inviteMode === 'create' ? 'active' : ''} onClick={() => setInviteMode('create')}>Criar agora</button>
         </div>
         <form className="mutation-form compact" style={{ padding: 0, border: 0 }} onSubmit={(event) => void submitUserForm(event)}>
+          {inviteMode === 'create' ? (
+            <div className="span-2 user-photo-field">
+              <UploadableAvatar
+                name="Novo usuário"
+                photoUrl={pendingAvatarPreview}
+                uploading={busy}
+                title={pendingAvatarPreview ? 'Alterar foto do usuário' : 'Adicionar foto do usuário'}
+                onFile={(file) => pickPendingAvatar(file)}
+              />
+              <div>
+                <strong>Foto do usuário</strong>
+                <span className="field-hint">Opcional · JPG, PNG ou WEBP · até 2 MB · enviada ao criar</span>
+              </div>
+            </div>
+          ) : null}
           <label>Nome<input name="name" required minLength={2} /></label>
           <label>E-mail<input name="email" type="email" required /></label>
           <label>Perfil de acesso
@@ -517,7 +561,7 @@ export function UsersView() {
       >
         {editUser ? (
           <form className="mutation-form" key={String(editUser.id)} onSubmit={(event) => void submitEditUser(event)}>
-            <div className="span-2" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="span-2 user-photo-field">
               <UploadableAvatar
                 name={editUser.name}
                 photoUrl={text(editUser.avatarUrl, '') || null}
@@ -526,8 +570,8 @@ export function UsersView() {
                 onFile={(file) => uploadUserAvatar(String(editUser.id), file)}
               />
               <div>
-                <strong style={{ display: 'block' }}>Foto do usuário</strong>
-                <span className="field-hint">JPG, PNG ou WEBP · até 2 MB</span>
+                <strong>Foto do usuário</strong>
+                <span className="field-hint">JPG, PNG ou WEBP · até 2 MB · salva ao escolher o arquivo</span>
               </div>
             </div>
             <label className="span-2">Nome<input name="name" required defaultValue={text(editUser.name)} /></label>

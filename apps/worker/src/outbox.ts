@@ -505,6 +505,8 @@ async function processNiboSync(event: OutboxEvent): Promise<void> {
     action?: 'UPSERT' | 'DELETE' | 'PAY';
     amount?: string;
     paymentId?: string;
+    /** Conta Nibo do título/baixa, quando informada (uma por lançamento). */
+    accountId?: string;
   };
   const entityType = payload.entityType === 'Payable' ? 'Payable' : 'Receivable';
   const entityId = payload.entityId ?? event.aggregateId;
@@ -530,7 +532,7 @@ async function processNiboSync(event: OutboxEvent): Promise<void> {
   }
 
   if (action === 'PAY') {
-    await processNiboPay(event, entityType, entityId, payload.amount, payload.paymentId);
+    await processNiboPay(event, entityType, entityId, payload.amount, payload.paymentId, payload.accountId);
     return;
   }
 
@@ -807,6 +809,7 @@ async function processNiboPay(
   entityId: string,
   amountRaw?: string,
   paymentId?: string,
+  titleAccountId?: string,
 ): Promise<void> {
   const kind = entityType === 'Receivable' ? 'credit' : 'debit';
   const amount = toNiboAmount(amountRaw ?? 0);
@@ -837,7 +840,10 @@ async function processNiboPay(
       connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
         ? (connection.configuration as Record<string, unknown>)
         : {};
-    const accountId = readNiboAccountId(config);
+    const accountId =
+      (typeof titleAccountId === 'string' && titleAccountId.trim())
+        ? titleAccountId.trim()
+        : readNiboAccountId(config);
     if (!accountId) {
       await markOutboxDone(
         event.id,
@@ -893,7 +899,10 @@ async function processNiboPay(
     connection.configuration && typeof connection.configuration === 'object' && !Array.isArray(connection.configuration)
       ? (connection.configuration as Record<string, unknown>)
       : {};
-  const accountId = readNiboAccountId(config);
+  const accountId =
+    (typeof titleAccountId === 'string' && titleAccountId.trim())
+      ? titleAccountId.trim()
+      : readNiboAccountId(config);
   if (!accountId) {
     await markOutboxDone(
       event.id,

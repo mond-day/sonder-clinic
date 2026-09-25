@@ -58,7 +58,7 @@ function firstCostCenter(row: Record<string, unknown>): { id: string | null; nam
   if (nested) {
     return {
       id: pickString(nested.id, nested.costCenterId) || null,
-      name: pickString(nested.description, nested.name) || null,
+      name: pickString(nested.description, nested.name, nested.costCenterDescription) || null,
     };
   }
   const list = Array.isArray(row.costCenters) ? row.costCenters : [];
@@ -68,6 +68,14 @@ function firstCostCenter(row: Record<string, unknown>): { id: string | null; nam
     const id = pickString(item.costCenterId, item.id);
     if (!id) continue;
     return { id, name: pickString(item.costCenterDescription, item.description, item.name) || null };
+  }
+  // Alguns payloads Nibo trazem o centro só no topo do schedule.
+  const topId = pickString(row.costCenterId, row.CostCenterId);
+  if (topId) {
+    return {
+      id: topId,
+      name: pickString(row.costCenterDescription, row.costCenterName, row.CostCenterDescription) || null,
+    };
   }
   return { id: null, name: null };
 }
@@ -99,7 +107,12 @@ function parseRecurrence(row: Record<string, unknown>): {
   recurrenceEndDate: string | null;
 } {
   const nested = asRecord(row.recurrence);
-  const hasRecurrence = row.hasRecurrence === true || Boolean(nested);
+  const recurrenceIdTop = pickString(row.recurrenceId, row.RecurrenceId);
+  const hasRecurrence = row.hasRecurrence === true
+    || row.isRecurrent === true
+    || row.isRecurring === true
+    || Boolean(nested)
+    || Boolean(recurrenceIdTop);
   if (!hasRecurrence) {
     return {
       hasRecurrence: false,
@@ -116,7 +129,7 @@ function parseRecurrence(row: Record<string, unknown>): {
     : null;
   return {
     hasRecurrence: true,
-    recurrenceId: nested ? pickString(nested.id, nested.recurrenceId) || null : null,
+    recurrenceId: (nested ? pickString(nested.id, nested.recurrenceId) : '') || recurrenceIdTop || null,
     recurrenceInterval: interval > 0 ? interval : 1,
     recurrenceIntervalType: intervalType,
     recurrenceEndDate: nested ? pickString(nested.endDate) || null : null,

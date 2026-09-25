@@ -296,7 +296,12 @@ export async function payNiboSchedule(input: {
 export function readNiboAccountId(config: Record<string, unknown> | undefined): string | null {
   if (!config) return null;
   const id = pickString(config.accountId, config.defaultAccountId, config.niboAccountId);
-  return id || null;
+  if (id) return id;
+  // Compat: lista persistida — a API Nibo aceita UMA conta por baixa; usa a primeira.
+  const fromList = readNiboIdList(config, 'accountIds');
+  if (fromList[0]) return fromList[0];
+  const fromNiboList = readNiboIdList(config, 'niboAccountIds');
+  return fromNiboList[0] || null;
 }
 
 export function buildCreditPayload(input: {
