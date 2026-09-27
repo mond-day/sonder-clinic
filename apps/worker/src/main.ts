@@ -8,6 +8,7 @@ import { enqueueDueNiboPulls, isNiboPullEnabled } from './nibo-pull';
 import { isNiboMock } from './nibo-sync';
 import { processDueTaskRecurrences } from './task-recurrences';
 import { processOutbox } from './outbox';
+import { createRepeatGate, LOG_REPEAT_SUMMARY_MS, logDebug } from './log';
 
 const intervalMs = 5_000;
 const anamnesisExpireEveryMs = Number(process.env.ANAMNESIS_EXPIRE_INTERVAL_MS ?? 3600_000);
@@ -20,6 +21,7 @@ let lastAnamnesisExpireAt = 0;
 let lastGoogleWatchRenewAt = 0;
 let lastNiboPullEnqueueAt = 0;
 let tickRunning = false;
+const logNiboTick = createRepeatGate(LOG_REPEAT_SUMMARY_MS);
 
 async function tick(): Promise<void> {
   // Mutex local: evita overlap de ticks na mesma réplica (multi-réplica coberta pelo claim em §4).
@@ -94,11 +96,17 @@ async function tick(): Promise<void> {
       lastNiboPullEnqueueAt = now;
       try {
         const result = await enqueueDueNiboPulls();
-        console.info(JSON.stringify({
-          service: 'sonder-worker',
-          event: result.enqueued > 0 ? 'nibo-pull.enqueued' : 'nibo-pull.tick',
-          ...result,
-        }));
+        const event = result.enqueued > 0 ? 'nibo-pull.enqueued' : 'nibo-pull.tick';
+        // O resultado do pull (completed/failed) é logado pelo outbox; aqui só mudança de estado.
+        const signature = [
+          result.pullEnabled, result.niboMock, result.checked,
+          result.inactiveOrMissingCred ?? 0, result.skipReason ?? '',
+        ].join('|');
+        if (result.enqueued === 0 && logNiboTick('nibo-pull.tick', signature)) {
+          console.info(JSON.stringify({ service: 'sonder-worker', event, ...result }));
+        } else {
+          logDebug(event, { ...result });
+        }
       } catch (error) {
         console.warn(JSON.stringify({
           service: 'sonder-worker',

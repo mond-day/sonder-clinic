@@ -39,7 +39,7 @@ Produção (VPS nova): `docs/FRESH_INSTALL.md` — `pnpm db:bootstrap` + `/setup
 - API: `http://localhost:4000/api/v1` · Swagger `/docs` · Health `/api/v1/health`
 - Login seed: `admin@sonder.local` / `Sonder@123`
 
-Gates: `pnpm typecheck`, `pnpm test`, `env -u NODE_ENV pnpm build`, `pnpm test:e2e`.
+Gates: `pnpm lint` (ESLint, `eslint.config.mjs` na raiz), `pnpm typecheck`, `pnpm test`, `env -u NODE_ENV pnpm build`, `pnpm test:e2e`. Commits em Conventional Commits (`pnpm lint:commit`).
 
 ## Env vars críticas
 

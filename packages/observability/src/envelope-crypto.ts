@@ -2,6 +2,16 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 const V2_PREFIX = 'v2.';
 
+/** Valor publicado no `.env.example` (e no CI); previsível, nunca aceitável em produção. */
+export const EXAMPLE_ENCRYPTION_MASTER_KEY =
+  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+/** 64 hex e diferente da chave de exemplo pública. */
+export function isProductionSafeMasterKey(value: string | undefined): boolean {
+  const key = value?.trim() ?? '';
+  return /^[0-9a-f]{64}$/i.test(key) && key.toLowerCase() !== EXAMPLE_ENCRYPTION_MASTER_KEY;
+}
+
 function readMasterKey(value = process.env.ENCRYPTION_MASTER_KEY): Buffer {
   if (!value || !/^[a-f0-9]{64}$/i.test(value)) {
     throw new Error('ENCRYPTION_MASTER_KEY inválida.');

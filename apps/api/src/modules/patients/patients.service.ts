@@ -30,7 +30,20 @@ const brazilianPostalCode = z
   .refine((value) => value.length === 0 || value.length === 8, 'CEP deve ter 8 dígitos.')
   .optional();
 
-const patientDataSchema = z.object({
+export const PATIENT_SEX_VALUES = ['FEMALE', 'MALE', 'OTHER'] as const;
+
+/** Texto opcional em que string vazia significa "limpar o campo". */
+const clearableText = (max: number) => z.string().trim().max(max).optional();
+
+export const patientProfileSchema = z.object({
+  sex: z.enum(PATIENT_SEX_VALUES).or(z.literal('')).optional(),
+  profession: clearableText(120),
+  rg: clearableText(30),
+  referralSource: clearableText(120),
+  categories: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+});
+
+const patientDataSchema = patientProfileSchema.extend({
   fullName: z.string().trim().min(3),
   preferredName: z.string().trim().optional(),
   cpf: z.string().regex(/^\d{11}$/).optional(),
@@ -75,8 +88,27 @@ export type CreatePatientInput = {
   city?: string;
   state?: string;
   country?: string;
+  sex?: (typeof PATIENT_SEX_VALUES)[number] | '';
+  profession?: string;
+  rg?: string;
+  referralSource?: string;
+  categories?: string[];
   clinicId: string;
 };
+
+type PatientProfileInput = z.infer<typeof patientProfileSchema>;
+
+/** undefined mantém o valor atual; string vazia limpa. */
+function profileData(data: PatientProfileInput) {
+  const text = (value: string | undefined) => (value === undefined ? undefined : value || null);
+  return {
+    sex: data.sex === undefined ? undefined : data.sex || null,
+    profession: text(data.profession),
+    rg: text(data.rg),
+    referralSource: text(data.referralSource),
+    categories: data.categories === undefined ? undefined : [...new Set(data.categories)],
+  };
+}
 
 @Injectable()
 export class PatientsService {
@@ -197,6 +229,7 @@ export class PatientsService {
           city: parsed.city || null,
           state: parsed.state || null,
           country: parsed.country || 'Brasil',
+          ...profileData(parsed),
           clinics: { create: { clinicId: input.clinicId } },
         },
       });
@@ -257,6 +290,7 @@ export class PatientsService {
         city: data.city || null,
         state: data.state || null,
         country: data.country || 'Brasil',
+        ...profileData(data),
       },
     });
   }

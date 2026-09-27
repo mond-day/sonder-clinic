@@ -7,6 +7,7 @@ import type { Readable } from 'node:stream';
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadBucketCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -357,6 +358,94 @@ class MinioStorageAdapter implements StorageAdapter {
       new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }),
       { expiresIn: expiresSeconds },
     );
+  }
+
+  async headBucket(timeoutMs: number): Promise<void> {
+    if (!this.enabled || !this.client) {
+      throw new Error(this.disabledReason ?? 'Storage MinIO desabilitado.');
+    }
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), timeoutMs);
+    try {
+      await this.client.send(
+        new HeadBucketCommand({ Bucket: this.bucket }),
+        { abortSignal: abortController.signal },
+      );
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        throw Object.assign(new Error(`Timeout após ${timeoutMs}ms`), { name: 'TimeoutError' });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+export type StorageBucketCheck = {
+  ok: boolean;
+  driver: StorageDriver;
+  bucket: string | null;
+  /** Host do endpoint (sem credenciais) para diagnóstico. */
+  endpointHost: string | null;
+  code?: string;
+  detail: string;
+};
+
+function safeEndpointHost(): string | null {
+  const raw = process.env.S3_ENDPOINT?.trim();
+  if (!raw) return null;
+  try {
+    return new URL(raw).host;
+  } catch {
+    return 'S3_ENDPOINT inválido';
+  }
+}
+
+/** Traduz erro de HeadBucket em motivo legível (sem segredos). */
+export function describeBucketCheckFailure(error: unknown, bucket: string): { code: string; detail: string } {
+  const code = storageErrorCode(error);
+  const status = (error as { $metadata?: { httpStatusCode?: number } } | null)?.$metadata?.httpStatusCode;
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  if (code === 'NotFound' || code === 'NoSuchBucket' || status === 404) {
+    return { code, detail: `bucket "${bucket}" não existe no endpoint` };
+  }
+  if (/Forbidden|AccessDenied|InvalidAccessKey|SignatureDoesNotMatch/i.test(code) || status === 403 || status === 401) {
+    return { code, detail: `credencial recusada ou sem permissão no bucket "${bucket}"` };
+  }
+  if (/Timeout|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|NetworkingError/i.test(`${code} ${message}`)) {
+    return { code, detail: `endpoint inacessível (${message.slice(0, 200) || code})` };
+  }
+  return { code, detail: `falha no HeadBucket: ${message.slice(0, 200) || code}` };
+}
+
+/**
+ * Verifica conexão real com o bucket (HeadBucket). Driver local: sempre ok.
+ * Não lança — devolve ok=false com o motivo.
+ */
+export async function checkStorageBucket(timeoutMs = 3_000): Promise<StorageBucketCheck> {
+  const adapter = createStorageAdapter();
+  const endpointHost = safeEndpointHost();
+  if (!(adapter instanceof MinioStorageAdapter)) {
+    return { ok: true, driver: adapter.driver, bucket: null, endpointHost: null, detail: 'local' };
+  }
+  const bucket = process.env.S3_BUCKET ?? 'sonder-clinic';
+  if (!adapter.enabled) {
+    return {
+      ok: false,
+      driver: adapter.driver,
+      bucket,
+      endpointHost,
+      code: 'NotConfigured',
+      detail: adapter.disabledReason ?? 'storage disabled',
+    };
+  }
+  try {
+    await adapter.headBucket(timeoutMs);
+    return { ok: true, driver: adapter.driver, bucket, endpointHost, detail: `${adapter.driver}:${bucket}` };
+  } catch (error) {
+    const failure = describeBucketCheckFailure(error, bucket);
+    return { ok: false, driver: adapter.driver, bucket, endpointHost, ...failure };
   }
 }
 

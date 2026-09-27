@@ -1,0 +1,3 @@
+#!/bin/sh
+# Opt-in por clone: git config core.hooksPath .githooks
+exec corepack pnpm exec commitlint --edit "$1"

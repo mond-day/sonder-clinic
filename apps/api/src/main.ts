@@ -6,7 +6,9 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { BootstrapError, runBootMigrations } from '@sonder/database';
 import { startObservability, hydrateDockerSecrets, nestLoggerLevels } from '@sonder/observability';
+import { checkStorageBucket } from '@sonder/storage';
 import { AppModule } from './app.module';
+import { AppLogger } from './common/app-logger';
 import { assertProductionEnvironment, isSwaggerEnabled } from './common/production-env';
 import { PublicApiModule } from './modules/public-api/public-api.module';
 import { setPublicOpenApiDocument } from './modules/public-api/public-api-openapi';
@@ -43,7 +45,7 @@ async function bootstrap(): Promise<void> {
   await startObservability('sonder-api');
   const app = await NestFactory.create(AppModule, {
     rawBody: true,
-    logger: nestLoggerLevels(),
+    logger: new AppLogger(nestLoggerLevels()),
   });
 
   const isProd = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
@@ -128,6 +130,24 @@ async function bootstrap(): Promise<void> {
   }));
 
   await app.listen(Number(process.env.API_PORT ?? 4000));
+  await logStorageBucketCheck();
+}
+
+/** Uma linha no boot: o deploy mostra se o bucket respondeu, sem derrubar o processo. */
+async function logStorageBucketCheck(): Promise<void> {
+  const result = await checkStorageBucket();
+  if (result.driver === 'local') return;
+  const line = JSON.stringify({
+    service: 'sonder-api',
+    event: result.ok ? 'boot.storage.ok' : 'boot.storage.failed',
+    bucket: result.bucket,
+    endpoint: result.endpointHost,
+    ...(result.ok ? {} : { code: result.code, error: result.detail }),
+  });
+  // eslint-disable-next-line no-console
+  if (result.ok) console.info(line);
+  // eslint-disable-next-line no-console
+  else console.error(line);
 }
 
 void bootstrap();

@@ -73,7 +73,6 @@ export function isWithinAllowedHours(raw: unknown, now = new Date()): boolean {
 export function nextAllowedWindowStart(raw: unknown, now = new Date()): Date {
   const config = normalizeAllowedHours(raw);
   if (!config) return now;
-  const timeZone = config.timezone?.trim() || 'America/Cuiaba';
   // Aproxima: avança 30 minutos até 7 dias ou encontra janela.
   const cursor = new Date(now.getTime());
   for (let i = 0; i < 7 * 48; i += 1) {

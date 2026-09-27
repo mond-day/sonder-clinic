@@ -24,6 +24,8 @@ import { useSelection } from './selection-provider';
 import { EmptyState, MetricCard, PageHeader, Panel, StatusBadge } from './ui';
 import { Modal } from './modal';
 import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-inputs';
+import { ImportButton } from '@/features/imports/import-button';
+import { ImportedCashflowPanel } from '@/features/imports/imported-cashflow-panel';
 
 type FinanceTab = 'overview' | 'receivable' | 'payable' | 'commissions' | 'recurring' | 'cashflow';
 
@@ -59,7 +61,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const resolvedInitial: FinanceTab = initialTab
     ?? (financeTabIds.has(tabFromQuery) ? tabFromQuery as FinanceTab : 'overview');
   const { user } = useAuth();
-  const { clinicId, clinics, professionals } = useSelection();
+  const { clinicId } = useSelection();
   const [tab, setTab] = useState<FinanceTab>(resolvedInitial);
   const [receivables, setReceivables] = useState<RecordValue[]>([]);
   const [payables, setPayables] = useState<RecordValue[]>([]);
@@ -94,6 +96,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
   const [recurrenceQuery, setRecurrenceQuery] = useState('');
   const [recurrenceKindFilter, setRecurrenceKindFilter] = useState('');
   const [cashflowPeriod, setCashflowPeriod] = useState<'7d' | '30d' | '90d' | 'year'>('30d');
+  const [importedCashKey, setImportedCashKey] = useState(0);
   const [createReceivableOpen, setCreateReceivableOpen] = useState(false);
   const [createPayableOpen, setCreatePayableOpen] = useState(false);
   const [payableBusy, setPayableBusy] = useState(false);
@@ -1620,7 +1623,11 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
         </>
       )}
       {tab === 'cashflow' && (
-        <Panel title="Fluxo de caixa" description="Entradas, saídas e saldo do período selecionado.">
+        <Panel
+          title="Fluxo de caixa"
+          description="Entradas, saídas e saldo do período selecionado."
+          actions={<ImportButton kind="cashflow" label="Importar histórico" onImported={() => setImportedCashKey((value) => value + 1)} />}
+        >
           {!canFinance ? (
             <div className="state-message error" role="alert">Sem permissão para visualizar o financeiro.</div>
           ) : (
@@ -1727,6 +1734,7 @@ export function FinanceView({ initialTab }: { initialTab?: FinanceTab } = {}) {
                   </Panel>
                 </>
               ) : null}
+              {clinicId ? <ImportedCashflowPanel clinicId={clinicId} refreshKey={importedCashKey} /> : null}
             </>
           )}
         </Panel>

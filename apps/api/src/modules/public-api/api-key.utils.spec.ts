@@ -1,3 +1,4 @@
+import { createCipheriv, randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { clearMemoryRateLimits, consumeRateLimit, RATE_LIMITS } from '../../common/rate-limit';
 import {
@@ -60,7 +61,6 @@ describe('api-key.utils', () => {
   });
 
   it('decifra segredo legado v1', () => {
-    const { createCipheriv, randomBytes } = require('node:crypto') as typeof import('node:crypto');
     const master = '11'.repeat(32);
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', Buffer.from(master, 'hex'), iv);

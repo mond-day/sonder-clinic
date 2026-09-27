@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  checkStorageBucket,
   createStorageAdapter,
+  describeBucketCheckFailure,
   describeStoragePutFailure,
   storageErrorCode,
   storageStatus,
@@ -99,5 +101,61 @@ describe('describeStoragePutFailure', () => {
     const failure = describeStoragePutFailure(error);
     expect(failure.kind).toBe('unknown');
     expect(failure.userMessage).toContain('WeirdError');
+  });
+});
+
+describe('checkStorageBucket', () => {
+  it('local driver é ok sem rede', async () => {
+    delete process.env.STORAGE_DRIVER;
+    const result = await checkStorageBucket();
+    expect(result.ok).toBe(true);
+    expect(result.driver).toBe('local');
+  });
+
+  it('s3 sem credenciais fica not ok com motivo de configuração', async () => {
+    process.env.STORAGE_DRIVER = 's3';
+    process.env.S3_BUCKET = 'clinic-files';
+    delete process.env.S3_ENDPOINT;
+    delete process.env.S3_ACCESS_KEY;
+    delete process.env.S3_SECRET_KEY;
+    const result = await checkStorageBucket();
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('NotConfigured');
+    expect(result.bucket).toBe('clinic-files');
+  });
+
+  it('endpoint inacessível vira ok=false (não lança)', async () => {
+    process.env.STORAGE_DRIVER = 's3';
+    process.env.S3_ENDPOINT = 'http://127.0.0.1:1';
+    process.env.S3_ACCESS_KEY = 'test-access';
+    process.env.S3_SECRET_KEY = 'test-secret';
+    process.env.S3_BUCKET = 'clinic-files';
+    const result = await checkStorageBucket(1_500);
+    expect(result.ok).toBe(false);
+    expect(result.endpointHost).toBe('127.0.0.1:1');
+    expect(result.detail).not.toContain('test-secret');
+  });
+});
+
+describe('describeBucketCheckFailure', () => {
+  it('404 do HeadBucket = bucket inexistente', () => {
+    const error = Object.assign(new Error('UnknownError'), {
+      name: 'NotFound',
+      $metadata: { httpStatusCode: 404 },
+    });
+    expect(describeBucketCheckFailure(error, 'b1').detail).toContain('não existe');
+  });
+
+  it('403 = credencial/permissão', () => {
+    const error = Object.assign(new Error('UnknownError'), {
+      name: 'Forbidden',
+      $metadata: { httpStatusCode: 403 },
+    });
+    expect(describeBucketCheckFailure(error, 'b1').detail).toContain('credencial');
+  });
+
+  it('ECONNREFUSED = endpoint inacessível', () => {
+    const error = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:9000'), { code: 'ECONNREFUSED' });
+    expect(describeBucketCheckFailure(error, 'b1').detail).toContain('inacessível');
   });
 });

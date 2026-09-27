@@ -1,5 +1,4 @@
 import { BadRequestException } from '@nestjs/common';
-import { Prisma } from '@sonder/database';
 import { describe, expect, it } from 'vitest';
 import {
   buildReceivableFinanceView,

@@ -34,6 +34,9 @@ import {
   upsertNiboSchedule,
 } from './nibo-sync';
 import { NIBO_PULL_EVENT, processNiboPullConnection } from './nibo-pull';
+import { createRepeatGate, LOG_REPEAT_SUMMARY_MS, logDebug } from './log';
+
+const logNiboPullResult = createRepeatGate(LOG_REPEAT_SUMMARY_MS);
 
 const WHATSAPP_REMINDER_EVENT = 'appointment.whatsapp-reminder.requested';
 const APPOINTMENT_COMPLETED_EVENT = 'appointment.completed';
@@ -462,29 +465,23 @@ async function processNiboPull(event: OutboxEvent): Promise<void> {
     await markOutboxDone(event.id, 'Nibo MOCK=true; pull Nibo→Sonder não executado.');
     return;
   }
+  const startedAt = Date.now();
   try {
-    console.info(JSON.stringify({
-      service: 'sonder-worker',
-      event: 'nibo-pull.started',
-      connectionId,
-      outboxEventId: event.id,
-    }));
+    logDebug('nibo-pull.started', { connectionId, outboxEventId: event.id });
     const result = await processNiboPullConnection(connectionId);
-    console.info(JSON.stringify({
-      service: 'sonder-worker',
-      event: 'nibo-pull.completed',
-      connectionId,
-      outboxEventId: event.id,
-      receivablesCreated: result.receivablesCreated,
-      receivablesUpdated: result.receivablesUpdated,
-      payablesCreated: result.payablesCreated,
-      payablesUpdated: result.payablesUpdated,
-      creditFetched: result.creditFetched,
-      debitFetched: result.debitFetched,
-      creditMatchedFilters: result.creditMatchedFilters,
-      debitMatchedFilters: result.debitMatchedFilters,
-      message: result.message,
-    }));
+    const durationMs = Date.now() - startedAt;
+    // `message` já resume as contagens; poucos campos mantêm a linha curta no visualizador.
+    if (logNiboPullResult(connectionId, result.message)) {
+      console.info(JSON.stringify({
+        service: 'sonder-worker',
+        event: 'nibo-pull.completed',
+        connectionId,
+        durationMs,
+        message: result.message,
+      }));
+    } else {
+      logDebug('nibo-pull.completed', { connectionId, outboxEventId: event.id, durationMs, ...result });
+    }
     await markOutboxDone(event.id, result.message);
   } catch (error) {
     console.warn(JSON.stringify({

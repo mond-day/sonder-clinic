@@ -31,7 +31,6 @@ import {
   pendingReservedAmount,
   remainingForManualSettlement,
   positiveMoney,
-  refundedTotal,
 } from './operations-finance.utils';
 import {
   createCostCenter as catalogCreateCostCenter,

@@ -262,6 +262,25 @@ enum UserInvitationStatus {
   REVOKED
 }
 
+enum PatientSex {
+  FEMALE
+  MALE
+  OTHER
+}
+
+enum ImportKind {
+  PATIENTS
+  TREATMENT_PLANS
+  TREATMENTS
+  APPOINTMENTS
+  CASHFLOW
+}
+
+enum ImportBatchStatus {
+  COMMITTED
+  REVERTED
+}
+
 model Organization {
   id           String        @id @default(uuid()) @db.Uuid
   legalName    String
@@ -529,6 +548,12 @@ model Patient {
   city           String?
   state          String?
   country        String?           @default("Brasil")
+  sex            PatientSex?
+  profession     String?
+  rg             String?
+  /// Como o paciente conheceu a clínica (ex.: Instagram, indicação de amigo).
+  referralSource String?
+  categories     String[]          @default([])
   /// Evento Google all-day criado no cadastro (A51); soft-fail se calendário indisponível.
   externalCalendarEventId String?
   createdAt      DateTime          @default(now())
@@ -2019,6 +2044,69 @@ model MedicationCatalogItem {
 
   @@index([organizationId, active])
   @@index([organizationId, name])
+}
+
+/// Lote de importação de planilha. Os registros criados ficam em ImportBatchRecord para permitir reverter o lote.
+model ImportBatch {
+  id             String              @id @default(uuid()) @db.Uuid
+  organizationId String              @db.Uuid
+  clinicId       String              @db.Uuid
+  kind           ImportKind
+  status         ImportBatchStatus   @default(COMMITTED)
+  fileName       String
+  fileSha256     String
+  summary        Json                @default("{}")
+  createdById    String              @db.Uuid
+  createdAt      DateTime            @default(now())
+  revertedAt     DateTime?
+  revertedById   String?             @db.Uuid
+  records        ImportBatchRecord[]
+  cashEntries    ImportedCashEntry[]
+
+  @@index([organizationId, clinicId, kind, createdAt])
+}
+
+model ImportBatchRecord {
+  id             String      @id @default(uuid()) @db.Uuid
+  batchId        String      @db.Uuid
+  organizationId String      @db.Uuid
+  entity         String
+  entityId       String      @db.Uuid
+  /// Chave natural da linha da planilha (idempotência). Nulo em registros auxiliares, como procedimento criado.
+  naturalKey     String?
+  batch          ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, entity, naturalKey])
+  @@index([batchId, entity])
+}
+
+/// Lançamento histórico de fluxo de caixa importado. Somente consulta: não é recebível, pagamento nem conta a pagar e não sincroniza com o Nibo.
+model ImportedCashEntry {
+  id               String      @id @default(uuid()) @db.Uuid
+  organizationId   String      @db.Uuid
+  clinicId         String      @db.Uuid
+  batchId          String      @db.Uuid
+  /// INFLOW (receita) ou OUTFLOW (despesa).
+  kind             String
+  patientId        String?     @db.Uuid
+  counterpartyName String
+  description      String?
+  category         String?
+  dueDate          DateTime?   @db.Date
+  paidAt           DateTime?   @db.Date
+  amount           Decimal     @db.Decimal(12, 2)
+  netAmount        Decimal?    @db.Decimal(12, 2)
+  paid             Boolean
+  paymentMethod    String?
+  professionalName String?
+  budgetCode       String?
+  notes            String?
+  createdAt        DateTime    @default(now())
+  batch            ImportBatch @relation(fields: [batchId], references: [id])
+
+  @@index([organizationId, clinicId, paidAt])
+  @@index([organizationId, clinicId, dueDate])
+  @@index([batchId])
 }
 
 model ExamCatalogItem {

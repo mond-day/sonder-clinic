@@ -1,12 +1,21 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUUID, Length, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUUID, Length, MinLength } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { resolveClinicScope } from '../../common/clinic-scope';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
-import { PatientsService } from './patients.service';
+import { PATIENT_SEX_VALUES, PatientsService } from './patients.service';
 
-class CreatePatientDto {
+/** Validação fina (tamanhos, deduplicação) fica no Zod do service. */
+class PatientProfileDto {
+  @IsOptional() @IsIn([...PATIENT_SEX_VALUES, '']) sex?: (typeof PATIENT_SEX_VALUES)[number] | '';
+  @IsOptional() @IsString() profession?: string;
+  @IsOptional() @IsString() rg?: string;
+  @IsOptional() @IsString() referralSource?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) categories?: string[];
+}
+
+class CreatePatientDto extends PatientProfileDto {
   @IsString() @MinLength(3) fullName!: string;
   @IsOptional() @IsString() preferredName?: string;
   @IsOptional() @IsString() @Length(11, 11) cpf?: string;
@@ -28,7 +37,7 @@ class CreatePatientDto {
   @IsUUID() clinicId!: string;
 }
 
-class UpdatePatientDto {
+class UpdatePatientDto extends PatientProfileDto {
   @IsString() @MinLength(3) fullName!: string;
   @IsOptional() @IsString() preferredName?: string;
   @IsOptional() @IsString() @Length(11, 11) cpf?: string;

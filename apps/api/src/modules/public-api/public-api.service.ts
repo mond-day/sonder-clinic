@@ -15,12 +15,11 @@ import {
 import { SettingsService } from '../settings/settings.service';
 import type { PublicApiAuth } from './api-key.guard';
 
-const appointmentStatuses = [
-  'SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW',
-] as const;
+type PublicAppointmentStatus =
+  | 'SCHEDULED' | 'CONFIRMED' | 'CHECKED_IN' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
 
 export type PublicAppointmentPatch = Partial<AppointmentInput> & {
-  status?: (typeof appointmentStatuses)[number];
+  status?: PublicAppointmentStatus;
 };
 
 @Injectable()

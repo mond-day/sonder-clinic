@@ -1,3 +1,4 @@
+import { createCipheriv, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   envelopeDecrypt,
@@ -22,7 +23,6 @@ describe('envelope-crypto', () => {
   });
 
   it('decifra payload v1 legado', () => {
-    const { createCipheriv, randomBytes } = require('node:crypto') as typeof import('node:crypto');
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', Buffer.from(MASTER, 'hex'), iv);
     const encrypted = Buffer.concat([cipher.update('legado', 'utf8'), cipher.final()]);

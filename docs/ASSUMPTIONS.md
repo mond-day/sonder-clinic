@@ -53,4 +53,4 @@ Assumptions adotadas para não bloquear o desenvolvimento. Histórico detalhado 
 
 | A51 | Paciente → Google Calendar | No cadastro de paciente, outbox `patient.calendar-sync.requested` cria evento **all-day** no dia do cadastro (TZ da unidade) se Google ACTIVE + OAuth + `GOOGLE_CALENDAR_MOCK=false`. Persiste `Patient.externalCalendarEventId`. Soft-fail: create do paciente não quebra se calendário falhar |
 
-Última atualização: **1.3.15 — Nibo contas bancárias multiselect + sync financeiro (2026-09)**.
+Última atualização: **1.3.16 — importação de planilhas, CSP da docs pública, readiness do storage, ESLint/commitlint e guard da chave de exemplo no worker (2026-09)**.

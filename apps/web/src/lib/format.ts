@@ -91,8 +91,8 @@ export function formatCro(input: {
   if (input == null || input === '') return '';
   if (typeof input === 'string') {
     const trimmed = input.trim();
-    const parsed = /(?:CRO[\s\-\/]*)?([A-Za-z]{2})[\s\-\/]+(\d+)/.exec(trimmed)
-      ?? /CRO[\s\-\/]*([A-Za-z]{2})(\d+)/i.exec(trimmed);
+    const parsed = /(?:CRO[\s\-/]*)?([A-Za-z]{2})[\s\-/]+(\d+)/.exec(trimmed)
+      ?? /CRO[\s\-/]*([A-Za-z]{2})(\d+)/i.exec(trimmed);
     if (parsed) return `CRO-${parsed[1]!.toUpperCase()} ${parsed[2]}`;
     return trimmed;
   }

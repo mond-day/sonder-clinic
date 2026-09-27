@@ -1,12 +1,12 @@
 {
   "name": "@sonder/web",
-  "version": "1.3.15",
+  "version": "1.3.16",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "tsc --noEmit",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:integration": "vitest run --passWithNoTests",
@@ -17,7 +17,7 @@
     "@hookform/resolvers": "^3.9.1",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.468.0",
-    "next": "^16.0.0",
+    "next": "^16.3.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.54.2",

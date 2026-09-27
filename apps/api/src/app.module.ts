@@ -17,6 +17,7 @@ import { CatalogsModule } from './modules/catalogs/catalogs.module';
 import { ApiKeysModule } from './modules/public-api/api-keys.module';
 import { PublicApiModule } from './modules/public-api/public-api.module';
 import { SetupModule } from './modules/setup/setup.module';
+import { ImportsModule } from './modules/imports/imports.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { SetupModule } from './modules/setup/setup.module';
     CatalogsModule,
     ApiKeysModule,
     PublicApiModule,
+    ImportsModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: CsrfGuard }],

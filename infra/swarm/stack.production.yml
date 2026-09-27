@@ -106,6 +106,8 @@ services:
       NIBO_PULL_ENABLED: ${NIBO_PULL_ENABLED:-true}
       NIBO_PULL_INTERVAL_MS: ${NIBO_PULL_INTERVAL_MS:-1800000}
       NIBO_PULL_TICK_MS: ${NIBO_PULL_TICK_MS:-300000}
+      # true: /health/ready responde 503 se o bucket S3/MinIO não existir (Traefik tira a API).
+      STORAGE_READY_REQUIRED: ${STORAGE_READY_REQUIRED:-true}
     secrets:
       - jwt_access_secret
       - jwt_refresh_secret

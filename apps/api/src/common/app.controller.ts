@@ -3,8 +3,16 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { prisma } from '@sonder/database';
-import { storageStatus } from '@sonder/storage';
+import { checkStorageBucket } from '@sonder/storage';
 import net from 'node:net';
+
+/**
+ * Traefik usa /health/ready: storage fora tira a API do balanceador.
+ * STORAGE_READY_REQUIRED=false mantém a falha visível no corpo sem bloquear o tráfego.
+ */
+function isStorageReadyRequired(): boolean {
+  return (process.env.STORAGE_READY_REQUIRED ?? 'true').trim().toLowerCase() !== 'false';
+}
 
 async function pingRedis(url: string, timeoutMs = 2_000): Promise<boolean> {
   try {
@@ -74,20 +82,22 @@ export class AppController {
       checks.redis = { ok: true, detail: 'skipped (QUEUE_DRIVER!=redis)' };
     }
 
-    const storage = storageStatus();
     const storageDriver = (process.env.STORAGE_DRIVER ?? 'local').toLowerCase();
     if (isProd || storageDriver !== 'local') {
+      const storage = await checkStorageBucket();
       checks.storage = {
-        ok: storage.storage.enabled,
-        detail: storage.storage.enabled
-          ? `${storage.storage.driver}:${storage.storage.bucket ?? '?'}`
-          : (storage.storage.disabledReason ?? 'storage disabled'),
+        ok: storage.ok,
+        detail: storage.ok
+          ? storage.detail
+          : `${storage.code ?? 'Unknown'}: ${storage.detail} (endpoint=${storage.endpointHost ?? '?'})`,
       };
     } else {
       checks.storage = { ok: true, detail: 'local' };
     }
 
-    const ready = Object.values(checks).every((item) => item.ok);
+    const ready = Object.entries(checks).every(
+      ([name, item]) => item.ok || (name === 'storage' && !isStorageReadyRequired()),
+    );
     const body = {
       status: ready ? 'ready' : 'not_ready',
       service: 'sonder-api',

@@ -121,7 +121,9 @@ export {
   envelopeDecryptJson,
   envelopeEncrypt,
   envelopeEncryptJson,
+  EXAMPLE_ENCRYPTION_MASTER_KEY,
   isEnvelopeV2,
+  isProductionSafeMasterKey,
 } from './envelope-crypto.ts';
 
 export {

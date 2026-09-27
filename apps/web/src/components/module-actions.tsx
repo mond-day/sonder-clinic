@@ -68,6 +68,11 @@ const patientSchema = z.object({
   city: z.string().trim().max(120).optional(),
   state: z.string().trim().max(2).optional(),
   country: z.string().trim().max(80).optional(),
+  sex: z.enum(['FEMALE', 'MALE', 'OTHER']).or(z.literal('')),
+  profession: z.string().trim().max(120, 'Profissão muito longa.'),
+  rg: z.string().trim().max(30, 'RG muito longo.'),
+  referralSource: z.string().trim().max(120, '“Como conheceu” muito longo.'),
+  categories: z.array(z.string().trim().min(1).max(60, 'Categoria muito longa.')).max(20, 'Use no máximo 20 categorias.'),
 });
 const appointmentSchema = z.object({
   patientId: uuid,
@@ -665,6 +670,11 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           city: city.trim() || undefined,
           state: state.trim() || undefined,
           country: optional(data.get('country')) ?? 'Brasil',
+          sex: String(data.get('sex') ?? ''),
+          profession: String(data.get('profession') ?? ''),
+          rg: String(data.get('rg') ?? ''),
+          referralSource: String(data.get('referralSource') ?? ''),
+          categories: String(data.get('categories') ?? '').split(',').map((item) => item.trim()).filter(Boolean),
         });
         if (!parsed) return;
         void run(async () => {
@@ -713,6 +723,24 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             />
           </label>
           <label>Passaporte<input name="passportNumber" defaultValue={String(current?.passportNumber ?? '')} /></label>
+          <label>RG<input name="rg" maxLength={30} defaultValue={String(current?.rg ?? '')} /></label>
+          <label>Sexo
+            <select name="sex" defaultValue={String(current?.sex ?? '')}>
+              <option value="">Não informado</option>
+              <option value="FEMALE">Feminino</option>
+              <option value="MALE">Masculino</option>
+              <option value="OTHER">Outro</option>
+            </select>
+          </label>
+          <label>Profissão<input name="profession" maxLength={120} defaultValue={String(current?.profession ?? '')} /></label>
+          <label>Como conheceu<input name="referralSource" maxLength={120} placeholder="Instagram, indicação…" defaultValue={String(current?.referralSource ?? '')} /></label>
+          <label className="span-2">Categorias
+            <input
+              name="categories"
+              placeholder="Separe por vírgula (ex.: VIP, Infantil)"
+              defaultValue={Array.isArray(current?.categories) ? (current.categories as unknown[]).map(String).join(', ') : ''}
+            />
+          </label>
           <label>Status
             <select name="status" defaultValue={String(current?.status ?? 'ACTIVE')}>
               <option value="ACTIVE">Ativo</option>

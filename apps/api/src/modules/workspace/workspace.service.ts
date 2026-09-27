@@ -735,7 +735,7 @@ export class WorkspaceService {
     const data = parseWithZod(createLabCaseSchema, input);
     await this.assertWorkspaceResources(organizationId, data);
     let laboratoryName = data.laboratoryName?.trim();
-    let laboratoryId = data.laboratoryId;
+    const laboratoryId = data.laboratoryId;
     if (laboratoryId) {
       const laboratory = await prisma.laboratory.findFirst({
         where: { id: laboratoryId, organizationId, status: 'ACTIVE' },
@@ -871,7 +871,7 @@ export class WorkspaceService {
       throw new ConflictException('Caso encerrado não pode ser editado.');
     }
     let laboratoryName = input.laboratoryName?.trim();
-    let laboratoryId = input.laboratoryId;
+    const laboratoryId = input.laboratoryId;
     if (laboratoryId) {
       const laboratory = await prisma.laboratory.findFirst({
         where: { id: laboratoryId, organizationId, status: 'ACTIVE' },

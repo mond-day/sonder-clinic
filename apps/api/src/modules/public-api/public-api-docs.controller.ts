@@ -1,7 +1,7 @@
 import { Controller, Get, NotFoundException, Res } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { getPublicOpenApiDocument, PUBLIC_API_SCALAR_HTML } from './public-api-openapi';
+import { getPublicOpenApiDocument, PUBLIC_API_DOCS_CSP, PUBLIC_API_SCALAR_HTML } from './public-api-openapi';
 
 @ApiExcludeController()
 @Controller('public')
@@ -15,6 +15,7 @@ export class PublicApiDocsController {
 
   @Get('docs')
   docs(@Res() response: Response) {
+    response.setHeader('Content-Security-Policy', PUBLIC_API_DOCS_CSP);
     response.type('html').send(PUBLIC_API_SCALAR_HTML);
   }
 }

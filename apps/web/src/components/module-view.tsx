@@ -7,7 +7,6 @@ import { api, ApiError } from '@/lib/api';
 import {
   currency,
   dateTime,
-  dayBounds,
   list,
   nested,
   presentationLabel,
@@ -15,6 +14,7 @@ import {
   text,
   type RecordValue,
 } from '@/lib/format';
+import { ImportButton } from '@/features/imports/import-button';
 import { AgendaView } from './agenda-view';
 import { DocumentsView } from './documents-view';
 import { FinanceView } from './finance-view';
@@ -179,8 +179,8 @@ function GenericModuleView({ moduleKey: key }: { moduleKey: GenericModuleKey }) 
   const [loading, setLoading] = useState(true);
   const [patients, setPatients] = useState<RecordValue[]>([]);
   const [selectedPatientId, setSelectedPatientIdState] = useState('');
-  const [reportFrom, setReportFrom] = useState(() => new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10));
-  const [reportTo, setReportTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [reportFrom] = useState(() => new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10));
+  const [reportTo] = useState(() => new Date().toISOString().slice(0, 10));
   const { clinicId, clinics, professionals } = useSelection();
   const setSelectedPatientId = useCallback((value: string) => {
     setSelectedPatientIdState(value);
@@ -212,9 +212,17 @@ function GenericModuleView({ moduleKey: key }: { moduleKey: GenericModuleKey }) 
         description={info.description}
         eyebrow="OPERAÇÃO CLÍNICA"
         actions={
-          <button className="button secondary" onClick={load} disabled={loading} type="button">
-            <RefreshCw size={16} />Atualizar
-          </button>
+          <>
+            <button className="button secondary" onClick={load} disabled={loading} type="button">
+              <RefreshCw size={16} />Atualizar
+            </button>
+            {key === 'tratamentos' ? (
+              <>
+                <ImportButton kind="treatment-plans" label="Importar orçamentos" onImported={load} />
+                <ImportButton kind="treatments" label="Importar tratamentos" onImported={load} />
+              </>
+            ) : null}
+          </>
         }
       />
       {data && (

@@ -1,4 +1,4 @@
-import { readEnvFlag } from '@sonder/observability';
+import { isProductionSafeMasterKey, readEnvFlag } from '@sonder/observability';
 
 /**
  * Fail-fast do worker em produção.
@@ -44,9 +44,10 @@ export function assertWorkerProductionEnvironment(env: NodeJS.ProcessEnv = proce
     errors.push('STORAGE_DRIVER=local não é permitido em produção (use minio|s3).');
   }
 
-  const master = env.ENCRYPTION_MASTER_KEY?.trim() ?? '';
-  if (!/^[0-9a-fA-F]{64}$/.test(master)) {
-    errors.push('ENCRYPTION_MASTER_KEY deve ser 64 hex (credenciais criptografadas no outbox).');
+  if (!isProductionSafeMasterKey(env.ENCRYPTION_MASTER_KEY)) {
+    errors.push(
+      'ENCRYPTION_MASTER_KEY deve ser 64 hex e não pode ser o default do .env.example (credenciais criptografadas no outbox).',
+    );
   }
 
   // Ausência = MOCK off em prod. Só recusa se MOCK estiver explicitamente ligado.

@@ -17,6 +17,7 @@ import {
 } from '@/lib/business-hours';
 import { APPOINTMENT_DURATIONS, nearestDurationMinutes } from '@/lib/duration';
 import { appointmentEventTone, list, nested, statusTone, text, timeOnly, toDatetimeLocalValue, type RecordValue } from '@/lib/format';
+import { ImportButton } from '@/features/imports/import-button';
 import { ModuleActions } from './module-actions';
 import { useSelection } from './selection-provider';
 import { MetricCard, PageHeader, Panel, StatusBadge } from './ui';
@@ -937,6 +938,7 @@ export function AgendaView() {
             <button className="button secondary" type="button" onClick={load} disabled={loading}>
               <RefreshCw size={15} />Atualizar
             </button>
+            <ImportButton kind="appointments" onImported={load} />
             <button
               className="button primary"
               type="button"

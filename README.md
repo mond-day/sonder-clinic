@@ -2,7 +2,7 @@
 
 ERP odontológico interno, multi‑clínica, construído como monorepo TypeScript (Next.js + NestJS + worker + PostgreSQL/Prisma). Cobre a operação de uma clínica de ponta a ponta: agenda, pacientes, prontuário clínico, odontograma, planos de tratamento, documentos, financeiro, comissões, comunicação, integrações e configurações.
 
-> Versão atual: **1.2.4**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
+> Versão atual: **1.3.16**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
 
 ---
 
@@ -78,7 +78,7 @@ O escopo de organização (`organizationId`) é sempre derivado do JWT, nunca de
 
 ## Pré‑requisitos
 
-- **Node.js 24+** e **Corepack** habilitado (`corepack enable`). O pnpm é resolvido automaticamente pela versão fixada em `packageManager`.
+- **Node.js 24+** e **Corepack** habilitado (`corepack enable`). O `.nvmrc` fixa a major (`nvm use`). O pnpm é resolvido automaticamente pela versão fixada em `packageManager`.
 - **PostgreSQL 16** acessível em `localhost:5432`. Duas formas:
   - **Docker** (recomendado): `infra/docker/docker-compose.dev.yml` sobe um Postgres 16 já configurado.
   - **Postgres local**: crie o papel/banco manualmente (veja abaixo). Não é necessário Docker.
@@ -173,8 +173,9 @@ Na raiz (`package.json`):
 | `pnpm dev` | Sobe `web`, `api` e `worker` em paralelo |
 | `pnpm dev:web` / `dev:api` / `dev:worker` | Sobe um app específico |
 | `pnpm build` | Build de todos os pacotes |
-| `pnpm lint` | `tsc --noEmit` em todos os pacotes |
-| `pnpm typecheck` | Verificação de tipos |
+| `pnpm lint` | ESLint no monorepo inteiro (config única em `eslint.config.mjs`) |
+| `pnpm lint:commit` | commitlint (Conventional Commits) na última mensagem de commit |
+| `pnpm typecheck` | Verificação de tipos (`tsc --noEmit` em todos os pacotes) |
 | `pnpm test` | Testes (Vitest; usa `--passWithNoTests` onde ainda não há suíte) |
 | `pnpm test:integration` | Testes de integração |
 | `pnpm db:generate` | `prisma generate` |
@@ -186,6 +187,8 @@ Na raiz (`package.json`):
 | `pnpm format` | Prettier |
 
 Também disponível: `./script/dev.command` (setup + subida completa em um comando).
+
+Convenções do repositório: `.editorconfig` (UTF-8, LF, 2 espaços), `.nvmrc` (Node 24) e mensagens de commit no padrão [Conventional Commits](https://www.conventionalcommits.org/) (`feat(escopo): ...`, `fix: ...`, `chore: ...`). Para validar a mensagem a cada commit, ative o hook versionado uma vez por clone: `git config core.hooksPath .githooks`.
 
 ## Estrutura de pastas
 
@@ -292,22 +295,23 @@ Imagens publicadas no **GHCR** (`ghcr.io/mond-day`). Informe a tag no deploy (`s
 ## CI/CD e release
 
 - **CI** (`.github/workflows/ci.yml`): qualidade (lint/typecheck/test/e2e) e job `fresh-install`.
-- **Release** (`.github/workflows/release.yml`): tag `v1.2.4` (não `v.1.2.4`) dispara testes → imagens GHCR (`1.2.4`, `1.2`, `latest`, `sha-<gitsha>`) → deploy Swarm. Push em `main` sem tag gera `0.0.0-sha.<sha>` sem sobrescrever `latest`.
+- **Release** (`.github/workflows/release.yml`): tag `v1.3.16` (não `v.1.3.16`) dispara testes → imagens GHCR (`1.3.16`, `1.3`, `latest`, `sha-<gitsha>`) → deploy Swarm. Push em `main` sem tag gera `0.0.0-sha.<sha>` sem sobrescrever `latest`.
 
 Passos de release (detalhes em `docs/RELEASE.md`):
 
 ```bash
 # 1. Atualize a versão nos package.json (root + apps + packages)
 # 2. Commit na main
-git tag -a v1.2.4 -m "Release 1.2.4"
+git tag -a v1.3.16 -m "Release 1.3.16"
 git push origin main
-git push origin v1.2.4
+git push origin v1.3.16
 # 3. Abra o domínio: /setup na primeira vez, /login se já existir clínica
 ```
 
 ## Testes, typecheck e build
 
 ```bash
+corepack pnpm lint        # ESLint (config única na raiz)
 corepack pnpm typecheck   # tipos em todos os pacotes
 corepack pnpm test        # Vitest (--passWithNoTests onde ainda não há suíte)
 corepack pnpm build       # build de todos os pacotes

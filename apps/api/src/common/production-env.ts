@@ -1,4 +1,4 @@
-import { readEnvFlag } from '@sonder/observability';
+import { isProductionSafeMasterKey, readEnvFlag } from '@sonder/observability';
 
 /**
  * Fail-fast de ambiente em produção.
@@ -11,9 +11,6 @@ const WEAK_JWT = [
   'change-me-access-ci-only-min-32-chars!!',
   'change-me-refresh-ci-only-min-32-chars!',
 ];
-
-const DEFAULT_ENCRYPTION =
-  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 function isProduction(env: NodeJS.ProcessEnv = process.env): boolean {
   return (env.NODE_ENV ?? '').toLowerCase() === 'production';
@@ -61,8 +58,7 @@ export function assertProductionEnvironment(env: NodeJS.ProcessEnv = process.env
     errors.push('JWT_REFRESH_SECRET ausente, fraco ou valor default.');
   }
 
-  const master = env.ENCRYPTION_MASTER_KEY?.trim() ?? '';
-  if (!/^[0-9a-fA-F]{64}$/.test(master) || master.toLowerCase() === DEFAULT_ENCRYPTION) {
+  if (!isProductionSafeMasterKey(env.ENCRYPTION_MASTER_KEY)) {
     errors.push('ENCRYPTION_MASTER_KEY deve ser 64 hex e não pode ser o default do .env.example.');
   }
 
