@@ -104,7 +104,7 @@ jobs:
             type=sha,prefix=,format=short
             type=raw,value=sha-${{ steps.meta.outputs.sha }}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
