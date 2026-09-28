@@ -125,6 +125,12 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
     );
     return;
   }
+  const { patient } = reminder.appointment;
+  if (!patient) {
+    await skipReminder(event, 'Lembrete não enviado: compromisso sem paciente.');
+    return;
+  }
+  const appointment = { ...reminder.appointment, patient };
   const category = reminderCategoryFromChannel(reminder.channel);
   if (category === 'CONFIRMATION' && reminder.appointment.status !== 'SCHEDULED') {
     await skipReminder(event, 'Pedido de confirmação não enviado: consulta já confirmada ou em andamento.');
@@ -140,7 +146,7 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
       where: {
         organizationId_patientId_channel_category: {
           organizationId: reminder.organizationId,
-          patientId: reminder.appointment.patientId,
+          patientId: patient.id,
           channel: 'WHATSAPP',
           category,
         },
@@ -187,8 +193,8 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
     return;
   }
 
-  const number = normalizeWhatsAppNumber(reminder.appointment.patient.primaryPhone);
-  const text = reminderMessageText(category, template?.content, reminder.appointment);
+  const number = normalizeWhatsAppNumber(patient.primaryPhone);
+  const text = reminderMessageText(category, template?.content, appointment);
 
   if (evolutionLive && evolutionConnection?.encryptedCredentials) {
     let credentials: Record<string, string>;
@@ -254,7 +260,7 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
     chatwoot,
     number,
     text,
-    reminder.appointment.patient.preferredName ?? reminder.appointment.patient.fullName,
+    patient.preferredName ?? patient.fullName,
   );
   await prisma.$transaction([
     prisma.appointmentReminder.update({
@@ -1024,7 +1030,9 @@ async function processCalendarSync(event: OutboxEvent): Promise<void> {
   }
 
   const calendarId = readCalendarId(connection.configuration);
-  const patientName = appointment.patient.preferredName ?? appointment.patient.fullName;
+  const eventLabel = appointment.patient
+    ? appointment.patient.preferredName ?? appointment.patient.fullName
+    : appointment.title ?? 'Compromisso';
 
   if (action === 'DELETE' || ['CANCELLED', 'NO_SHOW'].includes(appointment.status)) {
     if (appointment.externalCalendarEventId) {
@@ -1039,7 +1047,7 @@ async function processCalendarSync(event: OutboxEvent): Promise<void> {
       accessToken: fresh.accessToken,
       calendarId,
       eventId: appointment.externalCalendarEventId,
-      summary: `${patientName} · ${appointment.professional.name}`,
+      summary: `${eventLabel} · ${appointment.professional.name}`,
       description: [
         `Clínica: ${appointment.clinic.tradeName}`,
         appointment.category ? `Categoria: ${appointment.category}` : null,

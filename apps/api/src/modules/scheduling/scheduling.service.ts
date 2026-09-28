@@ -20,10 +20,18 @@ import { parseWithZod } from '../../common/zod-validation';
 import { IntegrationsService, type PersonalCalendarWarning } from '../integrations/integrations.service';
 import { rethrowAppointmentConstraint } from './appointment-conflict';
 
+export const APPOINTMENT_KINDS = ['APPOINTMENT', 'COMMITMENT'] as const;
+export type AppointmentKind = (typeof APPOINTMENT_KINDS)[number];
+
+/** Compromisso não passa por confirmação/check-in: só agendado, concluído ou cancelado. */
+const COMMITMENT_STATUSES: ReadonlySet<string> = new Set(['SCHEDULED', 'COMPLETED', 'CANCELLED']);
+
 const appointmentSchema = z.object({
+  kind: z.enum(APPOINTMENT_KINDS).optional(),
   clinicId: z.string().uuid(),
   unitId: z.string().uuid(),
-  patientId: z.string().uuid(),
+  patientId: z.string().uuid().optional(),
+  title: z.string().trim().min(1, 'Informe o título do compromisso.').max(120, 'Título do compromisso muito longo (máx. 120).').optional(),
   professionalId: z.string().uuid(),
   chairId: z.string().uuid().optional(),
   startAt: z.string().datetime(),
@@ -51,12 +59,59 @@ const appointmentSchema = z.object({
       path: ['reminderLeadMinutes'],
     });
   }
+  if ((value.kind ?? 'APPOINTMENT') === 'APPOINTMENT') {
+    if (!value.patientId) {
+      ctx.addIssue({ code: 'custom', message: 'Selecione o paciente da consulta.', path: ['patientId'] });
+    }
+    return;
+  }
+  if (!value.title) {
+    ctx.addIssue({ code: 'custom', message: 'Informe o título do compromisso.', path: ['title'] });
+  }
+  if (value.patientId) {
+    ctx.addIssue({ code: 'custom', message: 'Compromisso não tem paciente. Para atender um paciente, crie uma consulta.', path: ['patientId'] });
+  }
+  if (value.status && !COMMITMENT_STATUSES.has(value.status)) {
+    ctx.addIssue({ code: 'custom', message: 'Compromisso aceita apenas os status Agendado, Concluído ou Cancelado.', path: ['status'] });
+  }
 });
 
+type ParsedAppointment = z.infer<typeof appointmentSchema> & { kind: AppointmentKind };
+
+function parseAppointment(input: AppointmentInput): ParsedAppointment {
+  const parsed = parseWithZod(appointmentSchema, input);
+  return { ...parsed, kind: parsed.kind ?? 'APPOINTMENT' };
+}
+
+/**
+ * Colunas gravadas em create/update. `undefined` mantém o valor atual no update (comportamento legado);
+ * paciente/título seguem o tipo (CHECK appointment_kind_patient_title).
+ */
+function appointmentColumns(input: ParsedAppointment) {
+  const isCommitment = input.kind === 'COMMITMENT';
+  return {
+    clinicId: input.clinicId,
+    unitId: input.unitId,
+    professionalId: input.professionalId,
+    chairId: input.chairId,
+    notes: input.notes,
+    category: input.category,
+    status: input.status,
+    source: input.source,
+    patientId: isCommitment ? null : input.patientId,
+    title: isCommitment ? input.title : null,
+  };
+}
+
 export type AppointmentInput = {
+  /** Padrão APPOINTMENT (consulta). COMMITMENT = compromisso sem paciente. */
+  kind?: AppointmentKind;
   clinicId: string;
   unitId: string;
-  patientId: string;
+  /** Obrigatório para consulta; proibido para compromisso. */
+  patientId?: string;
+  /** Obrigatório para compromisso; ignorado em consulta. */
+  title?: string;
   professionalId: string;
   chairId?: string;
   startAt: string;
@@ -86,12 +141,20 @@ const appointmentInclude = {
 export class SchedulingService {
   constructor(private readonly integrations: IntegrationsService) {}
 
-  list(organizationId: string, from?: string, to?: string, clinicId?: string, scope?: ClinicScope) {
+  list(
+    organizationId: string,
+    from?: string,
+    to?: string,
+    clinicId?: string,
+    scope?: ClinicScope,
+    kind?: AppointmentKind,
+  ) {
     if (clinicId && scope) assertClinicInScope(scope, clinicId);
     return prisma.appointment.findMany({
       where: {
         organizationId,
         ...(clinicId ? { clinicId } : clinicWhere(scope ?? { clinicIds: null })),
+        ...(kind ? { kind } : {}),
         startAt: {
           gte: from ? new Date(from) : undefined,
           lt: to ? new Date(to) : undefined,
@@ -103,12 +166,13 @@ export class SchedulingService {
     });
   }
 
-  async find(organizationId: string, id: string, scope?: ClinicScope) {
+  async find(organizationId: string, id: string, scope?: ClinicScope, kind?: AppointmentKind) {
     const appointment = await prisma.appointment.findFirst({
       where: {
         id,
         organizationId,
         ...clinicWhere(scope ?? { clinicIds: null }),
+        ...(kind ? { kind } : {}),
       },
       include: appointmentInclude,
     });
@@ -127,6 +191,9 @@ export class SchedulingService {
     if (!appointment) throw new NotFoundException('Agendamento não encontrado.');
     if (appointment.status === 'CANCELLED') {
       throw new ConflictException('Agendamento cancelado não pode mudar de status.');
+    }
+    if (appointment.kind === 'COMMITMENT' && !COMMITMENT_STATUSES.has(status)) {
+      throw new ConflictException('Compromisso aceita apenas os status Agendado, Concluído ou Cancelado.');
     }
     return prisma.appointment.update({
       where: { id },
@@ -155,8 +222,8 @@ export class SchedulingService {
     );
   }
 
-  async create(organizationId: string, input: AppointmentInput, scope?: ClinicScope) {
-    parseWithZod(appointmentSchema, input);
+  async create(organizationId: string, rawInput: AppointmentInput, scope?: ClinicScope) {
+    const input = parseAppointment(rawInput);
     if (scope) assertClinicInScope(scope, input.clinicId);
     await this.assertResources(organizationId, input);
     const startAt = new Date(input.startAt);
@@ -188,18 +255,20 @@ export class SchedulingService {
         });
       }
 
-      const { tagIds = [], reminderEnabled, reminderLeadMinutes, ...appointment } = input;
+      const { tagIds = [], reminderEnabled, reminderLeadMinutes } = input;
       const row = await transaction.appointment.create({
         data: {
           organizationId,
-          ...appointment,
+          kind: input.kind,
+          ...appointmentColumns(input),
           startAt,
           endAt,
           tags: { create: tagIds.map((tagId) => ({ tagId })) },
         },
         include: appointmentInclude,
       });
-      await this.configureReminder(transaction, organizationId, row.id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
+      const remind = input.kind === 'APPOINTMENT' && reminderEnabled;
+      await this.configureReminder(transaction, organizationId, row.id, input.clinicId, startAt, remind, reminderLeadMinutes);
       await this.enqueueCalendarSync(transaction, row.id, 'UPSERT');
       return transaction.appointment.findUniqueOrThrow({ where: { id: row.id }, include: appointmentInclude });
     }, { isolationLevel: 'Serializable' }).catch(rethrowAppointmentConstraint);
@@ -208,10 +277,8 @@ export class SchedulingService {
     return { ...created, warnings };
   }
 
-  async reschedule(organizationId: string, id: string, input: AppointmentInput, scope?: ClinicScope) {
-    parseWithZod(appointmentSchema, input);
-    if (scope) assertClinicInScope(scope, input.clinicId);
-    await this.assertResources(organizationId, input);
+  async reschedule(organizationId: string, id: string, rawInput: AppointmentInput, scope?: ClinicScope) {
+    if (scope) assertClinicInScope(scope, rawInput.clinicId);
     const appointment = await prisma.appointment.findFirst({
       where: {
         id,
@@ -220,6 +287,11 @@ export class SchedulingService {
       },
     });
     if (!appointment) throw new NotFoundException('Agendamento não encontrado.');
+    if (rawInput.kind && rawInput.kind !== appointment.kind) {
+      throw new ConflictException('Não é possível converter consulta em compromisso (ou vice-versa). Cancele e crie um novo.');
+    }
+    const input = parseAppointment({ ...rawInput, kind: appointment.kind });
+    await this.assertResources(organizationId, input);
     if (appointment.status === 'CANCELLED') throw new ConflictException('Agendamento cancelado não pode ser remarcado.');
     const startAt = new Date(input.startAt);
     const endAt = new Date(input.endAt);
@@ -239,11 +311,11 @@ export class SchedulingService {
         },
       });
       if (conflict) throw new ConflictException('O horário selecionado está em conflito com outro agendamento.');
-      const { tagIds, reminderEnabled, reminderLeadMinutes, ...appointmentData } = input;
+      const { tagIds, reminderEnabled, reminderLeadMinutes } = input;
       const row = await transaction.appointment.update({
         where: { id },
         data: {
-          ...appointmentData,
+          ...appointmentColumns(input),
           startAt,
           endAt,
           version: { increment: 1 },
@@ -251,9 +323,11 @@ export class SchedulingService {
         },
         include: appointmentInclude,
       });
-      await this.configureReminder(transaction, organizationId, id, input.clinicId, startAt, reminderEnabled, reminderLeadMinutes);
+      const remind = input.kind === 'APPOINTMENT' && reminderEnabled;
+      await this.configureReminder(transaction, organizationId, id, input.clinicId, startAt, remind, reminderLeadMinutes);
       await this.enqueueCalendarSync(transaction, id, 'UPSERT');
-      if (input.status === 'COMPLETED' && appointment.status !== 'COMPLETED') {
+      // Automações de consulta concluída (retorno, comissão...) pressupõem paciente.
+      if (input.kind === 'APPOINTMENT' && input.status === 'COMPLETED' && appointment.status !== 'COMPLETED') {
         await transaction.outboxEvent.create({
           data: {
             aggregateType: 'Appointment',
@@ -352,7 +426,9 @@ export class SchedulingService {
     const [clinic, unit, patient, professional, chair, tagCount] = await Promise.all([
       prisma.clinic.findFirst({ where: { id: input.clinicId, organizationId, status: 'ACTIVE' }, select: { id: true } }),
       prisma.unit.findFirst({ where: { id: input.unitId, clinicId: input.clinicId, status: 'ACTIVE' }, select: { id: true } }),
-      prisma.patient.findFirst({ where: { id: input.patientId, organizationId, status: { not: 'ARCHIVED' } }, select: { id: true } }),
+      input.patientId
+        ? prisma.patient.findFirst({ where: { id: input.patientId, organizationId, status: { not: 'ARCHIVED' } }, select: { id: true } })
+        : Promise.resolve(null),
       prisma.professional.findFirst({
         where: {
           id: input.professionalId,
@@ -374,7 +450,7 @@ export class SchedulingService {
     ]);
     if (!clinic) throw new NotFoundException('Clínica inválida ou inativa.');
     if (!unit) throw new NotFoundException('Unidade inválida para a clínica selecionada.');
-    if (!patient) throw new NotFoundException('Paciente inválido ou arquivado.');
+    if (input.patientId && !patient) throw new NotFoundException('Paciente inválido ou arquivado.');
     if (!professional) throw new NotFoundException('Profissional inválido ou sem vínculo ativo com a clínica.');
     if (!chair) {
       throw new NotFoundException(

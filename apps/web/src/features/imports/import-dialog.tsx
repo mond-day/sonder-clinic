@@ -43,13 +43,12 @@ export function ImportDialog({
   const [kind, setKind] = useState<ImportSlug>(kinds[0]!);
   const info = IMPORT_KINDS[kind];
   const multiple = kinds.length > 1;
-  const { clinicId, clinics, professionals } = useSelection();
+  const { clinicId, clinics } = useSelection();
   const inputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<Step>('select');
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [unitId, setUnitId] = useState('');
-  const [professionalId, setProfessionalId] = useState('');
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [result, setResult] = useState<ImportCommitResult | null>(null);
   const [batches, setBatches] = useState<ImportBatch[]>([]);
@@ -60,7 +59,6 @@ export function ImportDialog({
 
   const units = clinics.find((clinic) => clinic.id === clinicId)?.units ?? [];
   const needsUnit = kind === 'appointments' && units.length > 1;
-  const needsProfessional = kind === 'treatment-plans';
 
   const loadBatches = useCallback(() => {
     if (!clinicId) return;
@@ -80,7 +78,6 @@ export function ImportDialog({
     setNotice('');
     setError('');
     setUnitId('');
-    setProfessionalId('');
   }, [open, kindsKey]);
 
   useEffect(() => {
@@ -96,7 +93,6 @@ export function ImportDialog({
     setNotice('');
     setError('');
     setUnitId('');
-    setProfessionalId('');
   }
 
   function pickFile(candidate: File | undefined) {
@@ -124,7 +120,6 @@ export function ImportDialog({
     body.append('file', file!);
     body.append('clinicId', clinicId);
     if (unitId) body.append('unitId', unitId);
-    if (professionalId) body.append('professionalId', professionalId);
     return body;
   }
 
@@ -132,7 +127,6 @@ export function ImportDialog({
     if (!clinicId) return setError('Selecione uma clínica.');
     if (!file) return setError('Selecione a planilha.');
     if (needsUnit && !unitId) return setError('Selecione a unidade das consultas.');
-    if (needsProfessional && !professionalId) return setError('Selecione o profissional responsável pelos orçamentos.');
     setBusy(true);
     setError('');
     try {
@@ -237,15 +231,6 @@ export function ImportDialog({
                 </select>
               </label>
             ) : null}
-            {needsProfessional ? (
-              <label>
-                Profissional responsável pelos orçamentos
-                <select value={professionalId} onChange={(event) => setProfessionalId(event.target.value)}>
-                  <option value="">Selecione…</option>
-                  {professionals.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
-              </label>
-            ) : null}
             <div
               className={`dropzone span-2 ${dragging ? 'drag' : ''}`}
               onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
@@ -301,7 +286,7 @@ export function ImportDialog({
             <section className="stats span-2">
               <MetricCard label="Linhas na planilha" value={preview.totalRows} meta={preview.fileName} />
               <MetricCard label="Serão criados" value={preview.counts.create} meta="após confirmar" tone="green" />
-              <MetricCard label="Ignorados" value={preview.counts.skip} meta="já existentes" />
+              <MetricCard label="Ignorados" value={preview.counts.skip} meta="já existentes ou não aplicáveis" />
               <MetricCard label="Com erro" value={preview.counts.error} meta="não serão gravados" tone={preview.counts.error ? 'red' : undefined} />
             </section>
             {preview.blocking.length ? (

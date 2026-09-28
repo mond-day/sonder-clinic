@@ -155,6 +155,19 @@ export async function loadNamedCatalog(
   return map;
 }
 
+export async function loadProceduresByCode(
+  db: Db,
+  organizationId: string,
+  internalCodes: string[],
+): Promise<Map<string, { id: string; name: string }>> {
+  if (!internalCodes.length) return new Map();
+  const rows = await db.procedure.findMany({
+    where: { organizationId, internalCode: { in: internalCodes } },
+    select: { id: true, name: true, internalCode: true },
+  });
+  return new Map(rows.map((row) => [row.internalCode, { id: row.id, name: row.name }]));
+}
+
 export async function resolveUnit(
   db: Db,
   clinicId: string,

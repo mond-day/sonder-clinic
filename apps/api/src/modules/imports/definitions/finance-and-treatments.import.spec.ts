@@ -22,25 +22,47 @@ describe('resolução de profissional', () => {
 });
 
 describe('importação de orçamentos', () => {
+  const planInput = () => ({ professionals: new ProfessionalResolver(professionals), patients, alreadyImported: new Set<string>() });
   const rows = sheetRows([
-    { 'Data de Criação': '05/02/2026 10:30', Código: 'A1', Paciente: 'Paciente Financeiro', Status: 'Aprovado', 'Valor Total': 'R$ 1.500,00', 'Aprovado em': '06/02/2026 09:00', Descrição: 'Clareamento' },
-    { 'Data de Criação': '05/02/2026 11:00', Código: 'A1', Paciente: 'Paciente Financeiro', Status: 'Pendente', 'Valor Total': 'R$ 10,00' },
-    { 'Data de Criação': '05/02/2026 11:00', Código: 'A2', Paciente: 'Homônimo Igual', Status: 'Pendente', 'Valor Total': 'R$ 10,00' },
-    { 'Data de Criação': '05/02/2026 11:00', Código: 'A3', Paciente: 'Paciente Financeiro', Status: 'Recusado', 'Valor Total': 'R$ 10,00' },
+    { 'Data de Criação': '05/02/2026 10:30', Código: 'A1', Paciente: 'Paciente Financeiro', Profissional: 'ana maria souza', Status: 'Aprovado', 'Valor Total': 'R$ 1.500,00', 'Aprovado em': '06/02/2026 09:00', Descrição: 'Clareamento' },
+    { 'Data de Criação': '05/02/2026 11:00', Código: 'A1', Paciente: 'Paciente Financeiro', Profissional: 'Ana Maria Souza', Status: 'Pendente', 'Valor Total': 'R$ 10,00' },
+    { 'Data de Criação': '05/02/2026 11:00', Código: 'A2', Paciente: 'Homônimo Igual', Profissional: 'Ana Maria Souza', Status: 'Pendente', 'Valor Total': 'R$ 10,00' },
+    { 'Data de Criação': '05/02/2026 11:00', Código: 'A3', Paciente: 'Paciente Financeiro', Profissional: 'Ana Maria Souza', Status: 'Recusado', 'Valor Total': 'R$ 10,00' },
   ]).map((row) => parsePlanRow(row, testContext));
 
   it('mapeia status, detecta código repetido e homônimos ambíguos', () => {
-    const plan = planTreatmentPlans(rows, { professionalId: 'prof-ana', patients, alreadyImported: new Set() });
+    const plan = planTreatmentPlans(rows, planInput());
     expect(plan.rows.map((row) => row.status)).toEqual(['CREATE', 'ERROR', 'ERROR', 'ERROR']);
     expect(plan.items[0]!.data).toMatchObject({ status: 'APPROVED', total: '1500.00', title: 'Clareamento', professionalId: 'prof-ana' });
     expect(plan.items[0]!.data.notes).toContain('Aprovado em 06/02/2026');
     expect(plan.rows[2]!.messages[0]).toMatch(/Há 2 pacientes/);
   });
 
-  it('bloqueia sem profissional escolhido', () => {
-    const plan = planTreatmentPlans(rows, { professionalId: null, patients, alreadyImported: new Set() });
-    expect(plan.blocking).toHaveLength(1);
+  it('atribui cada orçamento ao profissional da própria linha', () => {
+    const mixed = sheetRows([
+      { 'Data de Criação': '05/02/2026', Código: 'B1', Paciente: 'Paciente Financeiro', Dentista: 'Ana Souza', Status: 'Aprovado', 'Valor Total': 100 },
+      { 'Data de Criação': '05/02/2026', Código: 'B2', Paciente: 'Paciente Financeiro', Dentista: 'BRUNO LIMA ', Status: 'Pendente', 'Valor Total': 200 },
+      { 'Data de Criação': '05/02/2026', Código: 'B3', Paciente: 'Paciente Financeiro', Dentista: 'Profissional Fantasma', Status: 'Pendente', 'Valor Total': 300 },
+      { 'Data de Criação': '05/02/2026', Código: 'B4', Paciente: 'Paciente Financeiro', Dentista: 'Carla Dias', Status: 'Pendente', 'Valor Total': 300 },
+      { 'Data de Criação': '05/02/2026', Código: 'B5', Paciente: 'Paciente Financeiro', Dentista: '', Status: 'Pendente', 'Valor Total': 300 },
+    ]).map((row) => parsePlanRow(row, testContext));
+    const plan = planTreatmentPlans(mixed, planInput());
+    expect(plan.blocking).toEqual([]);
+    expect(plan.rows.map((row) => row.status)).toEqual(['CREATE', 'CREATE', 'ERROR', 'ERROR', 'ERROR']);
+    expect(plan.items.map((item) => item.data.professionalId)).toEqual(['prof-ana', 'prof-bruno']);
+    expect(plan.rows[2]!.messages[0]).toMatch(/não está cadastrado/);
+    expect(plan.rows[3]!.messages[0]).toMatch(/não tem vínculo ativo/);
+    expect(plan.rows[4]!.messages).toEqual(['Profissional não informado na coluna “Dentista”.']);
+  });
+
+  it('falha cada linha quando a planilha não tem coluna de profissional', () => {
+    const noColumn = sheetRows([
+      { 'Data de Criação': '05/02/2026', Código: 'C1', Paciente: 'Paciente Financeiro', Status: 'Aprovado', 'Valor Total': 100 },
+    ]).map((row) => parsePlanRow(row, testContext));
+    expect(noColumn[0]!.errors).toEqual(['A planilha não tem coluna de profissional (Profissional, Dentista ou Responsável).']);
+    const plan = planTreatmentPlans(noColumn, planInput());
     expect(plan.items).toHaveLength(0);
+    expect(plan.rows[0]!.status).toBe('ERROR');
   });
 });
 
@@ -55,6 +77,7 @@ describe('importação de tratamentos', () => {
       patients,
       professionals: new ProfessionalResolver(professionals),
       procedures: new Map([['limpeza', { id: 'proc-1', name: 'Limpeza' }]]),
+      proceduresByCode: new Map(),
       alreadyImported: new Set(),
     });
     expect(plan.rows.map((row) => row.status)).toEqual(['CREATE', 'CREATE', 'ERROR']);
@@ -62,6 +85,40 @@ describe('importação de tratamentos', () => {
     expect(plan.items[0]!.data.completedAt!.toISOString()).toBe('2026-01-20T16:00:00.000Z');
     expect(plan.items[1]!.data).toMatchObject({ procedureId: undefined, status: 'APPROVED' });
     expect(plan.creations).toEqual([{ label: 'Procedimentos que serão criados no catálogo', names: ['Procedimento Novo'] }]);
+  });
+
+  it('relaciona aliases ao cadastro existente, ignora o que não é tratamento e não une variantes', () => {
+    const row = (Tratamento: string) => ({ 'Criado em': new Date(Date.UTC(2026, 0, 10)), Paciente: 'Paciente Financeiro', Tratamento, Profissional: 'Bruno Lima', Status: 'Em aberto', Valor: 100 });
+    const rows = sheetRows([
+      row('Profilaxia + Polimento Coronário - Limpeza'),
+      row('exodontia simples de permanente'),
+      row('Aporte de Capital'),
+      row('Restauração em Resina Fotopolimerizável 1 face'),
+      row('Restauração em Resina Fotopolimerizável 2 faces'),
+      row('Exodontia siso superior incluso'),
+    ]).map((sheetRow) => parseTreatmentRow(sheetRow, testContext));
+    const plan = planTreatments(rows, {
+      patients,
+      professionals: new ProfessionalResolver(professionals),
+      procedures: new Map([['restauracao em resina', { id: 'proc-rest', name: 'Restauração em resina' }]]),
+      proceduresByCode: new Map([
+        ['PREV-001', { id: 'proc-prof', name: 'Profilaxia' }],
+        ['CIR-001', { id: 'proc-exo', name: 'Extração dentária' }],
+      ]),
+      alreadyImported: new Set(),
+    });
+    expect(plan.rows.map((item) => item.status)).toEqual(['CREATE', 'CREATE', 'SKIP', 'CREATE', 'CREATE', 'CREATE']);
+    expect(plan.rows[2]!.messages[0]).toMatch(/não é um tratamento odontológico/);
+    expect(plan.items.map((item) => item.data.procedureId)).toEqual(['proc-prof', 'proc-exo', undefined, undefined, undefined]);
+    expect(plan.mappings).toEqual(expect.arrayContaining([
+      { label: 'Tratamento', from: 'Profilaxia + Polimento Coronário - Limpeza', to: 'Profilaxia' },
+      { label: 'Tratamento', from: 'exodontia simples de permanente', to: 'Extração dentária' },
+    ]));
+    expect(plan.creations[0]!.names).toEqual([
+      'Exodontia siso superior incluso',
+      'Restauração em Resina Fotopolimerizável 1 face',
+      'Restauração em Resina Fotopolimerizável 2 faces',
+    ]);
   });
 });
 

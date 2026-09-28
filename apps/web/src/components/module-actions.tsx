@@ -74,15 +74,22 @@ const patientSchema = z.object({
   referralSource: z.string().trim().max(120, '“Como conheceu” muito longo.'),
   categories: z.array(z.string().trim().min(1).max(60, 'Categoria muito longa.')).max(20, 'Use no máximo 20 categorias.'),
 });
-const appointmentSchema = z.object({
-  patientId: uuid,
+const agendaSlotFields = {
   professionalId: uuid,
   unitId: uuid,
   chairId: z.string().uuid().optional(),
   startAt: z.string().datetime(),
   endAt: z.string().datetime(),
   notes: z.string().optional(),
-}).refine((value) => value.endAt > value.startAt, { message: 'O término deve ser posterior ao início.' });
+};
+const endAfterStart = (value: { startAt: string; endAt: string }) => value.endAt > value.startAt;
+const endAfterStartMessage = { message: 'O término deve ser posterior ao início.' };
+const appointmentSchema = z.object({ patientId: uuid, ...agendaSlotFields }).refine(endAfterStart, endAfterStartMessage);
+const commitmentSchema = z.object({
+  title: z.string().trim().min(1, 'Informe o título do compromisso.').max(120, 'Título muito longo (máx. 120 caracteres).'),
+  ...agendaSlotFields,
+}).refine(endAfterStart, endAfterStartMessage);
+const COMMITMENT_TITLE_SUGGESTIONS = ['Reunião', 'Almoço', 'Manutenção', 'Particular', 'Curso / capacitação', 'Folga'];
 const entrySchema = z.object({
   patientId: uuid,
   professionalId: uuid,
@@ -225,7 +232,19 @@ function MutationPanel({ title, description, children, message, error }: {
   return <section className="panel mutation-panel"><header className="panel-header"><div><h2>{title}</h2><p>{description}</p></div></header>{children}{message && <p className="form-success" role="status">{message}</p>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
-export function ModuleActions({ module, clinicId, clinics, professionals, patients, selectedPatientId, defaultPatientId, onPatientChange, onSaved, configurationKind, initialIntegrationProvider, initialIntegration }: {
+/** APPOINTMENT = consulta com paciente; COMMITMENT = compromisso sem paciente (bloqueia o horário). */
+export type AgendaEntryKind = 'APPOINTMENT' | 'COMMITMENT';
+
+export type AppointmentFormDefaults = {
+  kind?: AgendaEntryKind;
+  /** Valor de `datetime-local` (aaaa-mm-ddThh:mm) no fuso do navegador. */
+  startAt?: string;
+  professionalId?: string;
+  unitId?: string;
+  chairId?: string;
+};
+
+export function ModuleActions({ module, clinicId, clinics, professionals, patients, selectedPatientId, defaultPatientId, appointmentDefaults, onPatientChange, onSaved, configurationKind, initialIntegrationProvider, initialIntegration }: {
   module: ModuleKey;
   clinicId: string;
   clinics: Clinic[];
@@ -233,6 +252,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   patients: Item[];
   selectedPatientId: string;
   defaultPatientId?: string;
+  appointmentDefaults?: AppointmentFormDefaults;
   onPatientChange(value: string): void;
   onSaved(): void;
   configurationKind?: 'branding' | 'legal' | 'integration';
@@ -305,6 +325,22 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const [selectedReceivableId, setSelectedReceivableId] = useState('');
   const lockedPatientEdit = Boolean(selectedPatientId);
   const agendaPatientDefault = selectedPatientId || defaultPatientId || '';
+  const [agendaKind, setAgendaKind] = useState<AgendaEntryKind>(appointmentDefaults?.kind ?? 'APPOINTMENT');
+  const [agendaUnitId, setAgendaUnitId] = useState(appointmentDefaults?.unitId ?? '');
+  // undefined = nenhuma escolha explícita (clique/usuário); permite o default de "única cadeira".
+  const [agendaChairId, setAgendaChairId] = useState<string | undefined>(appointmentDefaults?.chairId);
+  const agendaUnits = clinic?.units ?? [];
+  const effectiveAgendaUnitId = agendaUnitId || (agendaUnits.length === 1 ? agendaUnits[0]?.id ?? '' : '');
+  const agendaChairs = effectiveAgendaUnitId
+    ? agendaUnits.find((unit) => unit.id === effectiveAgendaUnitId)?.chairs ?? []
+    : agendaUnits.flatMap((unit) => unit.chairs);
+  const effectiveAgendaChairId = agendaChairId ?? (agendaChairs.length === 1 ? agendaChairs[0]?.id ?? '' : '');
+
+  function changeAgendaUnit(unitId: string) {
+    setAgendaUnitId(unitId);
+    const chairsOfUnit = agendaUnits.find((unit) => unit.id === unitId)?.chairs ?? [];
+    if (!chairsOfUnit.some((chair) => chair.id === effectiveAgendaChairId)) setAgendaChairId(undefined);
+  }
 
   useEffect(() => {
     if (module === 'pacientes' && selectedPatientId) setPatientToEdit(selectedPatientId);
@@ -906,7 +942,16 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   }
 
   if (module === 'agenda') {
-    return <MutationPanel title="Novo agendamento" description="Escolha paciente, profissional e horário. O sistema impede conflito com outra consulta do mesmo profissional ou cadeira." message={message} error={error}>
+    const isCommitment = agendaKind === 'COMMITMENT';
+    const entryLabel = isCommitment ? 'compromisso' : 'consulta';
+    return <MutationPanel
+      title="Novo agendamento"
+      description={isCommitment
+        ? 'Reserve o horário do profissional sem paciente (reunião, almoço, manutenção...). Conflitos com consultas e outros compromissos são bloqueados.'
+        : 'Escolha paciente, profissional e horário. O sistema impede conflito com outra consulta do mesmo profissional ou cadeira.'}
+      message={message}
+      error={error}
+    >
       <form className="mutation-form" onSubmit={(event) => {
         event.preventDefault(); const form = event.currentTarget; const data = fields(form);
         let endAt: string;
@@ -916,12 +961,15 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           setError(errorMessage(cause));
           return;
         }
-        const parsed = validate(appointmentSchema, {
-          patientId: data.get('patientId'), professionalId: data.get('professionalId'), unitId: data.get('unitId'),
+        const slot = {
+          professionalId: data.get('professionalId'), unitId: data.get('unitId'),
           chairId: optional(data.get('chairId')), startAt: iso(data.get('startAt')), endAt, notes: optional(data.get('notes')),
-        });
+        };
+        const parsed = isCommitment
+          ? validate(commitmentSchema, { ...slot, title: data.get('title') })
+          : validate(appointmentSchema, { ...slot, patientId: data.get('patientId') });
         if (!parsed) return;
-        const payload = { ...parsed, clinicId };
+        const payload = { ...parsed, clinicId, kind: agendaKind };
         setBusy(true); setError(''); setMessage('');
         void (async () => {
           try {
@@ -947,7 +995,8 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             await api.post('/appointments', payload);
             setPersonalWarning('');
             setAcknowledgePersonalWarning(false);
-            setMessage(acknowledgePersonalWarning ? 'Consulta criada (com aviso de agenda pessoal).' : 'Consulta criada.');
+            const created = isCommitment ? 'Compromisso criado' : 'Consulta criada';
+            setMessage(acknowledgePersonalWarning ? `${created} (com aviso de agenda pessoal).` : `${created}.`);
             form.reset();
             setResourceRevision((value) => value + 1);
             onSaved();
@@ -958,29 +1007,56 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           }
         })();
       }}>
-        <Disclosure title="Informações principais" description="Paciente e equipe de atendimento">
-          <SearchableSelect
-            name="patientId"
-            label="Paciente"
-            required
-            defaultValue={agendaPatientDefault}
-            options={patients.map((item) => ({ value: String(item.id), label: String(item.fullName) }))}
-          />
-          <SearchableSelect name="professionalId" label="Profissional" required options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
-          <SearchableSelect name="unitId" label="Unidade" required options={(clinic?.units ?? []).map((item) => ({ value: item.id, label: item.name }))} />
-          <SearchableSelect name="chairId" label="Cadeira" placeholder="Sem cadeira" options={(clinic?.units ?? []).flatMap((item) => item.chairs).map((item) => ({ value: item.id, label: item.name }))} />
+        <div className="segmented agenda-kind-toggle" role="group" aria-label="Tipo de agendamento">
+          {([['APPOINTMENT', 'Consulta'], ['COMMITMENT', 'Compromisso']] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={agendaKind === value ? 'active' : ''}
+              aria-pressed={agendaKind === value}
+              onClick={() => { setAgendaKind(value); setError(''); setMessage(''); }}
+            >{label}</button>
+          ))}
+        </div>
+        <Disclosure
+          title="Informações principais"
+          description={isCommitment ? 'Título e profissional que ficará ocupado' : 'Paciente e equipe de atendimento'}
+        >
+          {isCommitment ? (
+            <label>Título
+              <input name="title" required maxLength={120} list="commitment-title-suggestions" placeholder="Ex.: Reunião, Almoço" autoComplete="off" />
+              <datalist id="commitment-title-suggestions">
+                {COMMITMENT_TITLE_SUGGESTIONS.map((suggestion) => <option key={suggestion} value={suggestion} />)}
+              </datalist>
+            </label>
+          ) : (
+            <SearchableSelect
+              name="patientId"
+              label="Paciente"
+              required
+              defaultValue={agendaPatientDefault}
+              options={patients.map((item) => ({ value: String(item.id), label: String(item.fullName) }))}
+            />
+          )}
+          <SearchableSelect name="professionalId" label="Profissional" required defaultValue={appointmentDefaults?.professionalId} options={professionals.map((item) => ({ value: item.id, label: item.name }))} />
+          <SearchableSelect name="unitId" label="Unidade" required value={effectiveAgendaUnitId} onChange={changeAgendaUnit} options={agendaUnits.map((item) => ({ value: item.id, label: item.name }))} />
+          <SearchableSelect name="chairId" label="Cadeira" placeholder="Sem cadeira" value={effectiveAgendaChairId} onChange={setAgendaChairId} options={agendaChairs.map((item) => ({ value: item.id, label: item.name }))} />
         </Disclosure>
-        <Disclosure title="Data e duração" description="Horários em conflito com outra consulta são bloqueados">
-          <label>Início<input name="startAt" type="datetime-local" required onChange={() => { setPersonalWarning(''); setAcknowledgePersonalWarning(false); }} /></label>
+        <Disclosure title="Data e duração" description="Horários em conflito com outra consulta ou compromisso são bloqueados">
+          <label>Início<input name="startAt" type="datetime-local" required defaultValue={appointmentDefaults?.startAt} onChange={() => { setPersonalWarning(''); setAcknowledgePersonalWarning(false); }} /></label>
           <label>Duração (min)
             <select name="duration" defaultValue="30" required onChange={() => { setPersonalWarning(''); setAcknowledgePersonalWarning(false); }}>
               {APPOINTMENT_DURATIONS.map((m) => <option key={m} value={m}>{m} min</option>)}
             </select>
           </label>
         </Disclosure>
-        <Disclosure title="Detalhes e comunicação" defaultOpen={false}>
+        <Disclosure title={isCommitment ? 'Detalhes' : 'Detalhes e comunicação'} defaultOpen={false}>
           <label className="span-2">Observações<input name="notes" /></label>
-          <p className="muted-note span-2">Etiquetas e lembrete de WhatsApp podem ser ajustados nos detalhes após criar a consulta. Para remarcar ou cancelar, abra a consulta na agenda.</p>
+          <p className="muted-note span-2">
+            {isCommitment
+              ? 'Compromissos não enviam lembrete ao paciente. Para remarcar ou cancelar, abra o compromisso na agenda.'
+              : 'Etiquetas e lembrete de WhatsApp podem ser ajustados nos detalhes após criar a consulta. Para remarcar ou cancelar, abra a consulta na agenda.'}
+          </p>
         </Disclosure>
         {personalWarning ? (
           <div className="secure-notice form-warning span-2" role="status">
@@ -990,7 +1066,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           </div>
         ) : null}
         <button className="button primary" disabled={busy}>
-          {acknowledgePersonalWarning ? 'Criar mesmo assim' : 'Criar consulta'}
+          {acknowledgePersonalWarning ? 'Criar mesmo assim' : `Criar ${entryLabel}`}
         </button>
       </form>
     </MutationPanel>;

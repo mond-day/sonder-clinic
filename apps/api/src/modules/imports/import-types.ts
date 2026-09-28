@@ -32,7 +32,7 @@ export type ImportPlan<T> = {
   sample: Array<Record<string, string>>;
 };
 
-export type ImportOptions = { clinicId: string; unitId?: string; professionalId?: string };
+export type ImportOptions = { clinicId: string; unitId?: string };
 
 export type ImportContext = {
   organizationId: string;

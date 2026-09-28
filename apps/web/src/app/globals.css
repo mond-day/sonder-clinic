@@ -1091,6 +1091,8 @@ td.row-actions > div {
 .segmented button:hover { color: var(--ink); }
 .segmented button.active { background: var(--surface); color: var(--accent-dark); box-shadow: 0 2px 6px rgba(24, 49, 57, .08); }
 .head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mutation-form .agenda-kind-toggle { grid-column: 1 / -1; justify-self: start; }
+.appointment-detail-hero .commitment-title { font-size: 15px; }
 
 /* ===== Agenda: visão semanal e cadeiras ===== */
 .week-scroll { overflow: auto; padding: 0 0 6px; }
@@ -1119,6 +1121,7 @@ td.row-actions > div {
 }
 .day-column {
   position: relative;
+  cursor: pointer;
   height: calc(var(--slot-height) * var(--hour-count));
   border-right: 1px solid var(--slot-line);
   background: var(--slot-bg);
@@ -1214,6 +1217,13 @@ td.row-actions > div {
   cursor: default;
   pointer-events: none;
 }
+/* Compromisso (sem paciente): bloco neutro com borda tracejada, distinto dos tons de status. */
+.event.commitment {
+  background: var(--surface-alt);
+  border: 1px dashed var(--muted);
+  border-left: 3px solid var(--ink);
+  color: var(--ink);
+}
 .event.cancelled { opacity: .55; text-decoration: line-through; }
 .event.past { opacity: .42; }
 .event.past:hover, .event.past:focus-visible { opacity: 1; }
@@ -1230,6 +1240,7 @@ td.row-actions > div {
 .agenda-legend .legend-swatch.green { background: var(--success); }
 .agenda-legend .legend-swatch.red { background: var(--danger); }
 .agenda-legend .legend-swatch.gray { background: #9aabaf; }
+.agenda-legend .legend-swatch.commitment { background: var(--surface-alt); border: 1px dashed var(--ink); box-sizing: border-box; }
 .agenda-legend .legend-swatch.personal {
   background: repeating-linear-gradient(-45deg, #d7e0e3, #d7e0e3 3px, #6b7f86 3px, #6b7f86 6px);
 }

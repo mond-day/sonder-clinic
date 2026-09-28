@@ -177,6 +177,7 @@ export class ReportsService {
           where: {
             organizationId,
             ...clinicFilter,
+            kind: 'APPOINTMENT',
             startAt: { gte: period.from, lte: period.to },
           },
           select: {
@@ -191,7 +192,7 @@ export class ReportsService {
           startAt: item.startAt.toISOString(),
           status: item.status,
           category: item.category,
-          patient: item.patient.fullName,
+          patient: item.patient?.fullName ?? null,
           professional: item.professional.name,
         }));
         break;
@@ -201,6 +202,7 @@ export class ReportsService {
           where: {
             organizationId,
             ...clinicFilter,
+            kind: 'APPOINTMENT',
             status: { in: ['NO_SHOW', 'CANCELLED'] },
             startAt: { gte: period.from, lte: period.to },
           },
@@ -214,7 +216,7 @@ export class ReportsService {
           id: item.id,
           startAt: item.startAt.toISOString(),
           status: item.status,
-          patient: item.patient.fullName,
+          patient: item.patient?.fullName ?? null,
           reason: item.statusEvents[0]?.reasonText ?? null,
         }));
         break;

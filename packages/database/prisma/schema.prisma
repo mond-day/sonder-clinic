@@ -35,6 +35,12 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+/// APPOINTMENT = consulta com paciente; COMMITMENT = compromisso sem paciente (reunião, almoço, bloqueio).
+enum AppointmentKind {
+  APPOINTMENT
+  COMMITMENT
+}
+
 enum IntegrationProvider {
   NIBO
   ABACATEPAY
@@ -643,11 +649,15 @@ model Appointment {
   organizationId String            @db.Uuid
   clinicId       String            @db.Uuid
   unitId         String            @db.Uuid
-  patientId      String            @db.Uuid
+  /// Obrigatório quando kind = APPOINTMENT; nulo quando COMMITMENT (CHECK appointment_kind_patient_title).
+  patientId      String?           @db.Uuid
   professionalId String            @db.Uuid
   chairId        String?           @db.Uuid
   startAt        DateTime
   endAt          DateTime
+  kind                     AppointmentKind   @default(APPOINTMENT)
+  /// Título do compromisso (obrigatório quando kind = COMMITMENT).
+  title                    String?
   status                   AppointmentStatus @default(SCHEDULED)
   source                   String            @default("INTERNAL")
   notes                    String?
@@ -658,7 +668,7 @@ model Appointment {
   updatedAt                DateTime          @updatedAt
   clinic                   Clinic            @relation(fields: [clinicId], references: [id])
   unit                     Unit              @relation(fields: [unitId], references: [id])
-  patient                  Patient           @relation(fields: [patientId], references: [id])
+  patient                  Patient?          @relation(fields: [patientId], references: [id], onDelete: Restrict)
   professional             Professional      @relation(fields: [professionalId], references: [id])
   chair                    Chair?            @relation(fields: [chairId], references: [id])
   tags                     AppointmentTag[]

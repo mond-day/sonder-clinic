@@ -163,7 +163,7 @@ async function applyReply(
       },
     },
   });
-  const appointment = reminders.find((item) => phonesMatch(item.appointment.patient.primaryPhone, message.phone))?.appointment;
+  const appointment = reminders.find((item) => item.appointment.patient && phonesMatch(item.appointment.patient.primaryPhone, message.phone))?.appointment;
   if (!appointment) return { handled: false, reason: 'no-appointment' };
 
   const nextStatus = intent === 'CONFIRM' ? 'CONFIRMED' : 'CANCELLED';

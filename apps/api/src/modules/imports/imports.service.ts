@@ -46,7 +46,6 @@ const optionalUuid = z.string().uuid().or(z.literal('')).optional();
 const optionsSchema = z.object({
   clinicId: z.string().uuid('Clínica inválida.'),
   unitId: optionalUuid,
-  professionalId: optionalUuid,
 });
 
 const listSchema = z.object({
@@ -126,7 +125,6 @@ export class ImportsService {
     const options = {
       clinicId: parsedOptions.clinicId,
       unitId: parsedOptions.unitId || undefined,
-      professionalId: parsedOptions.professionalId || undefined,
     };
     const clinic = await prisma.clinic.findFirst({
       where: { id: options.clinicId, organizationId: auth.organizationId },

@@ -40,7 +40,8 @@ export function DashboardView() {
       api.get<RecordValue[]>(`/receivables?clinicId=${clinicId}`).catch(() => [] as RecordValue[]),
     ])
       .then(([nextAppointments, nextPatients, nextReceivables]) => {
-        setAppointments(list(nextAppointments));
+        // Compromissos (sem paciente) não são atendimentos.
+        setAppointments(list(nextAppointments).filter((item) => item.kind !== 'COMMITMENT'));
         setPatients(list(nextPatients));
         setReceivables(list(nextReceivables));
       })

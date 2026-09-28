@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Ban, Pencil, ShieldCheck } from 'lucide-react';
+import { Ban, Eye, EyeOff, Pencil, ShieldCheck } from 'lucide-react';
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
 import { list, presentationLabel, text, type RecordValue } from '@/lib/format';
@@ -64,6 +64,7 @@ export function UsersView() {
   const [formMessage, setFormMessage] = useState('');
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteMode, setInviteMode] = useState<'invite' | 'create'>('invite');
+  const [showInitialPassword, setShowInitialPassword] = useState(false);
   const [editUser, setEditUser] = useState<RecordValue | null>(null);
   const [roleModalOpen, setRoleModalOpen] = useState(false);
   const [roleEditorOpen, setRoleEditorOpen] = useState(false);
@@ -479,6 +480,7 @@ export function UsersView() {
               setInviteMode('invite');
               setFormError('');
               setFormMessage('');
+              setShowInitialPassword(false);
               setInviteOpen(true);
             }}
           >
@@ -539,7 +541,26 @@ export function UsersView() {
             </select>
           </label>
           {inviteMode === 'create' ? (
-            <label>Senha inicial<input name="password" type="password" minLength={10} required autoComplete="new-password" /></label>
+            <label>
+              Senha inicial
+              <div className="password-field">
+                <input
+                  name="password"
+                  type={showInitialPassword ? 'text' : 'password'}
+                  minLength={10}
+                  required
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label={showInitialPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                  onClick={() => setShowInitialPassword((value) => !value)}
+                >
+                  {showInitialPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </label>
           ) : null}
           {inviteMode === 'invite' && smtpConfigured === false ? (
             <p className="form-error span-2" role="alert">

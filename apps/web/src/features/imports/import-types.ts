@@ -47,7 +47,7 @@ export const IMPORT_KINDS: Record<ImportSlug, { label: string; title: string; pe
     label: 'Orçamentos',
     title: 'Importar orçamentos',
     permission: 'treatment.create',
-    hint: 'Cada orçamento vira um plano de tratamento (Aprovado ou Apresentado). Importe os pacientes antes.',
+    hint: 'Cada orçamento vira um plano de tratamento (Aprovado ou Apresentado). Importe os pacientes antes. O profissional de cada orçamento vem da coluna “Profissional” (ou “Dentista”/“Responsável”) e precisa estar cadastrado.',
   },
   treatments: {
     label: 'Tratamentos',

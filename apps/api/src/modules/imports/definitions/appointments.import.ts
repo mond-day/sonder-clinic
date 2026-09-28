@@ -79,7 +79,8 @@ export type AppointmentPlanned = AppointmentRow & {
 };
 
 export type ExistingAppointment = {
-  patientId: string;
+  /** Nulo em compromissos (sem paciente); ainda ocupam o horário do profissional. */
+  patientId: string | null;
   professionalId: string;
   startAt: Date;
   endAt: Date;
@@ -191,7 +192,7 @@ export function planAppointments(
       if (clash) {
         builder.error(rowNumber, clash.rowNumber
           ? `Conflito de horário com a linha ${clash.rowNumber} (mesmo profissional).`
-          : 'Conflito de horário com consulta já existente na agenda (mesmo profissional).', rowWarnings);
+          : 'Conflito de horário com consulta ou compromisso já existente na agenda (mesmo profissional).', rowWarnings);
         return;
       }
       activeByProfessional.set(professional.value.id, [...busy, { startAt, endAt, rowNumber }]);

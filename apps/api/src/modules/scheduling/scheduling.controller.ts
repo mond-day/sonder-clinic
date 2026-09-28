@@ -1,17 +1,20 @@
 import { Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { IsArray, IsDateString, IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsArray, IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { AuthGuard, type AuthenticatedRequest } from '../../common/auth.guard';
 import { resolveClinicScope } from '../../common/clinic-scope';
 import { PermissionsGuard, RequirePermissions } from '../../common/permissions.guard';
-import { SchedulingService } from './scheduling.service';
+import { APPOINTMENT_KINDS, SchedulingService, type AppointmentKind } from './scheduling.service';
 
 const appointmentStatuses = ['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW'] as const;
 
+/** Regras cruzadas (paciente × título por tipo) ficam no Zod do SchedulingService. */
 class CreateAppointmentDto {
+  @IsOptional() @IsIn(APPOINTMENT_KINDS) kind?: AppointmentKind;
   @IsUUID() clinicId!: string;
   @IsUUID() unitId!: string;
-  @IsUUID() patientId!: string;
+  @IsOptional() @IsUUID() patientId?: string;
+  @IsOptional() @IsString() @MaxLength(120) title?: string;
   @IsUUID() professionalId!: string;
   @IsOptional() @IsUUID() chairId?: string;
   @IsDateString() startAt!: string;

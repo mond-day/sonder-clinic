@@ -5,11 +5,13 @@ import {
   loadImportedKeys,
   loadNamedCatalog,
   loadPatientIndex,
+  loadProceduresByCode,
   loadProfessionals,
   ProfessionalResolver,
   type PatientIndex,
 } from '../import-lookups';
 import { parsedRow, PlanBuilder } from '../import-plan';
+import { isNonTreatment, PROCEDURE_ALIAS_CODES, procedureAliasCode } from '../procedure-aliases';
 import type { ImportContext, ImportDefinition, ImportPlan, ParsedRow, SheetRow, WrittenRecord } from '../import-types';
 import {
   cellText,
@@ -108,7 +110,10 @@ export function planTreatments(
   input: {
     patients: PatientIndex;
     professionals: ProfessionalResolver;
+    /** Catálogo por nome normalizado. */
     procedures: Map<string, { id: string; name: string }>;
+    /** Destinos da tabela de aliases, por `internalCode`. */
+    proceduresByCode: Map<string, { id: string; name: string }>;
     alreadyImported: Set<string>;
   },
 ): ImportPlan<TreatmentPlanned> {
@@ -116,9 +121,14 @@ export function planTreatments(
   const valid = PlanBuilder.valid(rows);
   const keys = treatmentNaturalKeys(valid.map((row) => row.data));
   const newProcedures = new Map<string, string>();
+  const aliasMappings = new Map<string, { label: string; from: string; to: string }>();
 
   valid.forEach(({ rowNumber, data, warnings }, index) => {
     const key = keys[index]!;
+    if (isNonTreatment(data.procedureName)) {
+      builder.skip(rowNumber, `“${data.procedureName}” não é um tratamento odontológico; linha ignorada.`);
+      return;
+    }
     if (input.alreadyImported.has(key)) {
       builder.skip(rowNumber, 'Já importado em lote anterior.');
       return;
@@ -131,7 +141,12 @@ export function planTreatments(
       return;
     }
     const procedureKey = normalizeName(data.procedureName);
-    const procedure = input.procedures.get(procedureKey);
+    const aliasCode = procedureAliasCode(data.procedureName);
+    const aliased = aliasCode ? input.proceduresByCode.get(aliasCode) : undefined;
+    const procedure = input.procedures.get(procedureKey) ?? aliased;
+    if (procedure && procedure === aliased && !aliasMappings.has(procedureKey)) {
+      aliasMappings.set(procedureKey, { label: 'Tratamento', from: data.procedureName, to: procedure.name });
+    }
     if (!procedure && !newProcedures.has(procedureKey)) newProcedures.set(procedureKey, data.procedureName);
     builder.create(rowNumber, key, {
       ...data,
@@ -144,6 +159,7 @@ export function planTreatments(
 
   builder.creation('Procedimentos que serão criados no catálogo', [...newProcedures.values()]);
   builder.mappings(input.professionals.mappings());
+  builder.mappings([...aliasMappings.values()]);
   builder.sample((item, rowNumber) => ({
     Linha: String(rowNumber),
     Paciente: item.patientName,
@@ -177,16 +193,18 @@ export const treatmentsImport: ImportDefinition<TreatmentRow, TreatmentPlanned> 
   parseRow: parseTreatmentRow,
   async plan(db, ctx, rows) {
     const keys = treatmentNaturalKeys(PlanBuilder.valid(rows).map((row) => row.data));
-    const [patients, professionals, procedures, imported] = await Promise.all([
+    const [patients, professionals, procedures, proceduresByCode, imported] = await Promise.all([
       loadPatientIndex(db, ctx.organizationId),
       loadProfessionals(db, ctx.organizationId, ctx.clinicId),
       loadNamedCatalog(db, 'procedure', ctx),
+      loadProceduresByCode(db, ctx.organizationId, PROCEDURE_ALIAS_CODES),
       loadImportedKeys(db, ctx.organizationId, 'TreatmentItem', keys),
     ]);
     return planTreatments(rows, {
       patients,
       professionals: new ProfessionalResolver(professionals),
       procedures,
+      proceduresByCode,
       alreadyImported: imported,
     });
   },

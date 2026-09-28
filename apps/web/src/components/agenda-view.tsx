@@ -1,6 +1,6 @@
 'use client';
 
-import { DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DragEvent, FormEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Plus, RefreshCw, Settings2, SlidersHorizontal } from 'lucide-react';
@@ -18,7 +18,7 @@ import {
 import { APPOINTMENT_DURATIONS, nearestDurationMinutes } from '@/lib/duration';
 import { appointmentEventTone, list, nested, statusTone, text, timeOnly, toDatetimeLocalValue, type RecordValue } from '@/lib/format';
 import { ImportButton } from '@/features/imports/import-button';
-import { ModuleActions } from './module-actions';
+import { ModuleActions, type AppointmentFormDefaults } from './module-actions';
 import { useSelection } from './selection-provider';
 import { MetricCard, PageHeader, Panel, StatusBadge } from './ui';
 import { Modal } from './modal';
@@ -149,10 +149,17 @@ function layoutColumnEvents(items: RecordValue[], gridStartHour: number, hourCou
   });
 }
 
-function snapMinutesFromY(clientY: number, columnTop: number, gridStartHour: number, hourCount: number) {
+/** `snap` = Math.round no arraste (horário mais próximo); Math.floor no clique (faixa de 15 min clicada). */
+function snapMinutesFromY(
+  clientY: number,
+  columnTop: number,
+  gridStartHour: number,
+  hourCount: number,
+  snap: (value: number) => number = Math.round,
+) {
   const y = Math.max(0, Math.min(clientY - columnTop, hourCount * SLOT_HEIGHT_PX - 1));
   const total = gridStartHour * 60 + (y / SLOT_HEIGHT_PX) * 60;
-  const snapped = Math.round(total / SNAP_MINUTES) * SNAP_MINUTES;
+  const snapped = snap(total / SNAP_MINUTES) * SNAP_MINUTES;
   const max = (gridStartHour + hourCount) * 60 - SNAP_MINUTES;
   const clamped = Math.min(Math.max(snapped, gridStartHour * 60), max);
   return { hour: Math.floor(clamped / 60), minutes: clamped % 60 };
@@ -177,6 +184,28 @@ const statusLegend: Array<{ status: string; tone: ReturnType<typeof appointmentE
   { status: 'CANCELLED', tone: 'red' },
   { status: 'NO_SHOW', tone: 'amber' },
 ];
+
+/** Espelha COMMITMENT_STATUSES da API: compromisso não passa por confirmação/check-in. */
+const commitmentStatusLabels: Record<string, string> = {
+  SCHEDULED: 'Agendado',
+  COMPLETED: 'Concluído',
+  CANCELLED: 'Cancelado',
+};
+
+function isCommitment(item: RecordValue) {
+  return item.kind === 'COMMITMENT';
+}
+
+function commitmentTitle(item: RecordValue) {
+  return text(item.title, 'Compromisso');
+}
+
+/** Identidade enviada no PUT/check-conflicts: consulta leva paciente; compromisso leva título. */
+function entryIdentity(item: RecordValue, title?: string) {
+  return isCommitment(item)
+    ? { kind: 'COMMITMENT', title: title ?? commitmentTitle(item) }
+    : { kind: 'APPOINTMENT', patientId: String(item.patientId) };
+}
 
 /** Antecedências de lembrete da consulta (sem o pedido de confirmação, que segue o modelo). */
 function reminderLeadMinutesOf(item: RecordValue): number[] {
@@ -263,6 +292,7 @@ export function AgendaView() {
   const [error, setError] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [formDefaults, setFormDefaults] = useState<AppointmentFormDefaults | undefined>();
   const [selectedAppointment, setSelectedAppointment] = useState<RecordValue | null>(null);
   const [editingAppointment, setEditingAppointment] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -430,6 +460,7 @@ export function AgendaView() {
 
   useEffect(() => {
     if (searchParams.get('new') === '1' || searchParams.get('patientId')) {
+      setFormDefaults(undefined);
       setFormOpen(true);
     }
   }, [searchParams]);
@@ -533,9 +564,12 @@ export function AgendaView() {
     return longDate.format(reference);
   }, [mode, reference]);
 
-  const confirmed = scoped.filter((item) => item.status === 'CONFIRMED').length;
-  const waiting = scoped.filter((item) => item.status === 'CHECKED_IN').length;
-  const cancelled = scoped.filter((item) => ['CANCELLED', 'NO_SHOW'].includes(String(item.status))).length;
+  // Métricas de atendimento contam só consultas; compromissos apenas ocupam a grade.
+  const scopedVisits = scoped.filter((item) => !isCommitment(item));
+  const visibleVisits = visible.filter((item) => !isCommitment(item)).length;
+  const confirmed = scopedVisits.filter((item) => item.status === 'CONFIRMED').length;
+  const waiting = scopedVisits.filter((item) => item.status === 'CHECKED_IN').length;
+  const cancelled = scopedVisits.filter((item) => ['CANCELLED', 'NO_SHOW'].includes(String(item.status))).length;
 
   function shift(direction: number) {
     setReference((current) => addDays(current, mode === 'week' ? direction * 7 : direction));
@@ -602,6 +636,7 @@ export function AgendaView() {
     chairId?: string | null;
     status?: string;
     notes?: string;
+    title?: string;
     tagIds?: string[];
     reminderEnabled?: boolean;
     reminderLeadMinutes?: number | number[];
@@ -611,7 +646,7 @@ export function AgendaView() {
     await api.put(`/appointments/${String(item.id)}`, {
       clinicId: appointmentClinicId(item),
       unitId: patch.unitId ?? String(item.unitId),
-      patientId: String(item.patientId),
+      ...entryIdentity(item, patch.title),
       professionalId: patch.professionalId ?? String(item.professionalId),
       chairId: patch.chairId === null
         ? undefined
@@ -654,7 +689,7 @@ export function AgendaView() {
       const payload = {
         clinicId: appointmentClinicId(item),
         unitId: column.unitId ?? String(item.unitId),
-        patientId: String(item.patientId),
+        ...entryIdentity(item),
         professionalId: column.professionalId ?? String(item.professionalId),
         chairId: column.chairId ?? (String(item.chairId ?? '') || undefined),
         startAt: nextStart.toISOString(),
@@ -685,6 +720,22 @@ export function AgendaView() {
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível remarcar por arraste.');
     }
+  }
+
+  function openNewAppointmentAt(
+    column: { date?: Date; professionalId?: string; chairId?: string; unitId?: string },
+    hour: number,
+    minutes: number,
+  ) {
+    const start = new Date(column.date ?? reference);
+    start.setHours(hour, minutes, 0, 0);
+    setFormDefaults({
+      startAt: toDatetimeLocalValue(start),
+      professionalId: column.professionalId ?? (professionalFilter || undefined),
+      unitId: column.unitId ?? (unitFilter || undefined),
+      chairId: column.chairId,
+    });
+    setFormOpen(true);
   }
 
   const filterBar = filtersOpen ? (
@@ -784,13 +835,18 @@ export function AgendaView() {
     const unitId = String(data.get('unitId') || editUnitId || selectedAppointment.unitId);
     const chairId = String(data.get('chairId') ?? editChairId ?? '') || undefined;
     const professionalId = String(data.get('professionalId'));
+    const title = isCommitment(selectedAppointment) ? String(data.get('title') ?? '').trim() : undefined;
+    if (title === '') {
+      setFormError('Informe o título do compromisso.');
+      return;
+    }
     setSaving(true);
     setFormError('');
     try {
       const payload = {
         clinicId: appointmentClinicId(selectedAppointment),
         unitId,
-        patientId: String(selectedAppointment.patientId),
+        ...entryIdentity(selectedAppointment, title),
         professionalId,
         chairId,
         startAt,
@@ -819,6 +875,7 @@ export function AgendaView() {
         endAt,
         status: String(data.get('status')),
         notes: String(data.get('notes') ?? '').trim() || undefined,
+        title,
         tagIds: data.getAll('tagIds').map(String).filter(Boolean),
         reminderEnabled: data.get('reminderEnabled') === 'on',
         reminderLeadMinutes: reminderLeads.length ? reminderLeads : undefined,
@@ -936,6 +993,8 @@ export function AgendaView() {
     </div>
   ) : null;
 
+  const selectedIsCommitment = Boolean(selectedAppointment && isCommitment(selectedAppointment));
+
   return (
     <>
       <PageHeader
@@ -960,7 +1019,10 @@ export function AgendaView() {
               className="button primary"
               type="button"
               aria-expanded={formOpen}
-              onClick={() => setFormOpen(true)}
+              onClick={() => {
+                setFormDefaults(undefined);
+                setFormOpen(true);
+              }}
             >
               <Plus size={15} />Agendar
             </button>
@@ -969,11 +1031,11 @@ export function AgendaView() {
       />
       {error && <div className="secure-notice form-error" role="alert">{error}</div>}
       <section className="stats">
-        <MetricCard label="Atendimentos no período" value={visible.length} meta={`${confirmed} confirmados`} />
+        <MetricCard label="Atendimentos no período" value={visibleVisits} meta={`${confirmed} confirmados`} />
         <MetricCard label="Na clínica agora" value={waiting} meta="Check-in realizado" />
         <MetricCard
           label="Confirmações pendentes"
-          value={Math.max(0, visible.length - confirmed - cancelled)}
+          value={Math.max(0, visibleVisits - confirmed - cancelled)}
           meta="Acompanhar contato"
           tone="amber"
         />
@@ -984,7 +1046,7 @@ export function AgendaView() {
           tone={cancelled ? 'red' : 'green'}
         />
       </section>
-      <Modal open={formOpen} title="Novo agendamento" description="Crie a consulta sem sair da agenda." onClose={() => setFormOpen(false)} confirmOnClose size="large">
+      <Modal open={formOpen} title="Novo agendamento" description="Crie uma consulta ou um compromisso sem sair da agenda." onClose={() => setFormOpen(false)} confirmOnClose size="large">
         <ModuleActions
           module="agenda"
           clinicId={clinicId}
@@ -992,14 +1054,17 @@ export function AgendaView() {
           professionals={professionals}
           patients={patients}
           selectedPatientId={queryPatientId}
+          appointmentDefaults={formDefaults}
           onPatientChange={() => undefined}
           onSaved={load}
         />
       </Modal>
       <Modal
         open={Boolean(selectedAppointment)}
-        title="Detalhes do agendamento"
-        description={editingAppointment ? 'Edite horário, profissional, etiquetas e lembretes.' : 'Visualização do agendamento. Status pode ser alterado a qualquer momento.'}
+        title={selectedIsCommitment ? 'Detalhes do compromisso' : 'Detalhes do agendamento'}
+        description={selectedIsCommitment
+          ? (editingAppointment ? 'Edite título, horário e profissional.' : 'Compromisso sem paciente: ocupa o horário do profissional na agenda.')
+          : (editingAppointment ? 'Edite horário, profissional, etiquetas e lembretes.' : 'Visualização do agendamento. Status pode ser alterado a qualquer momento.')}
         onClose={() => {
           setSelectedAppointment(null);
           setFormError('');
@@ -1013,12 +1078,19 @@ export function AgendaView() {
         {selectedAppointment ? (
           <form className="mutation-form appointment-detail-form" onSubmit={updateAppointment}>
             <div className="appointment-detail-hero span-2">
-              <div>
-                <small>Paciente</small>
-                <Link className="clickable-name" href={`/pacientes/${String(selectedAppointment.patientId)}`}>
-                  {text(nested(selectedAppointment, 'patient').fullName)}
-                </Link>
-              </div>
+              {selectedIsCommitment ? (
+                <div>
+                  <small>Compromisso</small>
+                  <strong className="commitment-title">{commitmentTitle(selectedAppointment)}</strong>
+                </div>
+              ) : (
+                <div>
+                  <small>Paciente</small>
+                  <Link className="clickable-name" href={`/pacientes/${String(selectedAppointment.patientId)}`}>
+                    {text(nested(selectedAppointment, 'patient').fullName)}
+                  </Link>
+                </div>
+              )}
               <label className="status-inline">
                 Status
                 <select
@@ -1031,7 +1103,7 @@ export function AgendaView() {
                     void updateAppointmentStatus(next);
                   }}
                 >
-                  {Object.entries(statusLabels).map(([value, label]) => (
+                  {Object.entries(selectedIsCommitment ? commitmentStatusLabels : statusLabels).map(([value, label]) => (
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
@@ -1040,6 +1112,9 @@ export function AgendaView() {
 
             {editingAppointment ? (
               <>
+                {selectedIsCommitment ? (
+                  <label className="span-2">Título<input name="title" required maxLength={120} defaultValue={commitmentTitle(selectedAppointment)} /></label>
+                ) : null}
                 <label>Início<input name="startAt" type="datetime-local" required defaultValue={toDatetimeLocalValue(selectedAppointment.startAt)} /></label>
                 <label>Duração (min)
                   <select
@@ -1092,20 +1167,24 @@ export function AgendaView() {
                   options={tags.map((tag) => ({ value: String(tag.id), label: text(tag.name), color: text(tag.color, undefined) }))}
                   placeholder="Selecionar etiquetas"
                 />
-                <label className="check-field span-2"><input name="reminderEnabled" type="checkbox" defaultChecked={list(selectedAppointment.reminders).length > 0} /> Lembrete automático via WhatsApp</label>
-                <MultiSelect
-                  name="reminderLeadMinutes"
-                  label="Antecedência"
-                  defaultValues={reminderLeadMinutesOf(selectedAppointment).map(String)}
-                  options={reminderLeadOptions(reminderLeadMinutesOf(selectedAppointment))}
-                  placeholder="Padrão do modelo de Lembrete"
-                />
-                <p className="field-hint span-2">
-                  Sem antecedência escolhida, vale a do modelo de Lembrete (Configurações → Comunicação). O pedido de confirmação segue o modelo de Confirmação.
-                </p>
-                {list(selectedAppointment.reminders).some((item) => item.status === 'DISABLED') ? (
-                  <p className="form-error span-2">WhatsApp ainda não está configurado: o lembrete foi salvo, mas não será enviado até a integração estar ativa.</p>
-                ) : null}
+                {selectedIsCommitment ? null : (
+                  <>
+                    <label className="check-field span-2"><input name="reminderEnabled" type="checkbox" defaultChecked={list(selectedAppointment.reminders).length > 0} /> Lembrete automático via WhatsApp</label>
+                    <MultiSelect
+                      name="reminderLeadMinutes"
+                      label="Antecedência"
+                      defaultValues={reminderLeadMinutesOf(selectedAppointment).map(String)}
+                      options={reminderLeadOptions(reminderLeadMinutesOf(selectedAppointment))}
+                      placeholder="Padrão do modelo de Lembrete"
+                    />
+                    <p className="field-hint span-2">
+                      Sem antecedência escolhida, vale a do modelo de Lembrete (Configurações → Comunicação). O pedido de confirmação segue o modelo de Confirmação.
+                    </p>
+                    {list(selectedAppointment.reminders).some((item) => item.status === 'DISABLED') ? (
+                      <p className="form-error span-2">WhatsApp ainda não está configurado: o lembrete foi salvo, mas não será enviado até a integração estar ativa.</p>
+                    ) : null}
+                  </>
+                )}
               </>
             ) : (
               <div className="appointment-readonly span-2">
@@ -1147,7 +1226,7 @@ export function AgendaView() {
               <button className="button primary" disabled={saving}>
                 {editingAppointment
                   ? (saving ? 'Salvando…' : (acknowledgePersonalWarning ? 'Salvar mesmo assim' : 'Salvar alterações'))
-                  : 'Editar agendamento'}
+                  : (selectedIsCommitment ? 'Editar compromisso' : 'Editar agendamento')}
               </button>
             </div>
             {personalWarning ? (
@@ -1299,12 +1378,26 @@ export function AgendaView() {
                     void dropAppointment(item, column, hour, minutes);
                   };
 
+                  const onColumnClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+                    if (event.target instanceof Element && event.target.closest('.event')) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const { hour, minutes } = snapMinutesFromY(
+                      event.clientY,
+                      rect.top,
+                      gridStartHour,
+                      hourCount,
+                      Math.floor,
+                    );
+                    openNewAppointmentAt(column, hour, minutes);
+                  };
+
                   return (
                     <div
                       key={column.key}
                       className={`day-column ${column.active ? 'active' : ''} ${outsideDay ? 'outside-hours' : ''}`.trim()}
                       onDragOver={onColumnDragOver}
                       onDrop={onColumnDrop}
+                      onClick={onColumnClick}
                     >
                       <div className="day-slots">
                         {hours.map((hour) => {
@@ -1362,14 +1455,17 @@ export function AgendaView() {
                           const isCancelled = ['CANCELLED', 'NO_SHOW'].includes(status);
                           const isPast = prefs.dimPast && isPastAppointment(item.startAt);
                           const statusLabel = statusLabels[status] ?? text(status);
-                          const patientName = text(patient.fullName, 'Paciente');
+                          const commitment = isCommitment(item);
+                          const headline = commitment ? commitmentTitle(item) : text(patient.fullName, 'Paciente');
                           const professionalName = text(professional.name, 'Profissional');
-                          const label = `${timeOnly(item.startAt)} ${patientName} · ${professionalName} · ${statusLabel}`;
+                          const label = commitment
+                            ? `${timeOnly(item.startAt)} Compromisso: ${headline} · ${professionalName} · ${statusLabel}`
+                            : `${timeOnly(item.startAt)} ${headline} · ${professionalName} · ${statusLabel}`;
                           return (
                             <button
                               key={String(item.id)}
                               type="button"
-                              className={`event ${tone} ${isCancelled ? 'cancelled' : ''} ${isPast ? 'past' : ''} ${isCompact ? 'event-compact' : ''} ${isTiny ? 'event-tiny' : ''}`.trim()}
+                              className={`event ${commitment ? 'commitment' : tone} ${isCancelled ? 'cancelled' : ''} ${isPast ? 'past' : ''} ${isCompact ? 'event-compact' : ''} ${isTiny ? 'event-tiny' : ''}`.trim()}
                               title={label}
                               aria-label={label}
                               draggable={!isCancelled}
@@ -1414,11 +1510,11 @@ export function AgendaView() {
                             >
                               <small>
                                 {isCompact
-                                  ? `${timeOnly(item.startAt)} · ${patientName}`
-                                  : `${timeOnly(item.startAt)} · ${statusLabel}`}
+                                  ? `${timeOnly(item.startAt)} · ${headline}`
+                                  : `${timeOnly(item.startAt)} · ${commitment ? 'Compromisso' : statusLabel}`}
                               </small>
-                              <strong className={isCompact ? 'event-secondary' : undefined}>{patientName}</strong>
-                              <span className="event-extra">{isCompact ? `${statusLabel} · ${professionalName}` : professionalName}</span>
+                              <strong className={isCompact ? 'event-secondary' : undefined}>{headline}</strong>
+                              <span className="event-extra">{isCompact ? `${commitment ? 'Compromisso' : statusLabel} · ${professionalName}` : professionalName}</span>
                             </button>
                           );
                         })}
@@ -1437,6 +1533,10 @@ export function AgendaView() {
               {statusLabels[status]}
             </span>
           ))}
+          <span>
+            <i className="legend-swatch commitment" />
+            Compromisso
+          </span>
           {showPersonalCalendar ? (
             <span>
               <i className="legend-swatch personal" />
@@ -1481,20 +1581,29 @@ export function AgendaView() {
                   const professional = nested(item, 'professional');
                   const chair = nested(item, 'chair');
                   const isPast = prefs.dimPast && isPastAppointment(item.startAt);
+                  const commitment = isCommitment(item);
                   return (
                     <tr key={String(item.id)} className={isPast ? 'is-past' : undefined}>
                       <td>{new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(new Date(String(item.startAt)))} {timeOnly(item.startAt)}</td>
-                      <td>{patient.id ? <Link className="clickable-name" href={`/pacientes/${String(patient.id)}`}>{text(patient.fullName, 'Paciente')}</Link> : <strong>{text(patient.fullName, 'Paciente')}</strong>}</td>
+                      <td>
+                        {commitment ? (
+                          <><StatusBadge tone="gray">Compromisso</StatusBadge> <strong>{commitmentTitle(item)}</strong></>
+                        ) : patient.id ? (
+                          <Link className="clickable-name" href={`/pacientes/${String(patient.id)}`}>{text(patient.fullName, 'Paciente')}</Link>
+                        ) : (
+                          <strong>{text(patient.fullName, 'Paciente')}</strong>
+                        )}
+                      </td>
                       <td>{text(professional.name)}</td>
                       <td>{text(chair.name)}</td>
-                      <td>{text(item.notes, 'Consulta')}</td>
+                      <td>{text(item.notes, commitment ? 'Compromisso' : 'Consulta')}</td>
                       <td>
                         <StatusBadge tone={statusTone(item.status)}>
                           {statusLabels[String(item.status)] ?? text(item.status)}
                         </StatusBadge>
                       </td>
                       <td className="row-actions">
-                        {patient.id ? (
+                        {patient.id || commitment ? (
                           <button
                             className="button small"
                             type="button"

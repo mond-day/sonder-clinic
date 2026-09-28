@@ -3455,7 +3455,7 @@ export class OperationsService {
       inactivePatients, pendingReturns, treatments, payments,
     ] = await Promise.all([
       prisma.appointment.findMany({
-        where: { organizationId, ...clinicWhere, startAt: dateRange },
+        where: { organizationId, ...clinicWhere, kind: 'APPOINTMENT', startAt: dateRange },
         select: { status: true, startAt: true, endAt: true, professional: { select: { id: true, name: true } } },
       }),
       prisma.receivable.groupBy({

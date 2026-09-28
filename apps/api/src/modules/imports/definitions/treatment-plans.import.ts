@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { loadImportedKeys, loadPatientIndex, loadProfessionals, type PatientIndex } from '../import-lookups';
+import {
+  loadImportedKeys,
+  loadPatientIndex,
+  loadProfessionals,
+  ProfessionalResolver,
+  type PatientIndex,
+} from '../import-lookups';
 import { parsedRow, PlanBuilder } from '../import-plan';
 import type { ImportContext, ImportDefinition, ImportPlan, ParsedRow, SheetRow } from '../import-types';
 import {
@@ -25,12 +31,18 @@ export const PLAN_COLUMNS = {
   total: 'Valor Total',
 } as const;
 
+/** Cabeçalhos aceitos para o profissional de cada orçamento; comparados sem acento, caixa ou espaços extras. */
+export const PLAN_PROFESSIONAL_HEADERS = ['Profissional', 'Dentista', 'Responsável', 'Profissional Responsável', 'Dentista Responsável'] as const;
+const PROFESSIONAL_HEADER_KEYS = new Set<string>(PLAN_PROFESSIONAL_HEADERS.map(normalizeName));
+const MISSING_PROFESSIONAL_COLUMN = 'A planilha não tem coluna de profissional (Profissional, Dentista ou Responsável).';
+
 const STATUS_MAP: Record<string, 'APPROVED' | 'PRESENTED'> = { aprovado: 'APPROVED', pendente: 'PRESENTED' };
 const TITLE_MAX = 120;
 
 const planRowSchema = z.object({
   code: z.string().min(1, 'Código do orçamento ausente.').max(60),
   patientName: z.string().min(3, 'Paciente ausente.').max(200),
+  professionalName: z.string().min(3, 'Profissional ausente ou inválido.').max(200),
   phone: z.string().optional(),
   description: z.string().max(5000).optional(),
   status: z.enum(['APPROVED', 'PRESENTED']),
@@ -42,9 +54,20 @@ const planRowSchema = z.object({
 export type PlanRow = z.infer<typeof planRowSchema>;
 export type PlanPlanned = PlanRow & { patientId: string; professionalId: string; title: string; notes: string };
 
+function professionalHeader(cells: SheetRow['cells']): string | undefined {
+  return Object.keys(cells).find((header) => PROFESSIONAL_HEADER_KEYS.has(normalizeName(header)));
+}
+
 export function parsePlanRow(row: SheetRow, ctx: Pick<ImportContext, 'timezone'>): ParsedRow<PlanRow> {
   const cells = row.cells;
   const errors: string[] = [];
+  const reportedFields: string[] = [];
+  const header = professionalHeader(cells);
+  const professionalName = header ? cellText(cells[header]) : '';
+  if (!header || !professionalName) {
+    errors.push(header ? `Profissional não informado na coluna “${header}”.` : MISSING_PROFESSIONAL_COLUMN);
+    reportedFields.push('professionalName');
+  }
   const statusText = cellText(cells[PLAN_COLUMNS.status]);
   const status = STATUS_MAP[normalizeName(statusText)];
   if (!status) errors.push(statusText ? `Status “${statusText}” não reconhecido (use Aprovado ou Pendente).` : 'Status ausente.');
@@ -53,13 +76,14 @@ export function parsePlanRow(row: SheetRow, ctx: Pick<ImportContext, 'timezone'>
   return parsedRow(row.rowNumber, planRowSchema, {
     code: cellText(cells[PLAN_COLUMNS.code]),
     patientName: cellText(cells[PLAN_COLUMNS.patient]),
+    professionalName,
     phone: normalizePhone(cells[PLAN_COLUMNS.mobile]) ?? undefined,
     description: optionalText(cells[PLAN_COLUMNS.description]),
     status: status ?? 'PRESENTED',
     createdAt: created ? zonedToUtc(created, ctx.timezone) : undefined,
     approvedAtLabel: approved ? formatDay(approved) : undefined,
     total: parseMoney(cells[PLAN_COLUMNS.total]) ?? undefined,
-  }, errors, []);
+  }, errors, [], reportedFields);
 }
 
 function planText(row: PlanRow): { title: string; notes: string } {
@@ -79,10 +103,9 @@ export const planNaturalKey = (row: PlanRow) => `code:${row.code}`;
 
 export function planTreatmentPlans(
   rows: ParsedRow<PlanRow>[],
-  input: { professionalId: string | null; professionalError?: string; patients: PatientIndex; alreadyImported: Set<string> },
+  input: { professionals: ProfessionalResolver; patients: PatientIndex; alreadyImported: Set<string> },
 ): ImportPlan<PlanPlanned> {
   const builder = new PlanBuilder<PlanPlanned>(rows);
-  if (!input.professionalId) builder.blocking(input.professionalError ?? 'Selecione o profissional responsável pelos orçamentos.');
   const seen = new Map<string, number>();
   for (const { rowNumber, data, warnings } of PlanBuilder.valid(rows)) {
     const key = planNaturalKey(data);
@@ -97,21 +120,25 @@ export function planTreatmentPlans(
       continue;
     }
     const patient = input.patients.resolve({ name: data.patientName, phone: data.phone });
-    if (!patient.ok) {
-      builder.error(rowNumber, patient.error, warnings);
+    const professional = input.professionals.resolve(data.professionalName);
+    if (!patient.ok || !professional.ok) {
+      const failures = [patient, professional].flatMap((result) => (result.ok ? [] : [result.error]));
+      builder.error(rowNumber, failures.join(' '), warnings);
       continue;
     }
     builder.create(rowNumber, key, {
       ...data,
       ...planText(data),
       patientId: patient.value.id,
-      professionalId: input.professionalId ?? '',
+      professionalId: professional.value.id,
     }, warnings);
   }
+  builder.mappings(input.professionals.mappings());
   builder.sample((item, rowNumber) => ({
     Linha: String(rowNumber),
     Código: item.code,
     Paciente: item.patientName,
+    Profissional: item.professionalName,
     Título: item.title,
     Status: item.status === 'APPROVED' ? 'Aprovado' : 'Apresentado',
     Total: `R$ ${item.total.replace('.', ',')}`,
@@ -125,7 +152,7 @@ export const treatmentPlansImport: ImportDefinition<PlanRow, PlanPlanned> = {
   permission: 'treatment.create',
   rowEntity: 'TreatmentPlan',
   requiredColumns: [PLAN_COLUMNS.code, PLAN_COLUMNS.patient, PLAN_COLUMNS.status, PLAN_COLUMNS.total, PLAN_COLUMNS.createdAt],
-  optionalColumns: Object.values(PLAN_COLUMNS),
+  optionalColumns: [...Object.values(PLAN_COLUMNS), ...PLAN_PROFESSIONAL_HEADERS],
   parseRow: parsePlanRow,
   async plan(db, ctx, rows) {
     const keys = PlanBuilder.valid(rows).map((row) => planNaturalKey(row.data));
@@ -134,18 +161,11 @@ export const treatmentPlansImport: ImportDefinition<PlanRow, PlanPlanned> = {
       loadImportedKeys(db, ctx.organizationId, 'TreatmentPlan', keys),
       loadProfessionals(db, ctx.organizationId, ctx.clinicId),
     ]);
-    const chosen = professionals.find((item) => item.id === ctx.options.professionalId);
-    const professionalError = !ctx.options.professionalId
-      ? 'Selecione o profissional responsável pelos orçamentos (a planilha não tem essa coluna).'
-      : !chosen?.linkedToClinic ? 'Profissional selecionado não está ativo nesta clínica.' : undefined;
-    const plan = planTreatmentPlans(rows, {
-      professionalId: professionalError ? null : chosen!.id,
-      professionalError,
+    return planTreatmentPlans(rows, {
+      professionals: new ProfessionalResolver(professionals),
       patients,
       alreadyImported: imported,
     });
-    if (chosen && !professionalError) plan.mappings.push({ label: 'Profissional de todos os orçamentos', from: '—', to: chosen.name });
-    return plan;
   },
   async write(tx, ctx, plan) {
     const plans = plan.items.map((item) => ({ id: randomUUID(), ...item }));

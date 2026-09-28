@@ -48,7 +48,7 @@ describe('PublicApiService isolamento', () => {
   it('força clinicId da chave na listagem', async () => {
     scheduling.list.mockResolvedValue([]);
     await service.listAppointments(orgKey({ clinicId: 'clinic-a' }), '2026-01-01', '2026-01-02', 'clinic-a');
-    expect(scheduling.list).toHaveBeenCalledWith('org-1', '2026-01-01', '2026-01-02', 'clinic-a');
+    expect(scheduling.list).toHaveBeenCalledWith('org-1', '2026-01-01', '2026-01-02', 'clinic-a', undefined, 'APPOINTMENT');
   });
 
   it('rejeita clinicId diferente do escopo da chave', () => {

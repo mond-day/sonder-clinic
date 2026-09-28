@@ -45,12 +45,13 @@ export class PublicApiService {
     };
   }
 
+  // A API pública expõe só consultas (com paciente); compromissos internos ficam de fora do contrato.
   listAppointments(auth: PublicApiAuth, from?: string, to?: string, clinicId?: string) {
-    return this.scheduling.list(auth.organizationId, from, to, this.scopedClinicId(auth, clinicId));
+    return this.scheduling.list(auth.organizationId, from, to, this.scopedClinicId(auth, clinicId), undefined, 'APPOINTMENT');
   }
 
   async getAppointment(auth: PublicApiAuth, id: string) {
-    const appointment = await this.scheduling.find(auth.organizationId, id);
+    const appointment = await this.scheduling.find(auth.organizationId, id, undefined, 'APPOINTMENT');
     this.assertClinicAccess(auth, appointment.clinicId);
     return appointment;
   }
@@ -59,6 +60,7 @@ export class PublicApiService {
     const clinicId = this.requireClinicId(auth, input.clinicId);
     const created = await this.scheduling.create(auth.organizationId, {
       ...input,
+      kind: 'APPOINTMENT',
       clinicId,
       source: 'API',
     });
@@ -98,7 +100,7 @@ export class PublicApiService {
     const merged: AppointmentInput = {
       clinicId,
       unitId: input.unitId ?? existing.unitId,
-      patientId: input.patientId ?? existing.patientId,
+      patientId: input.patientId ?? existing.patientId ?? undefined,
       professionalId: input.professionalId ?? existing.professionalId,
       chairId: input.chairId === undefined ? existing.chairId ?? undefined : input.chairId,
       startAt: input.startAt ?? existing.startAt.toISOString(),

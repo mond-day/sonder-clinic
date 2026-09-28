@@ -301,49 +301,16 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
       create: { id: seedId(`agenda-tag:${key}`), organizationId, clinicId, name, color },
     }));
   }
-  const appointmentIds: string[] = [];
+  const weekAppointmentIds: string[] = [];
+  const nextWeekAppointmentIds: string[] = [];
   const appointmentProcedures = ['Profilaxia', 'Manutenção ortodôntica', 'Avaliação estética', 'Restauração em resina', 'Coroa cerâmica', 'Implante unitário', 'Clareamento dental'];
-  for (let day = 0; day < 5; day += 1) {
-    for (let slot = 0; slot < 7; slot += 1) {
-      const startAt = relativeTo(monday, day, 8 + slot + (slot > 3 ? 1 : 0), slot % 2 ? 30 : 0);
-      const endAt = new Date(startAt.getTime() + 45 * 60_000);
-      const isToday = startAt.toDateString() === new Date().toDateString();
-      const isPast = startAt < new Date() && !isToday;
-      let status: Prisma.AppointmentCreateInput['status'] = isPast ? 'COMPLETED' : 'CONFIRMED';
-      if (isToday && [1, 3].includes(slot)) status = 'CHECKED_IN';
-      if (day === 1 && slot === 5) status = 'NO_SHOW';
-      if (day === 3 && slot === 6) status = 'CANCELLED';
-      const id = seedId(`appointment:week:${day}:${slot}`);
-      appointmentIds.push(id);
-      await prisma.appointment.upsert({
-        where: { id },
-        update: {
-          startAt, endAt, status, notes: appointmentProcedures[slot],
-          category: ['Preventivo', 'Ortodontia', 'Estética', 'Dentística', 'Prótese', 'Implantodontia', 'Estética'][slot],
-          tags: { deleteMany: {}, create: [{ tagId: agendaTags[slot % agendaTags.length]!.id }] },
-        },
-        create: {
-          id,
-          organizationId,
-          clinicId,
-          unitId: context.unit.id,
-          patientId: patients[(day * 7 + slot) % patients.length]!.id,
-          professionalId: professionals[slot % professionals.length]!.id,
-          chairId: mainChairs[slot % mainChairs.length]!.id,
-          startAt,
-          endAt,
-          status,
-          notes: appointmentProcedures[slot],
-          category: ['Preventivo', 'Ortodontia', 'Estética', 'Dentística', 'Prótese', 'Implantodontia', 'Estética'][slot],
-          tags: { create: [{ tagId: agendaTags[slot % agendaTags.length]!.id }] },
-        },
-      });
-    }
-  }
+  // "Próxima semana" precisa ser gravada antes da semana atual: um seed rodado na semana anterior
+  // deixou essas linhas na segunda-feira de hoje, e elas bloqueariam a grade da semana
+  // (exclusion constraint appointment_professional_no_overlap / appointment_chair_no_overlap).
   for (let slot = 0; slot < 5; slot += 1) {
     const startAt = relativeTo(monday, 7, 9 + slot * 2);
     const id = seedId(`appointment:next-week:${slot}`);
-    appointmentIds.push(id);
+    nextWeekAppointmentIds.push(id);
     await prisma.appointment.upsert({
       where: { id },
       update: { startAt, endAt: new Date(startAt.getTime() + 60 * 60_000) },
@@ -375,6 +342,44 @@ export async function seedRichData(prisma: PrismaClient, context: SeedContext): 
       },
     });
   }
+  for (let day = 0; day < 5; day += 1) {
+    for (let slot = 0; slot < 7; slot += 1) {
+      const startAt = relativeTo(monday, day, 8 + slot + (slot > 3 ? 1 : 0), slot % 2 ? 30 : 0);
+      const endAt = new Date(startAt.getTime() + 45 * 60_000);
+      const isToday = startAt.toDateString() === new Date().toDateString();
+      const isPast = startAt < new Date() && !isToday;
+      let status: Prisma.AppointmentCreateInput['status'] = isPast ? 'COMPLETED' : 'CONFIRMED';
+      if (isToday && [1, 3].includes(slot)) status = 'CHECKED_IN';
+      if (day === 1 && slot === 5) status = 'NO_SHOW';
+      if (day === 3 && slot === 6) status = 'CANCELLED';
+      const id = seedId(`appointment:week:${day}:${slot}`);
+      weekAppointmentIds.push(id);
+      await prisma.appointment.upsert({
+        where: { id },
+        update: {
+          startAt, endAt, status, notes: appointmentProcedures[slot],
+          category: ['Preventivo', 'Ortodontia', 'Estética', 'Dentística', 'Prótese', 'Implantodontia', 'Estética'][slot],
+          tags: { deleteMany: {}, create: [{ tagId: agendaTags[slot % agendaTags.length]!.id }] },
+        },
+        create: {
+          id,
+          organizationId,
+          clinicId,
+          unitId: context.unit.id,
+          patientId: patients[(day * 7 + slot) % patients.length]!.id,
+          professionalId: professionals[slot % professionals.length]!.id,
+          chairId: mainChairs[slot % mainChairs.length]!.id,
+          startAt,
+          endAt,
+          status,
+          notes: appointmentProcedures[slot],
+          category: ['Preventivo', 'Ortodontia', 'Estética', 'Dentística', 'Prótese', 'Implantodontia', 'Estética'][slot],
+          tags: { create: [{ tagId: agendaTags[slot % agendaTags.length]!.id }] },
+        },
+      });
+    }
+  }
+  const appointmentIds = [...weekAppointmentIds, ...nextWeekAppointmentIds];
 
   const returnReasons = ['Manutenção ortodôntica', 'Revisão de implante', 'Profilaxia semestral', 'Avaliação de prótese'];
   for (let index = 0; index < 22; index += 1) {

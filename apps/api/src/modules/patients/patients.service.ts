@@ -417,6 +417,7 @@ export class PatientsService {
             where: {
               organizationId,
               clinicId,
+              kind: 'APPOINTMENT',
               OR: [
                 { notes: { contains: q, mode: 'insensitive' } },
                 { patient: { fullName: { contains: q, mode: 'insensitive' } } },
