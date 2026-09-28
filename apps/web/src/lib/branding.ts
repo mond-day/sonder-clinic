@@ -4,6 +4,7 @@ export type ClinicBranding = {
   name?: string;
   subtitle?: string;
   logoUrl?: string;
+  faviconUrl?: string;
   primaryColor?: string;
   source?: string;
 };

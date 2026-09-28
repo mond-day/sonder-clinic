@@ -376,6 +376,9 @@ button.brand-mark:hover { background: #fff; }
 .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, .72fr); gap: 14px; align-items: start; }
 .dashboard-stack, .side-stack { display: grid; gap: 14px; }
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
+/* Painéis com menu suspenso no rodapé: sem recorte para o popover não ficar escondido. */
+.panel.allow-popover { overflow: visible; }
+.panel.allow-popover > :last-child { border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; }
 .panel-header {
   min-height: 58px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between;
   gap: 10px; border-bottom: 1px solid var(--line);
@@ -1862,7 +1865,7 @@ td.row-actions > div {
 }
 .clinical-timeline-item.clickable:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: 10px; }
 .duplicates-panel { display: grid; gap: 16px; padding: 13px 16px 16px; margin: 0; }
-.duplicates-toolbar { display: flex; justify-content: flex-end; align-items: center; }
+.duplicates-toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; }
 .settings-panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
 .duplicates-list { display: grid; gap: 14px; }
 .duplicate-card {
@@ -3075,12 +3078,16 @@ textarea.question-input {
 .document-history time { display: block; color: var(--muted); font-size: 9px; margin-top: 2px; }
 
 .dropzone {
-  border: 2px dashed #bdd0d1; border-radius: 14px; background: #f8fbfa;
-  padding: 28px; text-align: center;
+  border: 2px dashed var(--line-strong); border-radius: 14px; background: var(--surface-soft);
+  color: var(--ink); padding: 28px; text-align: center;
+  transition: border-color .15s, background .15s;
 }
+.dropzone:hover { border-color: var(--accent); }
 .dropzone.drag { border-color: var(--accent); background: var(--accent-soft); }
-.dropzone strong { display: block; font-size: 12px; }
+.dropzone strong { display: block; font-size: 12px; color: var(--ink); }
 .dropzone p { font-size: 9px; color: var(--muted); margin: 6px 0 12px; }
+.import-kind-picker { display: grid; gap: 6px; justify-items: start; }
+.import-kind-picker .field-hint { margin: 0; }
 .file-queue { display: grid; gap: 8px; }
 .import-dialog .import-section { display: grid; gap: 8px; }
 .import-dialog .import-section > strong { font-size: 11.5px; }
@@ -3093,8 +3100,8 @@ textarea.question-input {
   border: 1px solid var(--line); border-radius: 10px; padding: 9px;
 }
 .file-item .fi {
-  width: 32px; height: 32px; border-radius: 9px; background: var(--info-soft, #e5effd);
-  color: var(--info, #3d78ce); display: grid; place-items: center; font-size: 9px; font-weight: 850;
+  width: 32px; height: 32px; border-radius: 9px; background: var(--accent-soft);
+  color: var(--accent-dark); display: grid; place-items: center; font-size: 9px; font-weight: 850;
 }
 .file-item strong { display: block; font-size: 10px; }
 .file-item small { display: block; color: var(--muted); font-size: 8px; margin-top: 2px; }
@@ -3413,6 +3420,56 @@ textarea.question-input {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-alt);
+}
+
+/* Grupos de campos em modais de formulário (ex.: modelo de mensagem, canal). */
+.mutation-form .form-group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-alt);
+}
+.mutation-form .form-group legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.mutation-form .form-group-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(200px, 1.3fr);
+  gap: 12px;
+  align-items: end;
+}
+.mutation-form .consent-toggle {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.mutation-form .consent-toggle small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+.template-form textarea { min-height: 170px; }
+.template-variables { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.template-variables .field-hint { margin: 0; }
+.template-variables .chip { padding: 3px 10px; font-size: 11px; color: var(--ink); cursor: pointer; }
+.template-variables .chip:hover { border-color: var(--accent); color: var(--accent-dark); }
+.template-reply-keywords { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.template-reply-keywords > div { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.template-reply-keywords .chip { padding: 2px 8px; font-size: 11px; color: var(--ink); }
+.template-reply-keywords .field-hint { margin: 0; }
+@media (max-width: 600px) {
+  .mutation-form .form-group-row { grid-template-columns: 1fr; }
 }
 
 .clinic-structure {

@@ -1,5 +1,10 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { Prisma, prisma } from '@sonder/database';
+import {
+  Prisma,
+  prisma,
+  renderMessageTemplateText,
+  type MessageTemplateVariable,
+} from '@sonder/database';
 import { z } from 'zod';
 import { assertSmtpConfigured, sendMail } from '../../common/mail';
 import { parseWithZod } from '../../common/zod-validation';
@@ -8,20 +13,59 @@ import { isChatwootMock, resolveChatwootConfig, sendChatwootText } from '../../i
 
 const json = (value: unknown) => value as Prisma.InputJsonValue;
 
-const TEMPLATE_VARS = ['patientName', 'date', 'clinicName', 'professionalName'] as const;
-
 const channelType = z.enum(['EMAIL', 'WHATSAPP', 'SMS']);
-const createChannelSchema = z.object({
-  clinicId: z.string().uuid().optional(),
-  type: channelType,
-  displayName: z.string().trim().min(2).max(120),
-  configuration: z.record(z.string(), z.unknown()).optional(),
-});
-const updateChannelSchema = z.object({
+export const createChannelSchema = z
+  .object({
+    clinicId: z.string().uuid().optional(),
+    type: channelType,
+    displayName: z.string().trim().min(2).max(120),
+    integrationConnectionId: z.string().uuid().optional(),
+    configuration: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.type === 'WHATSAPP' && !value.integrationConnectionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['integrationConnectionId'],
+        message: 'Canal WhatsApp precisa de uma integração conectada (Configurações → Integrações).',
+      });
+    }
+    if (value.type !== 'WHATSAPP' && value.integrationConnectionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['integrationConnectionId'],
+        message: 'Só canais WhatsApp usam integração de terceiros.',
+      });
+    }
+  });
+export const updateChannelSchema = z.object({
   displayName: z.string().trim().min(2).max(120).optional(),
+  integrationConnectionId: z.string().uuid().optional(),
   configuration: z.record(z.string(), z.unknown()).optional(),
   status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
 });
+
+const MESSAGING_PROVIDERS = ['EVOLUTION', 'CHATWOOT'] as const;
+const NOT_CONNECTED_MESSAGE =
+  'Integração não encontrada ou não conectada. Conecte Evolution ou Chatwoot em Configurações → Integrações.';
+
+/** Integração de mensageria da organização que está ativa e com credenciais salvas. */
+function findConnectedMessagingIntegration(organizationId: string, id: string) {
+  return prisma.integrationConnection.findFirst({
+    where: {
+      id,
+      clinic: { organizationId },
+      provider: { in: [...MESSAGING_PROVIDERS] },
+      status: 'ACTIVE',
+      encryptedCredentials: { not: null },
+    },
+    select: { id: true, clinicId: true, provider: true, configuration: true, encryptedCredentials: true },
+  });
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
 const sendManualSchema = z.object({
   channelId: z.string().uuid(),
   templateId: z.string().uuid().optional(),
@@ -151,14 +195,47 @@ async function sendEvolutionWhatsApp(config: EvolutionConfig, number: string, te
 
 export function renderMessageTemplate(
   content: string,
-  variables: Record<string, string>,
+  variables: Partial<Record<MessageTemplateVariable, string>>,
 ): string {
-  return content.replace(/\{\{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*\}\}/g, (_match, key: string) => {
-    if (!(TEMPLATE_VARS as readonly string[]).includes(key as typeof TEMPLATE_VARS[number])) {
-      return `{{${key}}}`;
-    }
-    return variables[key] ?? '';
+  return renderMessageTemplateText(content, variables);
+}
+
+/** "Unidade Centro · Rua X, 10 · Cuiabá" com o que estiver cadastrado. */
+export function formatUnitAddress(unit: { name: string; address?: string | null; city?: string | null } | null | undefined): string {
+  if (!unit) return '';
+  const address = unit.address?.trim();
+  const city = unit.city?.trim();
+  if (address) return [address, city].filter(Boolean).join(' · ');
+  return [unit.name?.trim(), city].filter(Boolean).join(' · ');
+}
+
+/**
+ * Próxima consulta do paciente para preencher data/horário/profissional/endereço
+ * em envios manuais; sem consulta futura, mantém data de hoje e campos vazios.
+ */
+async function nextAppointmentVariables(organizationId: string, patientId: string) {
+  const appointment = await prisma.appointment.findFirst({
+    where: {
+      organizationId,
+      patientId,
+      startAt: { gte: new Date() },
+      status: { in: ['SCHEDULED', 'CONFIRMED'] },
+    },
+    orderBy: { startAt: 'asc' },
+    select: {
+      startAt: true,
+      professional: { select: { name: true } },
+      unit: { select: { name: true, address: true, city: true, timezone: true } },
+    },
   });
+  if (!appointment) return null;
+  const timeZone = appointment.unit.timezone || 'America/Cuiaba';
+  return {
+    date: new Intl.DateTimeFormat('pt-BR', { timeZone }).format(appointment.startAt),
+    appointmentTime: new Intl.DateTimeFormat('pt-BR', { timeZone, hour: '2-digit', minute: '2-digit' }).format(appointment.startAt),
+    professionalName: appointment.professional.name,
+    clinicAddress: formatUnitAddress(appointment.unit),
+  };
 }
 
 export function listMessagingChannels(organizationId: string, includeInactive = false) {
@@ -183,13 +260,25 @@ export async function createMessagingChannel(
     });
     if (!clinic) throw new NotFoundException('Clínica não encontrada.');
   }
+  let clinicId = data.clinicId;
+  let configuration = data.configuration ?? {};
+  if (data.integrationConnectionId) {
+    const connection = await findConnectedMessagingIntegration(organizationId, data.integrationConnectionId);
+    if (!connection) throw new BadRequestException(NOT_CONNECTED_MESSAGE);
+    if (clinicId && connection.clinicId !== clinicId) {
+      throw new BadRequestException('A integração escolhida pertence a outra clínica.');
+    }
+    clinicId = connection.clinicId;
+    configuration = { ...configuration, provider: connection.provider };
+  }
   return prisma.messagingChannel.create({
     data: {
       organizationId,
-      clinicId: data.clinicId,
+      clinicId,
       type: data.type,
       displayName: data.displayName,
-      configuration: json(data.configuration ?? {}),
+      integrationConnectionId: data.integrationConnectionId ?? null,
+      configuration: json(configuration),
       status: 'ACTIVE',
     },
   });
@@ -203,11 +292,31 @@ export async function updateMessagingChannel(
   const data = parseWithZod(updateChannelSchema, input);
   const existing = await prisma.messagingChannel.findFirst({ where: { id, organizationId } });
   if (!existing) throw new NotFoundException('Canal não encontrado.');
+  let clinicId: string | undefined;
+  let configuration = data.configuration;
+  if (data.integrationConnectionId) {
+    if (existing.type !== 'WHATSAPP') {
+      throw new BadRequestException('Só canais WhatsApp usam integração de terceiros.');
+    }
+    const connection = await findConnectedMessagingIntegration(organizationId, data.integrationConnectionId);
+    if (!connection) throw new BadRequestException(NOT_CONNECTED_MESSAGE);
+    if (existing.clinicId && connection.clinicId !== existing.clinicId) {
+      throw new BadRequestException('A integração escolhida pertence a outra clínica.');
+    }
+    clinicId = connection.clinicId;
+    configuration = {
+      ...asObject(existing.configuration),
+      ...(data.configuration ?? {}),
+      provider: connection.provider,
+    };
+  }
   return prisma.messagingChannel.update({
     where: { id },
     data: {
       displayName: data.displayName,
-      configuration: data.configuration === undefined ? undefined : json(data.configuration),
+      clinicId,
+      integrationConnectionId: data.integrationConnectionId,
+      configuration: configuration === undefined ? undefined : json(configuration),
       status: data.status,
     },
   });
@@ -345,12 +454,13 @@ export async function sendManualMessage(
     requiresConsent,
   });
 
-  const vars: Record<string, string> = {
+  const vars: Record<MessageTemplateVariable, string> = {
     patientName: '',
     date: new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Cuiaba' }).format(new Date()),
     clinicName: '',
     professionalName: '',
-    ...(data.variables ?? {}),
+    clinicAddress: '',
+    appointmentTime: '',
   };
 
   if (patientId) {
@@ -359,13 +469,28 @@ export async function sendManualMessage(
       select: { fullName: true },
     });
     if (patient) vars.patientName = patient.fullName;
+    Object.assign(vars, await nextAppointmentVariables(organizationId, patientId));
   }
   if (channel.clinicId) {
     const clinic = await prisma.clinic.findFirst({
       where: { id: channel.clinicId, organizationId },
-      select: { tradeName: true },
+      select: {
+        tradeName: true,
+        units: {
+          where: { status: 'ACTIVE' },
+          select: { name: true, address: true, city: true },
+          orderBy: { name: 'asc' },
+          take: 1,
+        },
+      },
     });
-    if (clinic) vars.clinicName = clinic.tradeName;
+    if (clinic) {
+      vars.clinicName = clinic.tradeName;
+      if (!vars.clinicAddress) vars.clinicAddress = formatUnitAddress(clinic.units[0]);
+    }
+  }
+  for (const [key, value] of Object.entries(data.variables ?? {})) {
+    if (key in vars && !vars[key as MessageTemplateVariable]) vars[key as MessageTemplateVariable] = value;
   }
 
   const rendered = renderMessageTemplate(templateContent ?? data.content!, vars);
@@ -398,40 +523,49 @@ export async function sendManualMessage(
 
     // WHATSAPP / SMS — mesmo delivery; transporte Evolution ou Chatwoot.
     if (channel.type === 'WHATSAPP') {
-      const preferred = channelTransport(channel.configuration);
+      const linked = channel.integrationConnectionId
+        ? await findConnectedMessagingIntegration(organizationId, channel.integrationConnectionId)
+        : null;
+      if (channel.integrationConnectionId && !linked) {
+        return prisma.messageDelivery.update({
+          where: { id: delivery.id },
+          data: {
+            status: 'FAILED',
+            error: 'A integração vinculada ao canal não está conectada. Revise em Configurações → Integrações.',
+          },
+        });
+      }
+      const connectionFor = async (provider: 'EVOLUTION' | 'CHATWOOT') => {
+        if (linked) return linked.provider === provider ? linked : null;
+        return channel.clinicId ? loadConnection(channel.clinicId, provider) : null;
+      };
+      const preferred = linked
+        ? (linked.provider as 'EVOLUTION' | 'CHATWOOT')
+        : channelTransport(channel.configuration);
       const evolutionMock = (process.env.EVOLUTION_MOCK ?? 'true').toLowerCase() === 'true';
-      let evolution = preferred === 'CHATWOOT' ? null : resolveEvolutionConfig(channel.configuration);
-      let chatwoot = preferred === 'EVOLUTION' ? null : resolveChatwootConfig(undefined, channel.configuration);
+      let evolution = preferred === 'CHATWOOT' || linked ? null : resolveEvolutionConfig(channel.configuration);
+      let chatwoot = preferred === 'EVOLUTION' || linked ? null : resolveChatwootConfig(undefined, channel.configuration);
 
-      if (channel.clinicId) {
-        if (!evolution && preferred !== 'CHATWOOT') {
-          const connection = await loadConnection(channel.clinicId, 'EVOLUTION');
-          if (connection?.encryptedCredentials) {
-            try {
-              const creds = decryptCredentialsPayload(connection.encryptedCredentials);
-              evolution = resolveEvolutionConfig(connection.configuration, creds);
-            } catch {
-              evolution = null;
-            }
+      if (!evolution && preferred !== 'CHATWOOT') {
+        const connection = await connectionFor('EVOLUTION');
+        if (connection?.encryptedCredentials) {
+          try {
+            const creds = decryptCredentialsPayload(connection.encryptedCredentials);
+            evolution = resolveEvolutionConfig(connection.configuration, creds);
+          } catch {
+            evolution = null;
           }
         }
-        if ((!chatwoot || !chatwoot.inboxId) && preferred !== 'EVOLUTION') {
-          const connection = await loadConnection(channel.clinicId, 'CHATWOOT');
-          if (connection?.encryptedCredentials) {
-            try {
-              const creds = decryptCredentialsPayload(connection.encryptedCredentials);
-              const merged = {
-                ...(typeof connection.configuration === 'object' && connection.configuration
-                  ? (connection.configuration as Record<string, unknown>)
-                  : {}),
-                ...(typeof channel.configuration === 'object' && channel.configuration
-                  ? (channel.configuration as Record<string, unknown>)
-                  : {}),
-              };
-              chatwoot = resolveChatwootConfig(creds, merged);
-            } catch {
-              /* mantém o config do canal, se houver */
-            }
+      }
+      if ((!chatwoot || !chatwoot.inboxId) && preferred !== 'EVOLUTION') {
+        const connection = await connectionFor('CHATWOOT');
+        if (connection?.encryptedCredentials) {
+          try {
+            const creds = decryptCredentialsPayload(connection.encryptedCredentials);
+            const merged = { ...asObject(connection.configuration), ...asObject(channel.configuration) };
+            chatwoot = resolveChatwootConfig(creds, merged);
+          } catch {
+            /* mantém o config do canal, se houver */
           }
         }
       }

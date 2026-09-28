@@ -1,5 +1,6 @@
-import { prisma } from '@sonder/database';
+import { prisma, reminderCategoryFromChannel } from '@sonder/database';
 import { envelopeDecryptJson } from '@sonder/observability';
+import { reminderMessageText } from './reminder-message';
 import { isWithinAllowedHours, nextAllowedWindowStart } from './allowed-hours';
 import { readEvolutionConfiguration, sendEvolutionText } from './evolution';
 import { isChatwootMock, readChatwootConfiguration, sendChatwootText } from './chatwoot';
@@ -70,25 +71,6 @@ function normalizeWhatsAppNumber(value: string): string {
   return withCountryCode;
 }
 
-function reminderMessage(reminder: {
-  appointment: {
-    startAt: Date;
-    patient: { fullName: string; preferredName: string | null };
-    professional: { name: string };
-    clinic: { tradeName: string };
-    unit: { timezone: string };
-  };
-}): string {
-  const { appointment } = reminder;
-  const date = new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-    timeZone: appointment.unit.timezone,
-  }).format(appointment.startAt);
-  const patientName = appointment.patient.preferredName ?? appointment.patient.fullName;
-  return `Olá, ${patientName}! Lembramos do seu atendimento na ${appointment.clinic.tradeName} em ${date}, com ${appointment.professional.name}.`;
-}
-
 async function skipReminder(event: OutboxEvent, reason: string): Promise<void> {
   await prisma.$transaction([
     prisma.appointmentReminder.updateMany({
@@ -143,6 +125,33 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
     );
     return;
   }
+  const category = reminderCategoryFromChannel(reminder.channel);
+  if (category === 'CONFIRMATION' && reminder.appointment.status !== 'SCHEDULED') {
+    await skipReminder(event, 'Pedido de confirmação não enviado: consulta já confirmada ou em andamento.');
+    return;
+  }
+  const template = await prisma.messageTemplate.findFirst({
+    where: { organizationId: reminder.organizationId, category, active: true },
+    orderBy: { name: 'asc' },
+    select: { content: true, requiresConsent: true },
+  });
+  if (template?.requiresConsent) {
+    const preference = await prisma.communicationPreference.findUnique({
+      where: {
+        organizationId_patientId_channel_category: {
+          organizationId: reminder.organizationId,
+          patientId: reminder.appointment.patientId,
+          channel: 'WHATSAPP',
+          category,
+        },
+      },
+      select: { optedIn: true },
+    });
+    if (preference && !preference.optedIn) {
+      await skipReminder(event, 'Paciente optou por não receber esta mensagem pelo WhatsApp.');
+      return;
+    }
+  }
 
   const evolutionConnection = await prisma.integrationConnection.findFirst({
     where: {
@@ -179,7 +188,7 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
   }
 
   const number = normalizeWhatsAppNumber(reminder.appointment.patient.primaryPhone);
-  const text = reminderMessage(reminder);
+  const text = reminderMessageText(category, template?.content, reminder.appointment);
 
   if (evolutionLive && evolutionConnection?.encryptedCredentials) {
     let credentials: Record<string, string>;

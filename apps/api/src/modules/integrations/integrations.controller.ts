@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req, Res, UnauthorizedException, UseGuards, type RawBodyRequest } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, ParseUUIDPipe, Patch, Post, Query, Req, Res, UnauthorizedException, UseGuards, type RawBodyRequest } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { IsBoolean, IsIn, IsObject, IsOptional, IsString, IsUUID } from 'class-validator';
@@ -7,6 +7,7 @@ import { PermissionsGuard, RequirePermissions } from '../../common/permissions.g
 import { IntegrationsService, type Provider, type SaveConnectionInput } from './integrations.service';
 import { OperationsService } from '../operations/operations.service';
 import { resolvePublicWebUrl } from '../../common/public-web-url';
+import { handleWhatsAppReply } from './whatsapp-inbound';
 
 class SaveIntegrationDto {
   @IsUUID() clinicId!: string;
@@ -195,5 +196,29 @@ export class AbacatePayWebhookController {
       rawBody: Buffer.isBuffer(raw) ? raw : Buffer.from(raw),
       signature,
     });
+  }
+}
+
+/**
+ * Respostas de pacientes no WhatsApp (Evolution messages.upsert / Chatwoot message_created) — sem AuthGuard.
+ * URL assinada por conexão (token HMAC); exibida em Configurações → Integrações → Ver.
+ */
+@ApiTags('integrations-webhooks')
+@Controller('integrations/whatsapp')
+export class WhatsAppWebhookController {
+  @Post('webhook/:connectionId')
+  async handle(
+    @Req() req: Request,
+    @Param('connectionId', new ParseUUIDPipe()) connectionId: string,
+    @Query('token') token: string | undefined,
+    @Body() payload: unknown,
+  ) {
+    const { assertRateLimit, RATE_LIMITS } = await import('../../common/rate-limit.js');
+    await assertRateLimit(
+      `webhook:whatsapp:${req.ip ?? 'unknown'}`,
+      RATE_LIMITS.webhook.max,
+      RATE_LIMITS.webhook.windowMs,
+    );
+    return handleWhatsAppReply({ connectionId, token, payload });
   }
 }

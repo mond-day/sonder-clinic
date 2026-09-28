@@ -1,5 +1,15 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, prisma } from '@sonder/database';
+import {
+  applyMondaySendDay,
+  CONFIRMATION_REMINDER_CHANNEL,
+  DEFAULT_MONDAY_SEND_DAY,
+  DEFAULT_REMINDER_LEAD_MINUTES,
+  MAX_LEAD_MINUTES,
+  MIN_LEAD_MINUTES,
+  Prisma,
+  prisma,
+  readMessageSchedule,
+} from '@sonder/database';
 import { z } from 'zod';
 import {
   assertClinicInScope,
@@ -178,7 +188,7 @@ export class SchedulingService {
         });
       }
 
-      const { tagIds = [], reminderEnabled, reminderLeadMinutes = 1440, ...appointment } = input;
+      const { tagIds = [], reminderEnabled, reminderLeadMinutes, ...appointment } = input;
       const row = await transaction.appointment.create({
         data: {
           organizationId,
@@ -229,7 +239,7 @@ export class SchedulingService {
         },
       });
       if (conflict) throw new ConflictException('O horário selecionado está em conflito com outro agendamento.');
-      const { tagIds, reminderEnabled, reminderLeadMinutes = 1440, ...appointmentData } = input;
+      const { tagIds, reminderEnabled, reminderLeadMinutes, ...appointmentData } = input;
       const row = await transaction.appointment.update({
         where: { id },
         data: {
@@ -393,6 +403,11 @@ export class SchedulingService {
     });
   }
 
+  /**
+   * Lembrete (e pedido de confirmação, se houver modelo de Confirmação ativo) via WhatsApp.
+   * Antecedência: a escolhida na consulta ou, sem escolha, a régua do modelo de Lembrete.
+   * Consulta na segunda: o dia de envio segue `mondaySendDay` do modelo de Lembrete.
+   */
   private async configureReminder(
     transaction: Prisma.TransactionClient,
     organizationId: string,
@@ -400,27 +415,62 @@ export class SchedulingService {
     clinicId: string,
     startAt: Date,
     enabled = false,
-    leadMinutes: number | number[] = 1440,
+    leadMinutes?: number | number[],
   ) {
-    const leads = (Array.isArray(leadMinutes) ? leadMinutes : [leadMinutes])
-      .map((value) => Number(value))
-      .filter((value) => Number.isFinite(value) && value >= 15 && value <= 10080);
-    const uniqueLeads = [...new Set(leads.length ? leads : [1440])];
-
     await transaction.appointmentReminder.deleteMany({
       where: { appointmentId, channel: { startsWith: 'WHATSAPP' } },
     });
 
     if (!enabled) return;
 
-    const evolution = await transaction.integrationConnection.findFirst({
-      where: { clinicId, provider: 'EVOLUTION', status: 'ACTIVE', encryptedCredentials: { not: null } },
-      select: { id: true },
-    });
+    const [whatsapp, templates, appointment] = await Promise.all([
+      transaction.integrationConnection.findFirst({
+        where: {
+          clinicId,
+          provider: { in: ['EVOLUTION', 'CHATWOOT'] },
+          status: 'ACTIVE',
+          encryptedCredentials: { not: null },
+        },
+        select: { id: true },
+      }),
+      transaction.messageTemplate.findMany({
+        where: { organizationId, active: true, category: { in: ['REMINDER', 'CONFIRMATION'] } },
+        select: { category: true, schedule: true },
+        orderBy: { name: 'asc' },
+      }),
+      transaction.appointment.findUnique({
+        where: { id: appointmentId },
+        select: { unit: { select: { timezone: true } } },
+      }),
+    ]);
+    const reminderSchedule = readMessageSchedule(templates.find((item) => item.category === 'REMINDER')?.schedule);
+    const confirmationTemplate = templates.find((item) => item.category === 'CONFIRMATION');
+    const timeZone = appointment?.unit.timezone || 'America/Cuiaba';
+    const mondaySendDay = reminderSchedule.mondaySendDay ?? DEFAULT_MONDAY_SEND_DAY;
 
-    for (const minutes of uniqueLeads) {
-      const channel = uniqueLeads.length === 1 ? 'WHATSAPP' : `WHATSAPP:${minutes}`;
-      const scheduledFor = new Date(startAt.getTime() - minutes * 60_000);
+    const explicit = (Array.isArray(leadMinutes) ? leadMinutes : leadMinutes === undefined ? [] : [leadMinutes])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value >= MIN_LEAD_MINUTES && value <= MAX_LEAD_MINUTES);
+    const uniqueLeads = [...new Set(explicit.length ? explicit : [reminderSchedule.leadMinutes ?? DEFAULT_REMINDER_LEAD_MINUTES])];
+
+    const planned = uniqueLeads.map((minutes) => ({
+      channel: uniqueLeads.length === 1 ? 'WHATSAPP' : `WHATSAPP:${minutes}`,
+      minutes,
+    }));
+    if (confirmationTemplate) {
+      planned.push({
+        channel: CONFIRMATION_REMINDER_CHANNEL,
+        minutes: readMessageSchedule(confirmationTemplate.schedule).leadMinutes ?? DEFAULT_REMINDER_LEAD_MINUTES,
+      });
+    }
+
+    for (const { channel, minutes } of planned) {
+      const scheduledFor = applyMondaySendDay({
+        scheduledFor: new Date(startAt.getTime() - minutes * 60_000),
+        appointmentStart: startAt,
+        timeZone,
+        mondaySendDay,
+      });
       const reminder = await transaction.appointmentReminder.create({
         data: {
           organizationId,
@@ -428,11 +478,11 @@ export class SchedulingService {
           channel,
           leadMinutes: minutes,
           scheduledFor,
-          status: evolution ? 'PENDING' : 'DISABLED',
-          statusReason: evolution ? null : 'Evolution não configurado.',
+          status: whatsapp ? 'PENDING' : 'DISABLED',
+          statusReason: whatsapp ? null : 'WhatsApp (Evolution ou Chatwoot) não configurado.',
         },
       });
-      if (evolution) {
+      if (whatsapp) {
         await transaction.outboxEvent.create({
           data: {
             aggregateType: 'AppointmentReminder',

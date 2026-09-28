@@ -717,7 +717,7 @@ export class OperationsController {
   @Post('communication/templates') @RequirePermissions('integration.manage')
   createMessageTemplate(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { name: string; category: string; content: string; requiresConsent?: boolean },
+    @Body() body: Parameters<OperationsService['createMessageTemplate']>[1],
   ) {
     return this.operations.createMessageTemplate(req.auth.organizationId, body);
   }
@@ -725,7 +725,7 @@ export class OperationsController {
   updateMessageTemplate(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
-    @Body() body: { name?: string; category?: string; content?: string; requiresConsent?: boolean; active?: boolean },
+    @Body() body: Parameters<OperationsService['updateMessageTemplate']>[2],
   ) {
     return this.operations.updateMessageTemplate(req.auth.organizationId, id, body);
   }
@@ -736,7 +736,13 @@ export class OperationsController {
   @Post('communication/channels') @RequirePermissions('integration.manage')
   createMessagingChannel(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { clinicId?: string; type: string; displayName: string; configuration?: Record<string, unknown> },
+    @Body() body: {
+      clinicId?: string;
+      type: string;
+      displayName: string;
+      integrationConnectionId?: string;
+      configuration?: Record<string, unknown>;
+    },
   ) {
     return this.operations.createMessagingChannel(req.auth.organizationId, body as never);
   }
@@ -744,7 +750,12 @@ export class OperationsController {
   updateMessagingChannel(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
-    @Body() body: { displayName?: string; configuration?: Record<string, unknown>; status?: 'ACTIVE' | 'INACTIVE' },
+    @Body() body: {
+      displayName?: string;
+      integrationConnectionId?: string;
+      configuration?: Record<string, unknown>;
+      status?: 'ACTIVE' | 'INACTIVE';
+    },
   ) {
     return this.operations.updateMessagingChannel(req.auth.organizationId, id, body);
   }

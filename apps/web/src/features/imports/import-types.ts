@@ -36,28 +36,33 @@ export type ImportBatch = {
   revertedAt: string | null;
 };
 
-export const IMPORT_KINDS: Record<ImportSlug, { title: string; permission: string; hint: string }> = {
+export const IMPORT_KINDS: Record<ImportSlug, { label: string; title: string; permission: string; hint: string }> = {
   patients: {
+    label: 'Pacientes',
     title: 'Importar pacientes',
     permission: 'patient.create',
     hint: 'Pacientes já cadastrados (mesmo CPF ou mesmo nome) são mantidos como estão. Linhas sem celular com DDD ficam de fora.',
   },
   'treatment-plans': {
+    label: 'Orçamentos',
     title: 'Importar orçamentos',
     permission: 'treatment.create',
     hint: 'Cada orçamento vira um plano de tratamento (Aprovado ou Apresentado). Importe os pacientes antes.',
   },
   treatments: {
+    label: 'Tratamentos',
     title: 'Importar tratamentos',
     permission: 'treatment.create',
     hint: 'Os itens são agrupados em um plano “Tratamentos importados” por paciente e profissional. Finalizados entram como concluídos.',
   },
   appointments: {
+    label: 'Consultas',
     title: 'Importar consultas',
     permission: 'appointment.create',
     hint: 'Consultas passadas marcadas como Agendada ou Confirmada entram como concluídas. Nenhum lembrete ou evento do Google é enviado.',
   },
   cashflow: {
+    label: 'Fluxo de caixa',
     title: 'Importar fluxo de caixa',
     permission: 'financial.create',
     hint: 'Somente consulta: não cria recebíveis, pagamentos nem contas a pagar e não sincroniza com o Nibo.',

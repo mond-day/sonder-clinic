@@ -61,6 +61,7 @@ export {
 } from './core-defaults.ts';
 export { ODONTOGRAM_CONDITIONS, PERMISSION_CODES } from './permissions.ts';
 export { INSTALLATION_SINGLETON_ID } from './installation.ts';
+export * from './messaging-rules.ts';
 export {
   BootstrapError,
   applyMigrations,

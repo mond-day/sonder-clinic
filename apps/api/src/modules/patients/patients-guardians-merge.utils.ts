@@ -1,5 +1,13 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { prisma } from '@sonder/database';
+import {
+  extractMessageTemplateTokens,
+  isMessageTemplateVariable,
+  MAX_LEAD_MINUTES,
+  MESSAGE_TEMPLATE_VARIABLES,
+  MIN_LEAD_MINUTES,
+  Prisma,
+  prisma,
+} from '@sonder/database';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { parseWithZod } from '../../common/zod-validation';
@@ -21,19 +29,33 @@ const alertSchema = z.object({
   severity: z.enum(['INFO', 'WARNING', 'HIGH', 'CRITICAL']).optional(),
 });
 
-const TEMPLATE_VARS = ['patientName', 'date', 'clinicName', 'professionalName'] as const;
-
 function extractTemplateVariables(content: string): string[] {
-  const found = new Set<string>();
-  for (const match of content.matchAll(/\{\{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*\}\}/g)) {
-    const key = match[1];
-    if (key) found.add(key);
-  }
-  const unknown = [...found].filter((key) => !(TEMPLATE_VARS as readonly string[]).includes(key));
+  const found = extractMessageTemplateTokens(content);
+  const unknown = found.filter((key) => !isMessageTemplateVariable(key));
   if (unknown.length) {
-    throw new BadRequestException(`Variáveis não permitidas: ${unknown.join(', ')}. Use: ${TEMPLATE_VARS.join(', ')}.`);
+    throw new BadRequestException(
+      `Variáveis não permitidas: ${unknown.join(', ')}. Use: ${MESSAGE_TEMPLATE_VARIABLES.join(', ')}.`,
+    );
   }
-  return [...found];
+  return found;
+}
+
+const templateCategorySchema = z.enum(['REMINDER', 'CONFIRMATION', 'RETURN', 'MARKETING', 'OTHER']);
+const templateScheduleSchema = z
+  .object({
+    leadMinutes: z.number().int().min(MIN_LEAD_MINUTES).max(MAX_LEAD_MINUTES).optional(),
+    mondaySendDay: z.enum(['FRIDAY', 'SUNDAY']).optional(),
+  })
+  .strict();
+type TemplateSchedule = z.infer<typeof templateScheduleSchema>;
+
+/** Só Lembrete e Confirmação têm antecedência de agenda; o dia de segunda vale para o Lembrete. */
+function scheduleForCategory(category: string, schedule: TemplateSchedule | undefined): Prisma.InputJsonValue {
+  if (!schedule || (category !== 'REMINDER' && category !== 'CONFIRMATION')) return {};
+  return {
+    ...(schedule.leadMinutes ? { leadMinutes: schedule.leadMinutes } : {}),
+    ...(category === 'REMINDER' && schedule.mondaySendDay ? { mondaySendDay: schedule.mondaySendDay } : {}),
+  };
 }
 
 export async function addPatientGuardian(
@@ -477,24 +499,31 @@ export function listMessageTemplates(organizationId: string, includeInactive = f
   });
 }
 
+const createTemplateSchema = z.object({
+  name: z.string().trim().min(2, 'Nome do template inválido.').max(120),
+  category: z.string().trim().toUpperCase().pipe(templateCategorySchema),
+  content: z.string().trim().min(5, 'Conteúdo do template inválido.').max(4000),
+  requiresConsent: z.boolean().optional(),
+  schedule: templateScheduleSchema.optional(),
+});
+const updateTemplateSchema = createTemplateSchema.partial().extend({ active: z.boolean().optional() });
+
 export async function createMessageTemplate(
   organizationId: string,
-  input: { name: string; category: string; content: string; requiresConsent?: boolean },
+  input: z.input<typeof createTemplateSchema>,
 ) {
-  const name = input.name.trim();
-  const content = input.content.trim();
-  if (name.length < 2) throw new BadRequestException('Nome do template inválido.');
-  if (content.length < 5) throw new BadRequestException('Conteúdo do template inválido.');
-  const variables = extractTemplateVariables(content);
+  const data = parseWithZod(createTemplateSchema, input);
+  const variables = extractTemplateVariables(data.content);
   try {
     return await prisma.messageTemplate.create({
       data: {
         organizationId,
-        name,
-        category: input.category.trim().toUpperCase(),
-        content,
+        name: data.name,
+        category: data.category,
+        content: data.content,
         variables,
-        requiresConsent: input.requiresConsent ?? true,
+        schedule: scheduleForCategory(data.category, data.schedule),
+        requiresConsent: data.category === 'MARKETING' ? true : (data.requiresConsent ?? true),
         active: true,
       },
     });
@@ -509,21 +538,26 @@ export async function createMessageTemplate(
 export async function updateMessageTemplate(
   organizationId: string,
   id: string,
-  input: { name?: string; category?: string; content?: string; requiresConsent?: boolean; active?: boolean },
+  input: z.input<typeof updateTemplateSchema>,
 ) {
+  const data = parseWithZod(updateTemplateSchema, input);
   const existing = await prisma.messageTemplate.findFirst({ where: { id, organizationId } });
   if (!existing) throw new NotFoundException('Template não encontrado.');
-  const content = input.content?.trim();
-  const variables = content ? extractTemplateVariables(content) : undefined;
+  const variables = data.content ? extractTemplateVariables(data.content) : undefined;
+  const category = data.category ?? existing.category;
+  const categoryChanged = data.category !== undefined && data.category !== existing.category;
   return prisma.messageTemplate.update({
     where: { id },
     data: {
-      name: input.name?.trim(),
-      category: input.category?.trim().toUpperCase(),
-      content,
+      name: data.name,
+      category: data.category,
+      content: data.content,
       variables,
-      requiresConsent: input.requiresConsent,
-      active: input.active,
+      schedule: data.schedule !== undefined || categoryChanged
+        ? scheduleForCategory(category, data.schedule)
+        : undefined,
+      requiresConsent: category === 'MARKETING' ? true : data.requiresConsent,
+      active: data.active,
     },
   });
 }

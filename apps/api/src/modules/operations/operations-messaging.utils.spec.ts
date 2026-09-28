@@ -1,5 +1,48 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderMessageTemplate, resolveEvolutionConfig } from './operations-messaging.utils';
+import {
+  createChannelSchema,
+  formatUnitAddress,
+  renderMessageTemplate,
+  resolveEvolutionConfig,
+  updateChannelSchema,
+} from './operations-messaging.utils';
+
+const CONNECTION_ID = '4f9c2d1e-8b7a-4c3d-9e2f-1a2b3c4d5e6f';
+
+describe('createChannelSchema', () => {
+  it('exige integração conectada em canal WhatsApp', () => {
+    const result = createChannelSchema.safeParse({ type: 'WHATSAPP', displayName: 'WhatsApp recepção' });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(['integrationConnectionId']);
+  });
+
+  it('aceita WhatsApp com integrationConnectionId uuid', () => {
+    const result = createChannelSchema.safeParse({
+      type: 'WHATSAPP',
+      displayName: 'WhatsApp recepção',
+      integrationConnectionId: CONNECTION_ID,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('e-mail não precisa (nem aceita) integração de terceiros', () => {
+    expect(createChannelSchema.safeParse({ type: 'EMAIL', displayName: 'E-mail clínica' }).success).toBe(true);
+    expect(
+      createChannelSchema.safeParse({
+        type: 'EMAIL',
+        displayName: 'E-mail clínica',
+        integrationConnectionId: CONNECTION_ID,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejeita id de integração que não é uuid', () => {
+    expect(
+      createChannelSchema.safeParse({ type: 'WHATSAPP', displayName: 'Zap', integrationConnectionId: 'abc' }).success,
+    ).toBe(false);
+    expect(updateChannelSchema.safeParse({ integrationConnectionId: 'abc' }).success).toBe(false);
+  });
+});
 
 describe('renderMessageTemplate', () => {
   it('substitutes known variables', () => {
@@ -18,6 +61,21 @@ describe('renderMessageTemplate', () => {
       clinicName: '',
       professionalName: '',
     })).toBe('Oi {{unknown}}');
+  });
+
+  it('substitui endereço da clínica e horário do agendamento', () => {
+    expect(renderMessageTemplate('{{appointmentTime}} · {{clinicAddress}}', {
+      appointmentTime: '14:30',
+      clinicAddress: 'Rua das Flores, 100 · Cuiabá',
+    })).toBe('14:30 · Rua das Flores, 100 · Cuiabá');
+  });
+});
+
+describe('formatUnitAddress', () => {
+  it('prefere o endereço cadastrado e cai para nome + cidade', () => {
+    expect(formatUnitAddress({ name: 'Centro', address: 'Rua A, 1', city: 'Cuiabá' })).toBe('Rua A, 1 · Cuiabá');
+    expect(formatUnitAddress({ name: 'Centro', address: null, city: 'Cuiabá' })).toBe('Centro · Cuiabá');
+    expect(formatUnitAddress(null)).toBe('');
   });
 });
 

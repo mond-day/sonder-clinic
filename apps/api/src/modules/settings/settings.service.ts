@@ -72,12 +72,14 @@ const updateAgendaTagSchema = agendaTagSchema.omit({ clinicId: true }).partial()
 const unitSchema = z.object({
   clinicId: z.string().uuid(),
   name: z.string().trim().min(2).max(80),
+  address: z.string().trim().max(240).optional(),
   city: z.string().trim().max(120).optional(),
   phone: z.string().trim().max(40).optional(),
   timezone: z.string().trim().min(3).max(64).optional(),
 });
 const updateUnitSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
+  address: z.string().trim().max(240).nullable().optional(),
   city: z.string().trim().max(120).nullable().optional(),
   phone: z.string().trim().max(40).nullable().optional(),
   timezone: z.string().trim().min(3).max(64).optional(),
@@ -196,6 +198,7 @@ export class SettingsService {
               id: true,
               name: true,
               city: true,
+              address: true,
               phone: true,
               timezone: true,
               chairs: {
@@ -527,7 +530,7 @@ export class SettingsService {
   async createUnit(
     organizationId: string,
     actorId: string,
-    input: { clinicId: string; name: string; city?: string; phone?: string; timezone?: string },
+    input: { clinicId: string; name: string; address?: string; city?: string; phone?: string; timezone?: string },
   ) {
     const data = parseWithZod(unitSchema, input);
     await this.assertClinic(organizationId, data.clinicId);
@@ -536,6 +539,7 @@ export class SettingsService {
         data: {
           clinicId: data.clinicId,
           name: data.name,
+          address: data.address || null,
           city: data.city,
           phone: data.phone,
           timezone: data.timezone ?? 'America/Cuiaba',
@@ -561,7 +565,7 @@ export class SettingsService {
     organizationId: string,
     actorId: string,
     id: string,
-    input: { name?: string; city?: string | null; phone?: string | null; timezone?: string; status?: 'ACTIVE' | 'INACTIVE' },
+    input: { name?: string; address?: string | null; city?: string | null; phone?: string | null; timezone?: string; status?: 'ACTIVE' | 'INACTIVE' },
   ) {
     const data = parseWithZod(updateUnitSchema, input);
     const existing = await prisma.unit.findFirst({
@@ -574,6 +578,7 @@ export class SettingsService {
         where: { id },
         data: {
           name: data.name,
+          address: data.address === undefined ? undefined : (data.address || null),
           city: data.city === undefined ? undefined : data.city,
           phone: data.phone === undefined ? undefined : data.phone,
           timezone: data.timezone,

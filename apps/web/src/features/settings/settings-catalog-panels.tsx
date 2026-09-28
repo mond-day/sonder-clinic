@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Eye, Pencil, Power } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { notifyBrandingUpdated, resolveMediaUrl } from '@/lib/branding';
@@ -850,7 +850,64 @@ export function OutboxDeadLetterPanel() {
   );
 }
 
-export function CommunicationTemplatesPanel() {
+const TEMPLATE_CATEGORIES = [
+  { value: 'REMINDER', label: 'Lembrete' },
+  { value: 'CONFIRMATION', label: 'Confirmação' },
+  { value: 'RETURN', label: 'Retorno' },
+  { value: 'MARKETING', label: 'Marketing' },
+  { value: 'OTHER', label: 'Outro' },
+] as const;
+
+const TEMPLATE_VARIABLES = [
+  { token: 'patientName', label: 'Nome do paciente' },
+  { token: 'date', label: 'Data' },
+  { token: 'appointmentTime', label: 'Horário do agendamento' },
+  { token: 'clinicName', label: 'Clínica' },
+  { token: 'clinicAddress', label: 'Endereço da clínica' },
+  { token: 'professionalName', label: 'Profissional' },
+] as const;
+
+/** Espelha CONFIRM/CANCEL_REPLY_KEYWORDS de @sonder/database (messaging-rules). */
+const CONFIRM_REPLY_LABELS = ['SIM', 'CONFIRMAR', 'CONFIRMO', '1'];
+const CANCEL_REPLY_LABELS = ['NÃO', 'CANCELAR', 'DESMARCAR', '2'];
+
+const SCHEDULED_CATEGORIES = new Set(['REMINDER', 'CONFIRMATION']);
+const DEFAULT_LEAD_MINUTES = 1440;
+
+type LeadUnit = 'hours' | 'days';
+
+function leadFromSchedule(schedule: unknown): { amount: number; unit: LeadUnit } {
+  const raw = schedule && typeof schedule === 'object' ? (schedule as Record<string, unknown>).leadMinutes : undefined;
+  const minutes = typeof raw === 'number' && raw > 0 ? raw : DEFAULT_LEAD_MINUTES;
+  return minutes % 1440 === 0 ? { amount: minutes / 1440, unit: 'days' } : { amount: Math.max(1, Math.round(minutes / 60)), unit: 'hours' };
+}
+
+function mondayFromSchedule(schedule: unknown): 'FRIDAY' | 'SUNDAY' {
+  const raw = schedule && typeof schedule === 'object' ? (schedule as Record<string, unknown>).mondaySendDay : undefined;
+  return raw === 'SUNDAY' ? 'SUNDAY' : 'FRIDAY';
+}
+
+function scheduleSummary(row: RecordValue): string {
+  if (!SCHEDULED_CATEGORIES.has(String(row.category))) return '';
+  const lead = leadFromSchedule(row.schedule);
+  const leadText = `${lead.amount} ${lead.unit === 'days' ? (lead.amount === 1 ? 'dia' : 'dias') : lead.amount === 1 ? 'hora' : 'horas'} antes`;
+  if (row.category !== 'REMINDER') return leadText;
+  return `${leadText} · segunda: ${mondayFromSchedule(row.schedule) === 'SUNDAY' ? 'domingo' : 'sexta'}`;
+}
+
+/** Mesmo critério do agendamento: 1º modelo ativo da categoria, por nome. */
+function automaticTemplateIds(templates: RecordValue[]): Set<string> {
+  const ids = new Set<string>();
+  for (const category of SCHEDULED_CATEGORIES) {
+    const first = templates
+      .filter((row) => row.active && row.category === category)
+      .sort((a, b) => text(a.name).localeCompare(text(b.name), 'pt-BR'))[0];
+    if (first) ids.add(String(first.id));
+  }
+  return ids;
+}
+
+export function CommunicationTemplatesPanel({ onOpenReturns }: { onOpenReturns?: () => void } = {}) {
   const [templates, setTemplates] = useState<RecordValue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -858,7 +915,15 @@ export function CommunicationTemplatesPanel() {
   const [editing, setEditing] = useState<RecordValue | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
+  const [category, setCategory] = useState('REMINDER');
+  const [requiresConsent, setRequiresConsent] = useState(true);
+  const [leadAmount, setLeadAmount] = useState(1);
+  const [leadUnit, setLeadUnit] = useState<LeadUnit>('days');
+  const [mondaySendDay, setMondaySendDay] = useState<'FRIDAY' | 'SUNDAY'>('FRIDAY');
+  const contentRef = useRef<HTMLTextAreaElement>(null);
   const viewing = modal === 'view';
+  const consentLocked = category === 'MARKETING';
+  const automaticIds = automaticTemplateIds(templates);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -877,33 +942,49 @@ export function CommunicationTemplatesPanel() {
     setFormError('');
   }
 
-  function openCreate() {
-    setEditing(null);
+  function openTemplate(mode: 'create' | 'view' | 'edit', row: RecordValue | null) {
+    setEditing(row);
+    setCategory(String(row?.category ?? 'REMINDER'));
+    setRequiresConsent(row ? Boolean(row.requiresConsent) : true);
+    const lead = leadFromSchedule(row?.schedule);
+    setLeadAmount(lead.amount);
+    setLeadUnit(lead.unit);
+    setMondaySendDay(mondayFromSchedule(row?.schedule));
     setFormError('');
-    setModal('create');
+    setModal(mode);
   }
 
-  function openView(row: RecordValue) {
-    setEditing(row);
-    setFormError('');
-    setModal('view');
+  const openCreate = () => openTemplate('create', null);
+  const openView = (row: RecordValue) => openTemplate('view', row);
+  const openEdit = (row: RecordValue) => openTemplate('edit', row);
+
+  function changeCategory(next: string) {
+    setCategory(next);
+    if (next === 'MARKETING') setRequiresConsent(true);
   }
 
-  function openEdit(row: RecordValue) {
-    setEditing(row);
-    setFormError('');
-    setModal('edit');
+  function insertVariable(token: string) {
+    const field = contentRef.current;
+    if (!field || viewing) return;
+    field.focus();
+    field.setRangeText(`{{${token}}}`, field.selectionStart, field.selectionEnd, 'end');
+    // Dispara o input nativo para o Modal marcar o formulário como alterado.
+    field.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   async function saveTemplate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (viewing) return;
     const data = new FormData(event.currentTarget);
+    const leadMinutes = leadAmount * (leadUnit === 'days' ? 1440 : 60);
     const payload = {
       name: String(data.get('name') || '').trim(),
-      category: String(data.get('category') || 'REMINDER'),
+      category,
       content: String(data.get('content') || '').trim(),
-      requiresConsent: data.get('requiresConsent') === 'on',
+      requiresConsent: consentLocked || requiresConsent,
+      schedule: SCHEDULED_CATEGORIES.has(category)
+        ? { leadMinutes, ...(category === 'REMINDER' ? { mondaySendDay } : {}) }
+        : {},
     };
     setBusy(true);
     setFormError('');
@@ -946,9 +1027,14 @@ export function CommunicationTemplatesPanel() {
             <div className="settings-row" key={String(row.id)}>
               <div>
                 <strong>{text(row.name)}</strong>
-                <span>{presentationLabel(row.category)} · {text(row.content).slice(0, 80)}{text(row.content).length > 80 ? '…' : ''}</span>
+                <span>
+                  {presentationLabel(row.category)}
+                  {scheduleSummary(row) ? ` · ${scheduleSummary(row)}` : ''}
+                  {' · '}{text(row.content).slice(0, 80)}{text(row.content).length > 80 ? '…' : ''}
+                </span>
               </div>
               <div className="row-actions">
+                {automaticIds.has(String(row.id)) ? <StatusBadge tone="blue">Usado no envio automático</StatusBadge> : null}
                 <StatusBadge tone={row.active ? 'green' : 'gray'}>{row.active ? 'Ativo' : 'Inativo'}</StatusBadge>
                 <StatusBadge tone={row.requiresConsent ? 'amber' : 'blue'}>
                   {row.requiresConsent ? 'Exige autorização' : 'Sem autorização'}
@@ -983,53 +1069,220 @@ export function CommunicationTemplatesPanel() {
       <Modal
         open={modal !== null}
         title={modal === 'view' ? 'Visualizar modelo' : modal === 'edit' ? 'Editar modelo' : 'Novo modelo'}
-        description="Use {{patientName}}, {{date}}, {{clinicName}} e {{professionalName}} para preencher automaticamente."
+        description="Texto reutilizado em lembretes, confirmações, retornos e envios manuais."
         onClose={closeModal}
         confirmOnClose={!viewing}
       >
-        <form className="mutation-form" onSubmit={(event) => void saveTemplate(event)}>
-          <label className="span-2">Nome
-            <input name="name" minLength={2} required autoFocus={!viewing} defaultValue={text(editing?.name, '')} readOnly={viewing} disabled={viewing} />
-          </label>
-          <label>Categoria
-            <select name="category" defaultValue={String(editing?.category ?? 'REMINDER')} disabled={viewing}>
-              <option value="REMINDER">Lembrete</option>
-              <option value="CONFIRMATION">Confirmação</option>
-              <option value="RETURN">Retorno</option>
-              <option value="MARKETING">Marketing</option>
-              <option value="OTHER">Outro</option>
-            </select>
-          </label>
-          <label>
-            Exige consentimento
-            <input name="requiresConsent" type="checkbox" defaultChecked={editing ? Boolean(editing.requiresConsent) : true} disabled={viewing} />
-          </label>
-          <label className="span-2">Conteúdo
-            <textarea name="content" rows={4} required minLength={5} placeholder="Olá {{patientName}}, lembrete da consulta em {{date}}." defaultValue={text(editing?.content, '')} readOnly={viewing} disabled={viewing} />
-          </label>
+        <form className="mutation-form template-form" onSubmit={(event) => void saveTemplate(event)}>
+          <fieldset className="form-group span-2">
+            <legend>Identificação</legend>
+            <label>Nome do modelo
+              <input
+                name="name"
+                minLength={2}
+                required
+                autoFocus={!viewing}
+                placeholder="Ex.: Lembrete 24h antes"
+                defaultValue={text(editing?.name, '')}
+                readOnly={viewing}
+                disabled={viewing}
+              />
+              <span className="field-hint">É o nome que aparece na lista e no envio manual.</span>
+            </label>
+          </fieldset>
+
+          <fieldset className="form-group span-2">
+            <legend>Categoria</legend>
+            <div className="form-group-row">
+              <label>Tipo de mensagem
+                <select name="category" value={category} onChange={(event) => changeCategory(event.target.value)} disabled={viewing}>
+                  {TEMPLATE_CATEGORIES.map((item) => (
+                    <option key={item.value} value={item.value}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="switch-row consent-toggle">
+                <span className="switch">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={consentLocked || requiresConsent}
+                    onChange={(event) => setRequiresConsent(event.target.checked)}
+                    disabled={viewing || consentLocked}
+                  />
+                  <span className="switch-track" aria-hidden />
+                </span>
+                <span>
+                  Exige consentimento do paciente
+                  <small>
+                    {consentLocked
+                      ? 'Obrigatório para marketing.'
+                      : 'Respeita a preferência de comunicação do paciente.'}
+                  </small>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset className="form-group span-2">
+            <legend>Quando enviar</legend>
+            {SCHEDULED_CATEGORIES.has(category) ? (
+              <>
+                <div className="form-group-row">
+                  <label>Antecedência
+                    <input
+                      type="number"
+                      min={1}
+                      max={leadUnit === 'days' ? 7 : 168}
+                      required
+                      value={leadAmount}
+                      onChange={(event) => setLeadAmount(Math.max(1, Number(event.target.value) || 1))}
+                      disabled={viewing}
+                    />
+                  </label>
+                  <label>Unidade
+                    <select value={leadUnit} onChange={(event) => setLeadUnit(event.target.value as LeadUnit)} disabled={viewing}>
+                      <option value="hours">horas antes da consulta</option>
+                      <option value="days">dias antes da consulta</option>
+                    </select>
+                  </label>
+                  {category === 'REMINDER' ? (
+                    <label>Consulta na segunda-feira
+                      <select
+                        value={mondaySendDay}
+                        onChange={(event) => setMondaySendDay(event.target.value as 'FRIDAY' | 'SUNDAY')}
+                        disabled={viewing}
+                      >
+                        <option value="FRIDAY">Enviar na sexta anterior (padrão)</option>
+                        <option value="SUNDAY">Enviar no domingo</option>
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
+                <span className="field-hint">
+                  {category === 'REMINDER'
+                    ? 'Vale para todo agendamento com lembrete ligado. Na agenda dá para trocar a antecedência de uma consulta específica.'
+                    : 'O pedido de confirmação sai automaticamente em cada agendamento com lembrete ligado, na antecedência acima (segunda-feira segue a mesma regra do lembrete).'}
+                  {' '}Só o primeiro modelo ativo da categoria (ordem alfabética) é usado no envio automático.
+                </span>
+                {category === 'CONFIRMATION' ? (
+                  <div className="template-reply-keywords">
+                    <span className="field-hint">O paciente responde no WhatsApp e o status da consulta muda sozinho:</span>
+                    <div>
+                      <strong>Confirma:</strong>
+                      {CONFIRM_REPLY_LABELS.map((word) => <span key={word} className="chip">{word}</span>)}
+                    </div>
+                    <div>
+                      <strong>Cancela:</strong>
+                      {CANCEL_REPLY_LABELS.map((word) => <span key={word} className="chip">{word}</span>)}
+                    </div>
+                    <span className="field-hint">
+                      Inclua essas opções no texto (ex.: “Responda SIM para confirmar ou NÃO para cancelar”). Nenhuma resposta automática é enviada.
+                      Requer o webhook da integração de WhatsApp cadastrado (Integrações → Ver).
+                    </span>
+                  </div>
+                ) : null}
+              </>
+            ) : category === 'RETURN' ? (
+              <span className="field-hint">
+                O prazo do retorno é definido nas regras de retorno automático, não no modelo.{' '}
+                {onOpenReturns ? (
+                  <button type="button" className="text-button" onClick={() => { closeModal(); onOpenReturns(); }}>
+                    Abrir Retornos automáticos
+                  </button>
+                ) : 'Veja Configurações → Retornos automáticos.'}
+              </span>
+            ) : (
+              <span className="field-hint">Sem antecedência automática: este modelo é usado em envios manuais e campanhas.</span>
+            )}
+          </fieldset>
+
+          <fieldset className="form-group span-2">
+            <legend>Conteúdo</legend>
+            <label>Mensagem
+              <textarea
+                ref={contentRef}
+                name="content"
+                rows={8}
+                required
+                minLength={5}
+                placeholder="Olá {{patientName}}, lembramos da sua consulta em {{date}} na {{clinicName}}."
+                defaultValue={text(editing?.content, '')}
+                readOnly={viewing}
+                disabled={viewing}
+              />
+            </label>
+            {viewing ? null : (
+              <div className="template-variables">
+                <span className="field-hint">Inserir campo automático:</span>
+                {TEMPLATE_VARIABLES.map((variable) => (
+                  <button
+                    key={variable.token}
+                    type="button"
+                    className="chip"
+                    title={`{{${variable.token}}}`}
+                    onClick={() => insertVariable(variable.token)}
+                  >
+                    {variable.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </fieldset>
+
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
-          {viewing ? (
-            <button className="button" type="button" onClick={closeModal}>Fechar</button>
-          ) : (
-            <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : modal === 'edit' ? 'Salvar modelo' : 'Criar modelo'}</button>
-          )}
+          <div className="modal-footer span-2">
+            {viewing ? (
+              <button className="button" type="button" onClick={closeModal}>Fechar</button>
+            ) : (
+              <>
+                <button className="button" type="button" onClick={closeModal}>Cancelar</button>
+                <button className="button primary" disabled={busy}>
+                  {busy ? 'Salvando…' : modal === 'edit' ? 'Salvar' : 'Criar modelo'}
+                </button>
+              </>
+            )}
+          </div>
         </form>
       </Modal>
     </div>
   );
 }
 
+const MESSAGING_PROVIDER_LABEL: Record<string, string> = {
+  EVOLUTION: 'Evolution (WhatsApp)',
+  CHATWOOT: 'Chatwoot (inbox WhatsApp)',
+};
+
+/** Mesmo critério de "conectada" da API: Evolution/Chatwoot ativa e com credenciais salvas. */
+function isConnectedMessagingIntegration(item: RecordValue) {
+  return (
+    Boolean(item.id)
+    && String(item.provider) in MESSAGING_PROVIDER_LABEL
+    && item.status === 'ACTIVE'
+    && nested(item, 'credentials').configured === true
+  );
+}
+
+function integrationLabel(item: RecordValue) {
+  const provider = MESSAGING_PROVIDER_LABEL[String(item.provider)] ?? presentationLabel(item.provider);
+  return `${provider} · ${text(item.scopeLabel, 'Clínica')}`;
+}
+
 export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
   const [channels, setChannels] = useState<RecordValue[]>([]);
   const [templates, setTemplates] = useState<RecordValue[]>([]);
+  const [integrations, setIntegrations] = useState<RecordValue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [open, setOpen] = useState(false);
+  const [editingChannel, setEditingChannel] = useState<RecordValue | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
   const [sendResult, setSendResult] = useState('');
   const [channelType, setChannelType] = useState('EMAIL');
+  const [integrationId, setIntegrationId] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1037,10 +1290,12 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
     Promise.all([
       api.get<RecordValue[]>('/communication/channels?includeInactive=true'),
       api.get<RecordValue[]>('/communication/templates').catch(() => [] as RecordValue[]),
+      api.get<{ configured?: RecordValue[] }>('/integrations').catch(() => ({ configured: [] as RecordValue[] })),
     ])
-      .then(([nextChannels, nextTemplates]) => {
+      .then(([nextChannels, nextTemplates, nextIntegrations]) => {
         setChannels(list(nextChannels));
         setTemplates(list(nextTemplates));
+        setIntegrations(list(nextIntegrations.configured));
       })
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : 'Falha ao listar canais.'))
       .finally(() => setLoading(false));
@@ -1048,24 +1303,63 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
 
   useEffect(load, [load]);
 
-  async function createChannel(event: FormEvent<HTMLFormElement>) {
+  const integrationById = new Map(integrations.map((item) => [String(item.id), item]));
+  const channelClinicId = editingChannel?.clinicId ? String(editingChannel.clinicId) : clinicId;
+  const connectedIntegrations = integrations.filter(
+    (item) => isConnectedMessagingIntegration(item) && (!channelClinicId || item.clinicId === channelClinicId),
+  );
+  const needsIntegration = channelType === 'WHATSAPP';
+  const missingIntegration = needsIntegration && !integrationId;
+
+  function openChannelForm(row: RecordValue | null) {
+    const type = String(row?.type ?? 'EMAIL');
+    const linkedId = row?.integrationConnectionId ? String(row.integrationConnectionId) : '';
+    const linked = integrationById.get(linkedId);
+    setEditingChannel(row);
+    setChannelType(type);
+    setIntegrationId(linked && isConnectedMessagingIntegration(linked) ? linkedId : '');
+    setFormError('');
+    setOpen(true);
+  }
+
+  function closeChannelForm() {
+    setOpen(false);
+    setEditingChannel(null);
+  }
+
+  function changeChannelType(next: string) {
+    setChannelType(next);
+    if (next === 'WHATSAPP' && !integrationId && connectedIntegrations.length === 1) {
+      setIntegrationId(String(connectedIntegrations[0]!.id));
+    }
+  }
+
+  async function saveChannel(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (missingIntegration) {
+      setFormError('Escolha uma integração conectada para o canal WhatsApp.');
+      return;
+    }
     const data = new FormData(event.currentTarget);
+    const displayName = String(data.get('displayName') || '').trim();
+    const integrationConnectionId = needsIntegration ? integrationId : undefined;
     setBusy(true);
     setFormError('');
     try {
-      await api.post('/communication/channels', {
-        clinicId: clinicId || undefined,
-        type: String(data.get('type') || 'EMAIL'),
-        displayName: String(data.get('displayName') || '').trim(),
-        configuration: String(data.get('type')) === 'WHATSAPP' && data.get('provider')
-          ? { provider: String(data.get('provider')) }
-          : undefined,
-      });
-      setOpen(false);
+      if (editingChannel) {
+        await api.patch(`/communication/channels/${String(editingChannel.id)}`, { displayName, integrationConnectionId });
+      } else {
+        await api.post('/communication/channels', {
+          clinicId: clinicId || undefined,
+          type: channelType,
+          displayName,
+          integrationConnectionId,
+        });
+      }
+      closeChannelForm();
       load();
     } catch (cause) {
-      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível criar o canal.');
+      setFormError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar o canal.');
     } finally {
       setBusy(false);
     }
@@ -1117,7 +1411,7 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
           <button className="button small" type="button" onClick={() => { setSendOpen(true); setSendResult(''); setFormError(''); }}>
             Envio manual
           </button>
-          <button className="button small primary" type="button" onClick={() => { setOpen(true); setChannelType('EMAIL'); setFormError(''); }}>Novo canal</button>
+          <button className="button small primary" type="button" onClick={() => openChannelForm(null)}>Novo canal</button>
         </div>
       </header>
       {error ? <p className="state-message error" role="alert">{error}</p> : null}
@@ -1126,48 +1420,119 @@ export function MessagingChannelsPanel({ clinicId }: { clinicId?: string }) {
         <EmptyState title="Nenhum canal" description="Crie um canal de e-mail ou WhatsApp para começar a enviar mensagens." />
       ) : (
         <div className="settings-list">
-          {channels.map((row) => (
-            <div className="settings-row" key={String(row.id)}>
-              <div>
-                <strong>{text(row.displayName)}</strong>
-                <span>{presentationLabel(row.type)}{typeof nested(row, 'configuration').provider === 'string' ? ` · ${presentationLabel(nested(row, 'configuration').provider)}` : ''}</span>
+          {channels.map((row) => {
+            const isWhatsApp = row.type === 'WHATSAPP';
+            const linked = row.integrationConnectionId ? integrationById.get(String(row.integrationConnectionId)) : undefined;
+            const linkIssue = !isWhatsApp
+              ? null
+              : !row.integrationConnectionId
+                ? 'Sem integração'
+                : !linked || !isConnectedMessagingIntegration(linked)
+                  ? 'Integração desconectada'
+                  : null;
+            const detail = row.type === 'EMAIL'
+              ? 'SMTP da clínica'
+              : isWhatsApp
+                ? (linked ? integrationLabel(linked) : 'nenhuma integração vinculada')
+                : '';
+            return (
+              <div className="settings-row" key={String(row.id)}>
+                <div>
+                  <strong>{text(row.displayName)}</strong>
+                  <span>{presentationLabel(row.type)}{detail ? ` · ${detail}` : ''}</span>
+                </div>
+                <div className="row-actions">
+                  {linkIssue ? <StatusBadge tone="amber">{linkIssue}</StatusBadge> : null}
+                  <StatusBadge tone={row.status === 'ACTIVE' ? 'green' : 'gray'}>
+                    {presentationLabel(row.status)}
+                  </StatusBadge>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    title="Editar"
+                    aria-label={`Editar ${text(row.displayName)}`}
+                    onClick={() => openChannelForm(row)}
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button className="button small" type="button" onClick={() => void toggleChannel(row)}>
+                    {row.status === 'ACTIVE' ? 'Inativar' : 'Ativar'}
+                  </button>
+                </div>
               </div>
-              <div className="row-actions">
-                <StatusBadge tone={row.status === 'ACTIVE' ? 'green' : 'gray'}>
-                  {presentationLabel(row.status)}
-                </StatusBadge>
-                <button className="button small" type="button" onClick={() => void toggleChannel(row)}>
-                  {row.status === 'ACTIVE' ? 'Inativar' : 'Ativar'}
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       <p className="muted-note">
-        E-mail e WhatsApp precisam estar configurados pelo administrador. SMS ainda não está disponível nesta versão.
+        WhatsApp envia pela integração conectada em Configurações → Integrações. E-mail usa o SMTP da clínica. SMS ainda não está disponível nesta versão.
       </p>
-      <Modal open={open} title="Novo canal" description="Canal operacional para envio manual e futuras automações." onClose={() => setOpen(false)} confirmOnClose>
-        <form className="mutation-form" onSubmit={createChannel}>
-          <label className="span-2">Nome de exibição<input name="displayName" minLength={2} required autoFocus /></label>
-          <label className="span-2">Tipo
-            <select name="type" value={channelType} onChange={(event) => setChannelType(event.target.value)}>
-              <option value="EMAIL">E-mail</option>
-              <option value="WHATSAPP">WhatsApp</option>
-              <option value="SMS" disabled>SMS (não implementado)</option>
-            </select>
-          </label>
-          {channelType === 'WHATSAPP' ? (
-            <label className="span-2">Transporte
-              <select name="provider" defaultValue="EVOLUTION">
-                <option value="EVOLUTION">Evolution (direto)</option>
-                <option value="CHATWOOT">Chatwoot (inbox WhatsApp/API)</option>
-              </select>
-              <span className="field-hint">Chatwoot usa a conexão salva em Integrações. Evolution continua o padrão.</span>
+      <Modal
+        open={open}
+        title={editingChannel ? 'Editar canal' : 'Novo canal'}
+        description="Canal operacional para envio manual e futuras automações."
+        onClose={closeChannelForm}
+        confirmOnClose
+      >
+        <form className="mutation-form" onSubmit={saveChannel}>
+          <fieldset className="form-group span-2">
+            <legend>Identificação</legend>
+            <label>Nome de exibição
+              <input
+                name="displayName"
+                minLength={2}
+                required
+                autoFocus
+                placeholder="Ex.: WhatsApp recepção"
+                defaultValue={text(editingChannel?.displayName, '')}
+              />
             </label>
-          ) : null}
+          </fieldset>
+          <fieldset className="form-group span-2">
+            <legend>Tipo e conexão</legend>
+            <label>Tipo
+              <select
+                name="type"
+                value={channelType}
+                onChange={(event) => changeChannelType(event.target.value)}
+                disabled={Boolean(editingChannel)}
+              >
+                <option value="EMAIL">E-mail</option>
+                <option value="WHATSAPP">WhatsApp</option>
+                <option value="SMS" disabled>SMS (não implementado)</option>
+              </select>
+            </label>
+            {needsIntegration ? (
+              <label>Integração conectada
+                <select
+                  name="integrationConnectionId"
+                  value={integrationId}
+                  onChange={(event) => setIntegrationId(event.target.value)}
+                  required
+                  disabled={connectedIntegrations.length === 0}
+                >
+                  <option value="">{connectedIntegrations.length ? 'Selecione' : 'Nenhuma integração conectada'}</option>
+                  {connectedIntegrations.map((item) => (
+                    <option key={String(item.id)} value={String(item.id)}>{integrationLabel(item)}</option>
+                  ))}
+                </select>
+                <span className="field-hint">
+                  {connectedIntegrations.length
+                    ? 'As mesmas conexões de Configurações → Integrações (Evolution ou Chatwoot).'
+                    : 'Conecte Evolution ou Chatwoot em Configurações → Integrações para criar um canal WhatsApp.'}
+                </span>
+              </label>
+            ) : channelType === 'EMAIL' ? (
+              <span className="field-hint">E-mail usa o SMTP da clínica; não precisa de integração.</span>
+            ) : null}
+          </fieldset>
           {formError ? <p className="form-error span-2" role="alert">{formError}</p> : null}
-          <button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Criar canal'}</button>
+          <div className="modal-footer span-2">
+            <button type="button" className="button" onClick={closeChannelForm}>Cancelar</button>
+            <button className="button primary" disabled={busy || missingIntegration}>
+              {busy ? 'Salvando…' : editingChannel ? 'Salvar' : 'Criar canal'}
+            </button>
+          </div>
         </form>
       </Modal>
       <Modal open={sendOpen} title="Envio manual" description="Se houver paciente vinculado e o modelo exigir autorização, a preferência de comunicação será respeitada. Neste envio o destino pode ser informado livremente." onClose={() => setSendOpen(false)} confirmOnClose>

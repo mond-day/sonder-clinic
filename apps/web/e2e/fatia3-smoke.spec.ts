@@ -17,7 +17,7 @@ test.describe('Fatia 3 — smoke UX', () => {
     await page.goto('/configuracoes');
     await expect(page.getByRole('heading', { name: /configurações/i }).first()).toBeVisible({ timeout: 15_000 });
     await page.getByRole('button', { name: /pacientes duplicados/i }).click();
-    await expect(page.getByText(/possivelmente duplicados|nenhuma suspeita/i).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/possíve(?:l|is) duplicado/i).first()).toBeVisible({ timeout: 15_000 });
 
     const review = page.getByRole('button', { name: /revisar merge/i }).first();
     if (await review.count() === 0) {

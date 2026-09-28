@@ -178,6 +178,25 @@ const statusLegend: Array<{ status: string; tone: ReturnType<typeof appointmentE
   { status: 'NO_SHOW', tone: 'amber' },
 ];
 
+/** Antecedências de lembrete da consulta (sem o pedido de confirmação, que segue o modelo). */
+function reminderLeadMinutesOf(item: RecordValue): number[] {
+  return list(item.reminders)
+    .filter((entry) => entry.channel !== 'WHATSAPP:CONFIRMATION')
+    .map((entry) => Number(entry.leadMinutes))
+    .filter((value) => Number.isFinite(value) && value > 0);
+}
+
+function reminderLeadLabel(minutes: number) {
+  if (minutes % 1440 === 0) return `${minutes / 1440} ${minutes === 1440 ? 'dia' : 'dias'}`;
+  if (minutes % 60 === 0) return `${minutes / 60} ${minutes === 60 ? 'hora' : 'horas'}`;
+  return `${minutes} min`;
+}
+
+function reminderLeadOptions(current: number[]) {
+  const values = [...new Set([120, 1440, 2880, ...current])].sort((a, b) => a - b);
+  return values.map((value) => ({ value: String(value), label: reminderLeadLabel(value) }));
+}
+
 function startOfDay(reference: Date) {
   const date = new Date(reference);
   date.setHours(0, 0, 0, 0);
@@ -588,9 +607,7 @@ export function AgendaView() {
     reminderLeadMinutes?: number | number[];
   }) {
     const reminders = list(item.reminders);
-    const reminderLeads = reminders
-      .map((entry) => Number(entry.leadMinutes))
-      .filter((value) => Number.isFinite(value) && value > 0);
+    const reminderLeads = reminderLeadMinutesOf(item);
     await api.put(`/appointments/${String(item.id)}`, {
       clinicId: appointmentClinicId(item),
       unitId: patch.unitId ?? String(item.unitId),
@@ -609,7 +626,7 @@ export function AgendaView() {
         .map((entry) => String(nested(entry, 'tag').id || entry.tagId || ''))
         .filter(Boolean),
       reminderEnabled: patch.reminderEnabled ?? reminders.length > 0,
-      reminderLeadMinutes: patch.reminderLeadMinutes ?? (reminderLeads.length ? reminderLeads : 1440),
+      reminderLeadMinutes: patch.reminderLeadMinutes ?? (reminderLeads.length ? reminderLeads : undefined),
     });
   }
 
@@ -804,7 +821,7 @@ export function AgendaView() {
         notes: String(data.get('notes') ?? '').trim() || undefined,
         tagIds: data.getAll('tagIds').map(String).filter(Boolean),
         reminderEnabled: data.get('reminderEnabled') === 'on',
-        reminderLeadMinutes: reminderLeads.length ? reminderLeads : 1440,
+        reminderLeadMinutes: reminderLeads.length ? reminderLeads : undefined,
       });
       setSelectedAppointment(null);
       setEditingAppointment(false);
@@ -938,7 +955,7 @@ export function AgendaView() {
             <button className="button secondary" type="button" onClick={load} disabled={loading}>
               <RefreshCw size={15} />Atualizar
             </button>
-            <ImportButton kind="appointments" onImported={load} />
+            <ImportButton kind="appointments" label="Importar consultas" onImported={load} />
             <button
               className="button primary"
               type="button"
@@ -1079,14 +1096,13 @@ export function AgendaView() {
                 <MultiSelect
                   name="reminderLeadMinutes"
                   label="Antecedência"
-                  defaultValues={list(selectedAppointment.reminders).map((item) => String(item.leadMinutes || 1440))}
-                  options={[
-                    { value: '120', label: '2 horas' },
-                    { value: '1440', label: '24 horas' },
-                    { value: '2880', label: '48 horas' },
-                  ]}
-                  placeholder="Selecionar antecedências"
+                  defaultValues={reminderLeadMinutesOf(selectedAppointment).map(String)}
+                  options={reminderLeadOptions(reminderLeadMinutesOf(selectedAppointment))}
+                  placeholder="Padrão do modelo de Lembrete"
                 />
+                <p className="field-hint span-2">
+                  Sem antecedência escolhida, vale a do modelo de Lembrete (Configurações → Comunicação). O pedido de confirmação segue o modelo de Confirmação.
+                </p>
                 {list(selectedAppointment.reminders).some((item) => item.status === 'DISABLED') ? (
                   <p className="form-error span-2">WhatsApp ainda não está configurado: o lembrete foi salvo, mas não será enviado até a integração estar ativa.</p>
                 ) : null}

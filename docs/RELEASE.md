@@ -1,20 +1,20 @@
 # Release e versionamento
 
-Versão atual do monorepo: **1.3.16** (semver `MAJOR.MINOR.PATCH`).
+Versão atual do monorepo: **1.3.17** (semver `MAJOR.MINOR.PATCH`).
 
-**Padrão de tag: `v1.3.16`.** Não use `v.1.3.16` (ponto extra após o `v`) — o GitHub ignora esse formato.
+**Padrão de tag: `v1.3.17`.** Não use `v.1.3.17` (ponto extra após o `v`) — o GitHub ignora esse formato.
 
 ## Como lançar (vX.Y.Z)
 
-1. Atualize a versão nos `package.json` do root, apps e packages (`1.3.15` → `1.3.16`, por exemplo), além deste arquivo e da linha "Versão atual" do `README.md`.
+1. Atualize a versão nos `package.json` do root, apps e packages (`1.3.16` → `1.3.17`, por exemplo), além deste arquivo e da linha "Versão atual" do `README.md`.
 2. Rode `corepack pnpm lint`, `corepack pnpm typecheck`, `corepack pnpm test` e `corepack pnpm build`.
 3. Faça o commit das mudanças na `main` com mensagem em Conventional Commits (`corepack pnpm lint:commit` valida a última).
 4. Crie a tag anotada e envie:
 
 ```bash
-git tag -a v1.3.16 -m "Release 1.3.16"
+git tag -a v1.3.17 -m "Release 1.3.17"
 git push origin main
-git push origin v1.3.16
+git push origin v1.3.17
 ```
 
 5. No GitHub Actions, o workflow **Release** roda sozinho: testes essenciais (CI + instalação limpa) → imagens no GHCR → deploy.
@@ -22,7 +22,7 @@ git push origin v1.3.16
 7. Abra o domínio HTTPS do frontend.
 8. **Primeira instalação:** página `/setup` — token de instalação, nome da clínica, primeiro usuário, senha.
 9. **Já instalado:** página `/login` com os usuários existentes.
-10. Confirme que a versão no GHCR é `1.3.16` (e também `1.3` / `latest` / `sha-<commit>`).
+10. Confirme que a versão no GHCR é `1.3.17` (e também `1.3` / `latest` / `sha-<commit>`).
 
 Não rode seed de demo em produção. O operador não precisa de terminal na API para o primeiro admin.
 
@@ -36,9 +36,9 @@ Registry: `ghcr.io/mond-day` (Docker GHCR — **não** npm GitHub Packages)
 | Web Next.js | `ghcr.io/mond-day/sonder-clinic-web` |
 | Worker | `ghcr.io/mond-day/sonder-clinic-worker` |
 
-Tags geradas no workflow **Release** (`v1.3.16`):
+Tags geradas no workflow **Release** (`v1.3.17`):
 
-- `1.3.16`
+- `1.3.17`
 - `1.3`
 - `latest`
 - `sha-<gitsha>`
@@ -60,9 +60,9 @@ Na VPS, uma vez só:
 Sem esses secrets no GitHub, o Release **ainda testa e publica as imagens**. Aí, na VPS:
 
 ```bash
-export API_IMAGE=ghcr.io/mond-day/sonder-clinic-api:1.3.16
-export WEB_IMAGE=ghcr.io/mond-day/sonder-clinic-web:1.3.16
-export WORKER_IMAGE=ghcr.io/mond-day/sonder-clinic-worker:1.3.16
+export API_IMAGE=ghcr.io/mond-day/sonder-clinic-api:1.3.17
+export WEB_IMAGE=ghcr.io/mond-day/sonder-clinic-web:1.3.17
+export WORKER_IMAGE=ghcr.io/mond-day/sonder-clinic-worker:1.3.17
 ./infra/swarm/scripts/deploy.sh
 ```
 

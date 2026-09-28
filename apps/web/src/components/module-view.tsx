@@ -14,7 +14,6 @@ import {
   text,
   type RecordValue,
 } from '@/lib/format';
-import { ImportButton } from '@/features/imports/import-button';
 import { AgendaView } from './agenda-view';
 import { DocumentsView } from './documents-view';
 import { FinanceView } from './finance-view';
@@ -56,7 +55,7 @@ type ViewData = { columns: string[]; rows: string[][]; metrics: Array<[string, s
 const metadata: Record<ModuleKey, { name: string; description: string }> = {
   agenda: { name: 'Agenda', description: 'Consultas por profissional e cadeira, com verificação automática de conflitos.' },
   pacientes: { name: 'Pacientes', description: 'Cadastros, alertas clínicos e vínculos com responsáveis.' },
-  tratamentos: { name: 'Tratamentos e prontuário', description: 'Planos, evoluções clínicas e odontogramas do paciente selecionado.' },
+  tratamentos: { name: 'Tratamentos e orçamentos', description: 'Orçamentos (planos de tratamento), evoluções clínicas e odontogramas do paciente selecionado.' },
   documentos: { name: 'Documentos', description: 'Modelos, documentos gerados e assinaturas imutáveis.' },
   financeiro: { name: 'Financeiro', description: 'Recebíveis, pagamentos, estornos e conciliação.' },
   comissoes: { name: 'Comissões', description: 'Regras versionadas e eventos por competência.' },
@@ -212,17 +211,9 @@ function GenericModuleView({ moduleKey: key }: { moduleKey: GenericModuleKey }) 
         description={info.description}
         eyebrow="OPERAÇÃO CLÍNICA"
         actions={
-          <>
-            <button className="button secondary" onClick={load} disabled={loading} type="button">
-              <RefreshCw size={16} />Atualizar
-            </button>
-            {key === 'tratamentos' ? (
-              <>
-                <ImportButton kind="treatment-plans" label="Importar orçamentos" onImported={load} />
-                <ImportButton kind="treatments" label="Importar tratamentos" onImported={load} />
-              </>
-            ) : null}
-          </>
+          <button className="button secondary" onClick={load} disabled={loading} type="button">
+            <RefreshCw size={16} />Atualizar
+          </button>
         }
       />
       {data && (

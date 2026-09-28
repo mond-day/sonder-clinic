@@ -54,6 +54,7 @@ class UpdateAgendaTagDto {
 class CreateUnitDto {
   @IsUUID() clinicId!: string;
   @IsString() @MinLength(2) name!: string;
+  @IsOptional() @IsString() address?: string;
   @IsOptional() @IsString() city?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() timezone?: string;
@@ -61,6 +62,7 @@ class CreateUnitDto {
 
 class UpdateUnitDto {
   @IsOptional() @IsString() @MinLength(2) name?: string;
+  @IsOptional() @IsString() address?: string;
   @IsOptional() @IsString() city?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() timezone?: string;

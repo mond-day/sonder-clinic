@@ -335,6 +335,8 @@ model Unit {
   id           String        @id @default(uuid()) @db.Uuid
   clinicId     String        @db.Uuid
   name         String
+  /// Endereço exibido em mensagens ({{clinicAddress}}).
+  address      String?
   city         String?
   phone        String?
   timezone     String        @default("America/Cuiaba")
@@ -1907,6 +1909,8 @@ model MessagingChannel {
   professionalId       String?           @db.Uuid
   type                 String
   displayName          String
+  /// IntegrationConnection (Evolution/Chatwoot) usada no envio; sem FK rígida, validada na API e no envio.
+  integrationConnectionId String?        @db.Uuid
   encryptedCredentials String?
   configuration        Json              @default("{}")
   status               EntityStatus      @default(ACTIVE)
@@ -1914,6 +1918,7 @@ model MessagingChannel {
   deliveries           MessageDelivery[]
 
   @@index([organizationId, status])
+  @@index([integrationConnectionId])
 }
 
 model MessageTemplate {
@@ -1923,6 +1928,8 @@ model MessageTemplate {
   category        String
   content         String
   variables       Json
+  /// Régua do envio automático: { leadMinutes, mondaySendDay } (Lembrete/Confirmação).
+  schedule        Json              @default("{}")
   requiresConsent Boolean           @default(true)
   active          Boolean           @default(true)
   deliveries      MessageDelivery[]

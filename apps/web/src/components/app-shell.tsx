@@ -28,7 +28,7 @@ import { NotificationsDrawer } from './notifications-drawer';
 import { useSelection } from './selection-provider';
 import { useTheme } from './theme-provider';
 import { useWorkspace } from './workspace-provider';
-import { ClinicBrandMark, ClinicBrandText, useClinicBranding } from './clinic-brand';
+import { ClinicBrandMark, ClinicBrandText, useClinicBranding, useDocumentFavicon } from './clinic-brand';
 import { PersonAvatar } from './person-avatar';
 
 type NavBadge = 'returns' | 'tasks' | 'lab';
@@ -86,6 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { clinics, clinicId, setClinicId } = useSelection();
   const { notifications, returnSummary, openTasks, openLabCases } = useWorkspace();
   const branding = useClinicBranding(clinicId, Boolean(user));
+  useDocumentFavicon(branding?.faviconUrl);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);

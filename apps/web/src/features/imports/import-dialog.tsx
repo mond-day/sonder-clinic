@@ -30,16 +30,19 @@ function errorMessage(cause: unknown, fallback: string) {
 
 export function ImportDialog({
   open,
-  kind,
+  kinds,
   onClose,
   onImported,
 }: {
   open: boolean;
-  kind: ImportSlug;
+  kinds: ImportSlug[];
   onClose(): void;
   onImported?(): void;
 }) {
+  const kindsKey = kinds.join(',');
+  const [kind, setKind] = useState<ImportSlug>(kinds[0]!);
   const info = IMPORT_KINDS[kind];
+  const multiple = kinds.length > 1;
   const { clinicId, clinics, professionals } = useSelection();
   const inputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<Step>('select');
@@ -68,6 +71,7 @@ export function ImportDialog({
 
   useEffect(() => {
     if (!open) return;
+    setKind(kindsKey.split(',')[0] as ImportSlug);
     setStep('select');
     setFile(null);
     setPreview(null);
@@ -77,8 +81,23 @@ export function ImportDialog({
     setError('');
     setUnitId('');
     setProfessionalId('');
-    loadBatches();
+  }, [open, kindsKey]);
+
+  useEffect(() => {
+    if (open) loadBatches();
   }, [open, loadBatches]);
+
+  function changeKind(next: ImportSlug) {
+    if (next === kind) return;
+    setKind(next);
+    setPreview(null);
+    setResult(null);
+    setConfirmRevert(null);
+    setNotice('');
+    setError('');
+    setUnitId('');
+    setProfessionalId('');
+  }
 
   function pickFile(candidate: File | undefined) {
     if (!candidate) return;
@@ -174,12 +193,34 @@ export function ImportDialog({
   return (
     <Modal
       open={open}
-      title={info.title}
+      title={multiple ? 'Importar dados' : info.title}
       description="Envie a planilha .xlsx, confira a prévia e confirme. Se algo falhar, nada é gravado."
       onClose={busy ? () => undefined : onClose}
       size="xlarge"
     >
       <div className="mutation-form import-dialog">
+        {multiple && step === 'select' ? (
+          <div className="span-2 import-kind-picker">
+            <span className="field-hint">O que você vai importar?</span>
+            <div className="segmented" role="group" aria-label="Tipo de importação">
+              {kinds.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className={item === kind ? 'active' : ''}
+                  aria-pressed={item === kind}
+                  onClick={() => changeKind(item)}
+                  disabled={busy}
+                >
+                  {IMPORT_KINDS[item].label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {multiple && step !== 'select' ? (
+          <p className="import-muted span-2">Tipo: <strong>{info.label}</strong></p>
+        ) : null}
         <div className="secure-notice span-2" style={{ marginBottom: 0 }}>
           <div><strong>Como funciona</strong><span>{info.hint}</span></div>
         </div>

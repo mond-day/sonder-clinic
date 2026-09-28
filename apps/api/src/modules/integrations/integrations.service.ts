@@ -34,6 +34,7 @@ import {
   watchGoogleCalendarEvents,
   type GoogleCalendarListedEvent,
 } from './google-calendar.utils';
+import { whatsappWebhookPath } from './whatsapp-inbound';
 import {
   googleCalendarConnectionOauthReady,
   isClinicScopedGoogleCalendar,
@@ -172,6 +173,9 @@ export class IntegrationsService {
             : 'Clínica',
           credentials: credentialsPayload,
         };
+        if (connection.provider === 'EVOLUTION' || connection.provider === 'CHATWOOT') {
+          return { ...base, inboundWebhookPath: whatsappWebhookPath(connection.id) };
+        }
         if (connection.provider !== 'GOOGLE_CALENDAR') return base;
         const credentials = encryptedCredentials
           ? this.decryptForAdapter(encryptedCredentials)

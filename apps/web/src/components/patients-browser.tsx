@@ -203,7 +203,7 @@ export function PatientsBrowser() {
             <button className="button secondary" type="button" onClick={load} disabled={loading}>
               <RefreshCw size={15} />Atualizar
             </button>
-            <ImportButton kind="patients" onImported={load} />
+            <ImportButton kinds={['patients', 'treatment-plans', 'treatments', 'appointments']} onImported={load} />
             <button
               className="button primary"
               type="button"

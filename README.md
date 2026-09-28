@@ -2,7 +2,7 @@
 
 ERP odontológico interno, multi‑clínica, construído como monorepo TypeScript (Next.js + NestJS + worker + PostgreSQL/Prisma). Cobre a operação de uma clínica de ponta a ponta: agenda, pacientes, prontuário clínico, odontograma, planos de tratamento, documentos, financeiro, comissões, comunicação, integrações e configurações.
 
-> Versão atual: **1.3.16**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
+> Versão atual: **1.3.17**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
 
 ---
 
@@ -295,16 +295,16 @@ Imagens publicadas no **GHCR** (`ghcr.io/mond-day`). Informe a tag no deploy (`s
 ## CI/CD e release
 
 - **CI** (`.github/workflows/ci.yml`): qualidade (lint/typecheck/test/e2e) e job `fresh-install`.
-- **Release** (`.github/workflows/release.yml`): tag `v1.3.16` (não `v.1.3.16`) dispara testes → imagens GHCR (`1.3.16`, `1.3`, `latest`, `sha-<gitsha>`) → deploy Swarm. Push em `main` sem tag gera `0.0.0-sha.<sha>` sem sobrescrever `latest`.
+- **Release** (`.github/workflows/release.yml`): tag `v1.3.17` (não `v.1.3.17`) dispara testes → imagens GHCR (`1.3.17`, `1.3`, `latest`, `sha-<gitsha>`) → deploy Swarm. Push em `main` sem tag gera `0.0.0-sha.<sha>` sem sobrescrever `latest`.
 
 Passos de release (detalhes em `docs/RELEASE.md`):
 
 ```bash
 # 1. Atualize a versão nos package.json (root + apps + packages)
 # 2. Commit na main
-git tag -a v1.3.16 -m "Release 1.3.16"
+git tag -a v1.3.17 -m "Release 1.3.17"
 git push origin main
-git push origin v1.3.16
+git push origin v1.3.17
 # 3. Abra o domínio: /setup na primeira vez, /login se já existir clínica
 ```
 
@@ -369,8 +369,8 @@ No topo da tela há o **seletor de clínica** — escolha a unidade em que está
 |--------|----------------|
 | **Visão geral** | Painel com os principais indicadores da clínica |
 | **Agenda** | Consultas do dia por profissional e cadeira; marcar, remarcar e cancelar |
-| **Pacientes** | Cadastro, contato, alertas clínicos e responsáveis |
-| **Tratamentos e prontuário** | Planos de tratamento, evoluções clínicas e odontograma do paciente |
+| **Pacientes** | Cadastro, contato, alertas clínicos e responsáveis; **Importar** (pacientes, orçamentos, tratamentos e consultas) |
+| **Tratamentos e orçamentos** | Orçamentos (planos de tratamento), evoluções clínicas e odontograma do paciente |
 | **Documentos** | Modelos, documentos gerados e assinaturas |
 | **Financeiro** | Cobranças (recebíveis), recebimentos e situação de pagamento |
 | **Comissões** | Regras de comissão dos profissionais |
@@ -382,7 +382,7 @@ No topo da tela há o **seletor de clínica** — escolha a unidade em que está
 
 1. **Agendar uma consulta:** selecione a clínica → **Agenda** → nova consulta, escolhendo paciente, profissional, cadeira e horário. O sistema avisa se houver conflito de horário/cadeira.
 2. **Cadastrar/atualizar paciente:** **Pacientes** → novo (ou editar). Para menores, informe o responsável. Alertas clínicos ficam visíveis no cadastro.
-3. **Atender e registrar evolução:** escolha o paciente em **Tratamentos e prontuário** → registre a evolução do atendimento; o **odontograma** guarda o histórico dos dentes por versão.
+3. **Atender e registrar evolução:** escolha o paciente em **Tratamentos e orçamentos** → registre a evolução do atendimento; o **odontograma** guarda o histórico dos dentes por versão.
 4. **Cobrar o paciente:** **Financeiro** → crie o título (cobrança) e registre o recebimento quando pago.
 5. **Emitir documento:** **Documentos** → gere a partir de um modelo; documentos assinados ficam imutáveis e podem ser validados por um código público.
 6. **Acompanhar comunicação:** **Comunicação** → veja o status das mensagens enviadas (entregue, falha, etc.).

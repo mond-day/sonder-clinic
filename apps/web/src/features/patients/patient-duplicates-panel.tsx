@@ -45,6 +45,12 @@ const REASON_LABEL: Record<string, string> = {
   SIMILAR_NAME_PHONE: 'Nome semelhante + telefone',
 };
 
+/** A API envia 0–100; valores 0–1 são tratados como fração por segurança. */
+function duplicateChance(score: number) {
+  const value = score > 0 && score <= 1 ? score * 100 : score;
+  return Math.round(Math.min(100, Math.max(0, value)));
+}
+
 export function PatientDuplicatesPanel({ clinicId }: { clinicId: string }) {
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,26 +130,27 @@ export function PatientDuplicatesPanel({ clinicId }: { clinicId: string }) {
       });
       load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Falha ao descartar suspeita.');
+      setError(cause instanceof ApiError ? cause.message : 'Falha ao descartar o possível duplicado.');
     } finally {
       setBusy(false);
     }
   }
 
-  if (loading) return <div className="state-message">Carregando suspeitas…</div>;
+  if (loading) return <div className="state-message">Carregando possíveis duplicados…</div>;
 
   return (
     <div className="duplicates-panel">
       <div className="duplicates-toolbar">
         <StatusBadge tone={groups.length ? 'amber' : 'green'}>
-          {groups.length} suspeita{groups.length === 1 ? '' : 's'}
+          {groups.length} possíve{groups.length === 1 ? 'l duplicado' : 'is duplicados'}
         </StatusBadge>
+        {groups.length > 1 ? <span className="muted-note">Da maior para a menor chance de duplicidade.</span> : null}
       </div>
 
       {error ? <p className="form-error" role="alert">{error}</p> : null}
 
       {groups.length === 0 ? (
-        <EmptyState title="Nenhuma suspeita" description="Não há pares candidatos com os critérios atuais." />
+        <EmptyState title="Nenhum possível duplicado" description="Nenhum par de cadastros com chance relevante de duplicidade." />
       ) : (
         <div className="duplicates-list">
           {groups.map((group, index) => {
@@ -156,7 +163,9 @@ export function PatientDuplicatesPanel({ clinicId }: { clinicId: string }) {
                       {REASON_LABEL[reason] ?? reason}
                     </StatusBadge>
                   ))}
-                  <span className="muted-note">score {group.score}</span>
+                  <span className="muted-note" title="Chance estimada de os dois cadastros serem a mesma pessoa">
+                    {duplicateChance(group.score)}% de chance
+                  </span>
                 </div>
                 <div className="duplicate-grid">
                   {group.patients.map((patient, slot) => (

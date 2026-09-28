@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { z } from 'zod';
 import {
@@ -144,6 +144,7 @@ export function SettingsView() {
   const [integrations, setIntegrations] = useState<RecordValue[]>([]);
   const [integrationCatalog, setIntegrationCatalog] = useState<RecordValue[]>([]);
   const [showAddIntegrationMenu, setShowAddIntegrationMenu] = useState(false);
+  const addIntegrationMenuRef = useRef<HTMLDivElement>(null);
   const [branding, setBranding] = useState<RecordValue | null>(null);
   const [businessHours, setBusinessHours] = useState<BusinessHours>(DEFAULT_BUSINESS_HOURS);
   const [businessHoursDraft, setBusinessHoursDraft] = useState<BusinessHours>(DEFAULT_BUSINESS_HOURS);
@@ -159,6 +160,7 @@ export function SettingsView() {
   const [chairUnitId, setChairUnitId] = useState('');
   const [unitName, setUnitName] = useState('');
   const [unitCity, setUnitCity] = useState('');
+  const [unitAddress, setUnitAddress] = useState('');
   const [chairName, setChairName] = useState('');
   const [automationName, setAutomationName] = useState('');
   const [automationReason, setAutomationReason] = useState('Retorno pós-consulta');
@@ -333,6 +335,22 @@ export function SettingsView() {
   }, [clinicId]);
 
   useEffect(() => {
+    if (!showAddIntegrationMenu) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!addIntegrationMenuRef.current?.contains(event.target as Node)) setShowAddIntegrationMenu(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setShowAddIntegrationMenu(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showAddIntegrationMenu]);
+
+  useEffect(() => {
     const key = new URLSearchParams(window.location.search).get('section');
     if (key && sections.some((item) => item.key === key)) setSection(key as SectionKey);
   }, []);
@@ -343,8 +361,20 @@ export function SettingsView() {
     setFormBusy(true);
     setFormError('');
     try {
-      if (editingUnit) await api.patch(`/settings/units/${editingUnit.id}`, { name: unitName.trim(), city: unitCity.trim() || null });
-      else await api.post('/settings/units', { clinicId, name: unitName.trim(), city: unitCity.trim() || undefined });
+      if (editingUnit) {
+        await api.patch(`/settings/units/${editingUnit.id}`, {
+          name: unitName.trim(),
+          city: unitCity.trim() || null,
+          address: unitAddress.trim() || null,
+        });
+      } else {
+        await api.post('/settings/units', {
+          clinicId,
+          name: unitName.trim(),
+          city: unitCity.trim() || undefined,
+          address: unitAddress.trim() || undefined,
+        });
+      }
       await refreshSelection();
       closeConfigModal();
       load();
@@ -576,6 +606,7 @@ export function SettingsView() {
     setFormBusy(false);
     setUnitName('');
     setUnitCity('');
+    setUnitAddress('');
     setChairName('');
     setChairUnitId('');
     setAutomationName('');
@@ -1067,6 +1098,20 @@ export function SettingsView() {
                 <span>Cadastre esta URL no dashboard da AbacatePay (evento transparent.completed). Inclua o segredo salvo na integração.</span>
               </div>
             ) : null}
+            {typeof viewingIntegration.inboundWebhookPath === 'string' ? (
+              <div className="info-item span-2">
+                <small>Webhook de respostas (confirmação/cancelamento)</small>
+                <strong className="contract-hint" style={{ display: 'block', marginTop: 6, wordBreak: 'break-all' }}>
+                  {`${getApiUrl()}${viewingIntegration.inboundWebhookPath}`}
+                </strong>
+                <span>
+                  {String(viewingIntegration.provider).toUpperCase() === 'CHATWOOT'
+                    ? 'Cadastre no Chatwoot (Configurações → Integrações → Webhooks) com o evento “Mensagem criada”.'
+                    : 'Cadastre na instância da Evolution (Webhook) com o evento MESSAGES_UPSERT.'}
+                  {' '}Respostas SIM/1 confirmam e NÃO/2 cancelam a próxima consulta do paciente que recebeu lembrete. Não compartilhe esta URL.
+                </span>
+              </div>
+            ) : null}
             {viewingIntegration.configuration && typeof viewingIntegration.configuration === 'object' ? (
               <div className="info-item span-2">
                 <small>Configuração</small>
@@ -1166,6 +1211,15 @@ export function SettingsView() {
               maxLength={120}
             />
             <span className="field-hint">Aparece na linha de lugar dos documentos oficiais (Cuiabá, 14 de agosto de 2026).</span>
+          </label>
+          <label className="span-2">Endereço
+            <input
+              value={unitAddress}
+              onChange={(e) => setUnitAddress(e.target.value)}
+              placeholder="Ex.: Av. Getúlio Vargas, 1200 – sala 3, Centro"
+              maxLength={240}
+            />
+            <span className="field-hint">Usado no campo automático “Endereço da clínica” das mensagens.</span>
           </label>
           {formError ? <p className="state-message error" role="alert">{formError}</p> : null}
           <button className="button primary" disabled={formBusy}>{formBusy ? 'Salvando…' : editingUnit ? 'Salvar unidade' : 'Criar unidade'}</button>
@@ -1487,6 +1541,7 @@ export function SettingsView() {
                               setEditingUnit({ id: unit.id, name: unit.name, city: unit.city });
                               setUnitName(unit.name);
                               setUnitCity(unit.city ?? '');
+                              setUnitAddress(unit.address ?? '');
                               setConfigModal('unit');
                             }}
                           >
@@ -1990,7 +2045,7 @@ export function SettingsView() {
                 Esta seção mostra entregas já enfileiradas/enviadas. A conexão do canal (Evolution/Chatwoot) fica em Integrações.
               </p>
               <Disclosure title="Modelos de mensagem" description="Textos de lembrete, confirmação e retorno" defaultOpen={false}>
-                <CommunicationTemplatesPanel />
+                <CommunicationTemplatesPanel onOpenReturns={() => setSection('returns')} />
               </Disclosure>
               <Disclosure title="Canais de mensagem" description="E-mail, WhatsApp e envio manual" defaultOpen={false}>
                 <MessagingChannelsPanel clinicId={clinicId} />
@@ -2036,6 +2091,7 @@ export function SettingsView() {
             <Panel
               title={activeLabel}
               description="Provedores externos com status e sincronização."
+              className="allow-popover"
             >
               <p className="muted-note" style={{ padding: '0 14px' }}>
                 Só listamos integrações ativas ou com erro. Use “Adicionar” para configurar um provedor novo ou reativar um desativado. Duplicados de pacientes criados pelo Nibo: Configurações → Pacientes duplicados.
@@ -2291,10 +2347,11 @@ export function SettingsView() {
                 </div>
               )}
               <div className="modal-footer" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <div className="row-menu" style={{ position: 'relative' }}>
+                <div className="row-menu" style={{ position: 'relative' }} ref={addIntegrationMenuRef}>
                   <button
                     className="button primary"
                     type="button"
+                    aria-haspopup="menu"
                     aria-expanded={showAddIntegrationMenu}
                     onClick={() => setShowAddIntegrationMenu((open) => !open)}
                   >
