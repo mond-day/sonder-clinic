@@ -1959,10 +1959,10 @@ export class IntegrationsService {
         },
       }),
     ]);
-    if (status === 'ACTIVE' && WHATSAPP_PROVIDERS.has(connection.provider)) {
-      await this.reactivateWhatsAppReminders(organizationId, connection.clinicId);
-    }
-    return { id, status };
+    const reactivatedReminders = status === 'ACTIVE' && WHATSAPP_PROVIDERS.has(connection.provider)
+      ? await this.reactivateWhatsAppReminders(organizationId, connection.clinicId)
+      : 0;
+    return { id, status, reactivatedReminders };
   }
 
   /**

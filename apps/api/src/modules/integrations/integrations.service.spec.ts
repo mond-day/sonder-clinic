@@ -224,6 +224,22 @@ describe('IntegrationsService', () => {
       expect(tx.appointmentReminder.findMany).not.toHaveBeenCalled();
     });
 
+    it('desativar só muda o status (credenciais ficam) e reativar volta ACTIVE e devolve lembretes à fila', async () => {
+      const { service, tx, connectionUpdate } = setup(fullCredentials);
+      vi.spyOn(prisma.auditEvent, 'create').mockResolvedValue({} as never);
+      vi.spyOn(prisma, '$transaction').mockImplementation(((arg: unknown) => (
+        Array.isArray(arg) ? Promise.all(arg) : Promise.resolve((arg as (client: typeof tx) => unknown)(tx))
+      )) as never);
+
+      await service.setStatus('org-1', 'user-1', 'conn-cw', 'DISABLED');
+      expect(connectionUpdate).toHaveBeenLastCalledWith({ where: { id: 'conn-cw' }, data: { status: 'DISABLED' } });
+      expect(tx.appointmentReminder.findMany).not.toHaveBeenCalled();
+
+      const result = await service.setStatus('org-1', 'user-1', 'conn-cw', 'ACTIVE');
+      expect(connectionUpdate).toHaveBeenLastCalledWith({ where: { id: 'conn-cw' }, data: { status: 'ACTIVE' } });
+      expect(result).toEqual({ id: 'conn-cw', status: 'ACTIVE', reactivatedReminders: 1 });
+    });
+
     it('sucesso sem inbox avisa que o envio vai falhar', async () => {
       const { service } = setup({ baseUrl: 'https://cw.example', apiToken: 'tok', accountId: '1' });
 

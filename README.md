@@ -2,7 +2,7 @@
 
 ERP odontológico interno, multi‑clínica, construído como monorepo TypeScript (Next.js + NestJS + worker + PostgreSQL/Prisma). Cobre a operação de uma clínica de ponta a ponta: agenda, pacientes, prontuário clínico, odontograma, planos de tratamento, documentos, financeiro, comissões, comunicação, integrações e configurações.
 
-> Versão atual: **1.3.20**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
+> Versão atual: **1.3.21**. Este é um sistema interno; o `.env` de desenvolvimento usa segredos fictícios e dados de demonstração.
 
 ---
 
@@ -295,16 +295,16 @@ Imagens publicadas no **GHCR** (`ghcr.io/mond-day`). Informe a tag no deploy (`s
 ## CI/CD e release
 
 - **CI** (`.github/workflows/ci.yml`): qualidade (lint/typecheck/test/e2e) e job `fresh-install`.
-- **Release** (`.github/workflows/release.yml`): tag `v1.3.20` (não `v.1.3.20`) dispara testes → imagens GHCR (`1.3.20`, `1.3`, `latest`, `sha-<gitsha>`) → deploy Swarm. Push em `main` sem tag gera `0.0.0-sha.<sha>` sem sobrescrever `latest`.
+- **Release** (`.github/workflows/release.yml`): tag `v1.3.21` (não `v.1.3.21`) dispara testes → imagens GHCR (`1.3.21`, `1.3`, `latest`, `sha-<gitsha>`) → deploy Swarm. Push em `main` sem tag gera `0.0.0-sha.<sha>` sem sobrescrever `latest`.
 
 Passos de release (detalhes em `docs/RELEASE.md`):
 
 ```bash
 # 1. Atualize a versão nos package.json (root + apps + packages)
 # 2. Commit na main
-git tag -a v1.3.20 -m "Release 1.3.20"
+git tag -a v1.3.21 -m "Release 1.3.21"
 git push origin main
-git push origin v1.3.20
+git push origin v1.3.21
 # 3. Abra o domínio: /setup na primeira vez, /login se já existir clínica
 ```
 

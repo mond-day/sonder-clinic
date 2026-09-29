@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { prisma } from '@sonder/database';
 import {
+  handleWhatsAppReply,
   readChatwootInbound,
   readEvolutionInbound,
   verifyWhatsappWebhookToken,
@@ -66,5 +68,84 @@ describe('readChatwootInbound', () => {
   it('ignora mensagem enviada e nota privada', () => {
     expect(readChatwootInbound({ ...base, message_type: 'outgoing' })).toBeNull();
     expect(readChatwootInbound({ ...base, private: true })).toBeNull();
+  });
+});
+
+describe('handleWhatsAppReply (Chatwoot)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  function setup(reminders: unknown[]) {
+    vi.stubEnv('ENCRYPTION_MASTER_KEY', KEY);
+    vi.spyOn(prisma.integrationConnection, 'findFirst').mockResolvedValue(
+      { id: CONNECTION_ID, provider: 'CHATWOOT', clinicId: 'clinic-1' } as never,
+    );
+    vi.spyOn(prisma.webhookReceipt, 'create').mockResolvedValue({} as never);
+    vi.spyOn(prisma.webhookReceipt, 'update').mockResolvedValue({} as never);
+    const findReminders = vi.spyOn(prisma.appointmentReminder, 'findMany').mockResolvedValue(reminders as never);
+    const tx = {
+      appointment: { update: vi.fn() },
+      appointmentStatusEvent: { create: vi.fn() },
+      appointmentReminder: { updateMany: vi.fn() },
+      outboxEvent: { create: vi.fn() },
+      auditEvent: { create: vi.fn() },
+    };
+    vi.spyOn(prisma, '$transaction').mockImplementation(
+      ((run: (client: typeof tx) => unknown) => Promise.resolve(run(tx))) as never,
+    );
+    return { tx, findReminders };
+  }
+
+  const payload = {
+    event: 'message_created',
+    message_type: 'incoming',
+    id: 99,
+    content: '✅Sim',
+    sender: { phone_number: '+5565999990000' },
+  };
+
+  it('"✅Sim" confirma a consulta do paciente que recebeu o lembrete (telefone sem o 9º dígito no cadastro)', async () => {
+    const { tx, findReminders } = setup([
+      { appointment: { id: 'appt-1', status: 'SCHEDULED', patient: { primaryPhone: '(65) 9999-0000' } } },
+    ]);
+
+    const result = await handleWhatsAppReply({
+      connectionId: CONNECTION_ID,
+      token: whatsappWebhookToken(CONNECTION_ID, KEY)!,
+      payload,
+    });
+
+    expect(result).toEqual({ handled: true, appointmentId: 'appt-1', intent: 'CONFIRM', status: 'CONFIRMED' });
+    expect(findReminders).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        status: { in: ['SENT', 'SENDING'] },
+        appointment: expect.objectContaining({ clinicId: 'clinic-1' }),
+      }),
+    }));
+    expect(tx.appointment.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'appt-1' },
+      data: expect.objectContaining({ status: 'CONFIRMED' }),
+    }));
+  });
+
+  it('sem lembrete enviado para aquele telefone não mexe em nada', async () => {
+    const { tx } = setup([]);
+
+    const result = await handleWhatsAppReply({
+      connectionId: CONNECTION_ID,
+      token: whatsappWebhookToken(CONNECTION_ID, KEY)!,
+      payload,
+    });
+
+    expect(result).toEqual({ handled: false, reason: 'no-appointment' });
+    expect(tx.appointment.update).not.toHaveBeenCalled();
+  });
+
+  it('recusa token errado', async () => {
+    setup([]);
+    await expect(handleWhatsAppReply({ connectionId: CONNECTION_ID, token: 'x', payload }))
+      .rejects.toThrow(/Token/);
   });
 });

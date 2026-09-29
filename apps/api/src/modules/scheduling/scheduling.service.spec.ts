@@ -10,7 +10,7 @@ const { tx, db } = vi.hoisted(() => {
       findUniqueOrThrow: vi.fn(),
       findUnique: vi.fn(),
     },
-    appointmentReminder: { deleteMany: vi.fn(), create: vi.fn() },
+    appointmentReminder: { deleteMany: vi.fn(), create: vi.fn(), findMany: vi.fn() },
     outboxEvent: { create: vi.fn() },
     integrationConnection: { findFirst: vi.fn() },
     messageTemplate: { findMany: vi.fn() },
@@ -184,5 +184,96 @@ describe('SchedulingService lembrete WhatsApp ao salvar', () => {
     }));
     const eventTypes = tx.outboxEvent.create.mock.calls.map(([arg]) => (arg as { data: { eventType: string } }).data.eventType);
     expect(eventTypes).not.toContain('appointment.whatsapp-reminder.requested');
+  });
+
+  describe('sem mudar o horário (ex.: trocar status ou observação)', () => {
+    const sameStart = new Date(base.startAt);
+
+    beforeEach(() => {
+      db.appointment.findFirst.mockResolvedValue({
+        id: ids.appointment, kind: 'APPOINTMENT', status: 'SCHEDULED', startAt: sameStart,
+      });
+      tx.integrationConnection.findFirst.mockResolvedValue({ id: 'conn-cw' });
+      tx.messageTemplate.findMany.mockResolvedValue([
+        { category: 'REMINDER', schedule: { leadMinutes: 1440 } },
+        { category: 'CONFIRMATION', schedule: { leadMinutes: 1500 } },
+      ]);
+    });
+
+    it('mantém confirmação e lembrete já enviados e não enfileira outra mensagem', async () => {
+      tx.appointmentReminder.findMany.mockResolvedValue([
+        { id: 'rem-sent', channel: 'WHATSAPP', leadMinutes: 1440 },
+        { id: 'conf-sent', channel: 'WHATSAPP:CONFIRMATION', leadMinutes: 1500 },
+      ]);
+
+      await service.reschedule('org-1', ids.appointment, { ...consulta, status: 'CONFIRMED' });
+
+      expect(tx.appointmentReminder.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ appointmentId: ids.appointment, status: { in: ['SENT', 'SENDING'] } }),
+      }));
+      expect(tx.appointmentReminder.deleteMany).toHaveBeenCalledWith({
+        where: {
+          appointmentId: ids.appointment,
+          channel: { startsWith: 'WHATSAPP' },
+          id: { notIn: ['rem-sent', 'conf-sent'] },
+        },
+      });
+      expect(tx.appointmentReminder.create).not.toHaveBeenCalled();
+      const eventTypes = tx.outboxEvent.create.mock.calls.map(([arg]) => (arg as { data: { eventType: string } }).data.eventType);
+      expect(eventTypes).not.toContain('appointment.whatsapp-reminder.requested');
+    });
+
+    it('recria só o que ainda não saiu (confirmação enviada, lembrete pendente)', async () => {
+      tx.appointmentReminder.findMany.mockResolvedValue([
+        { id: 'conf-sent', channel: 'WHATSAPP:CONFIRMATION', leadMinutes: 1500 },
+      ]);
+
+      await service.reschedule('org-1', ids.appointment, consulta);
+
+      const channels = tx.appointmentReminder.create.mock.calls
+        .map(([arg]) => (arg as { data: { channel: string } }).data.channel);
+      expect(channels).toEqual(['WHATSAPP']);
+    });
+
+    it('acrescentar uma segunda antecedência não reenvia a que já saiu', async () => {
+      tx.appointmentReminder.findMany.mockResolvedValue([
+        { id: 'rem-sent', channel: 'WHATSAPP', leadMinutes: 1440 },
+      ]);
+
+      await service.reschedule('org-1', ids.appointment, { ...consulta, reminderLeadMinutes: [1440, 120] });
+
+      const created = tx.appointmentReminder.create.mock.calls
+        .map(([arg]) => (arg as { data: { channel: string } }).data.channel);
+      expect(created).toEqual(['WHATSAPP:120', 'WHATSAPP:CONFIRMATION']);
+    });
+
+    it('antecedência alterada gera novo envio', async () => {
+      tx.appointmentReminder.findMany.mockResolvedValue([
+        { id: 'rem-sent', channel: 'WHATSAPP', leadMinutes: 1440 },
+      ]);
+
+      await service.reschedule('org-1', ids.appointment, { ...consulta, reminderLeadMinutes: 120 });
+
+      expect(tx.appointmentReminder.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ channel: 'WHATSAPP', leadMinutes: 120, status: 'PENDING' }),
+      }));
+    });
+  });
+
+  it('remarcar para outro horário recria os lembretes (paciente precisa do aviso novo)', async () => {
+    db.appointment.findFirst.mockResolvedValue({
+      id: ids.appointment, kind: 'APPOINTMENT', status: 'SCHEDULED', startAt: new Date('2026-10-01T13:00:00.000Z'),
+    });
+    tx.integrationConnection.findFirst.mockResolvedValue({ id: 'conn-cw' });
+
+    await service.reschedule('org-1', ids.appointment, consulta);
+
+    expect(tx.appointmentReminder.findMany).not.toHaveBeenCalled();
+    expect(tx.appointmentReminder.deleteMany).toHaveBeenCalledWith({
+      where: { appointmentId: ids.appointment, channel: { startsWith: 'WHATSAPP' } },
+    });
+    expect(tx.appointmentReminder.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'PENDING' }),
+    }));
   });
 });

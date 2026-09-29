@@ -45,6 +45,7 @@ const CALENDAR_SYNC_EVENT = 'appointment.calendar-sync.requested';
 const PATIENT_CALENDAR_SYNC_EVENT = 'patient.calendar-sync.requested';
 const NIBO_SYNC_EVENT = 'finance.nibo-sync.requested';
 const MAX_ATTEMPTS = 5;
+const DUPLICATE_REMINDER_NOTE = 'Lembrete já enviado ou em envio por outro evento; duplicado descartado.';
 
 type OutboxEvent = {
   id: string;
@@ -107,13 +108,13 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
     return;
   }
   if (reminder.scheduledFor > new Date()) return;
-  if (reminder.status === 'SENT' || reminder.status === 'DISABLED') {
+  if (['SENT', 'SENDING', 'DISABLED'].includes(reminder.status)) {
     await prisma.outboxEvent.update({
       where: { id: event.id },
       data: {
         processedAt: new Date(),
         attempts: { increment: 1 },
-        lastError: reminder.statusReason,
+        lastError: reminder.statusReason ?? DUPLICATE_REMINDER_NOTE,
       },
     });
     return;
@@ -195,6 +196,18 @@ async function processWhatsAppReminder(event: OutboxEvent): Promise<void> {
 
   const number = normalizeWhatsAppNumber(patient.primaryPhone);
   const text = reminderMessageText(category, template?.content, appointment);
+
+  // Claim atômico: com dois eventos do mesmo lembrete (reativação repetida, réplicas),
+  // só quem muda PENDING/FAILED → SENDING envia. Queda no meio do envio deixa SENDING
+  // e não reenvia: preferimos perder um lembrete a mandar a mensagem duas vezes.
+  const claimed = await prisma.appointmentReminder.updateMany({
+    where: { id: reminder.id, status: { in: ['PENDING', 'FAILED'] } },
+    data: { status: 'SENDING', statusReason: null },
+  });
+  if (claimed.count === 0) {
+    await markOutboxDone(event.id, DUPLICATE_REMINDER_NOTE);
+    return;
+  }
 
   if (evolutionLive && evolutionConnection?.encryptedCredentials) {
     let credentials: Record<string, string>;

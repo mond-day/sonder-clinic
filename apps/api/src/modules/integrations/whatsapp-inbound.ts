@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import {
   parseInboundReply,
   phonesMatch,
@@ -14,6 +14,7 @@ import {
  */
 
 const REPLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const logger = new Logger('WhatsAppInbound');
 
 export type InboundWhatsAppMessage = { messageId: string; phone: string; text: string };
 
@@ -139,6 +140,16 @@ export async function handleWhatsAppReply(input: {
     where: { provider_eventId: receiptKey },
     data: { status: 'SUCCEEDED', processedAt: new Date() },
   });
+  // Sem telefone/texto (LGPD): só o bastante para diagnosticar "respondeu SIM e não confirmou".
+  logger.log(JSON.stringify({
+    event: 'whatsapp.reply',
+    connectionId: connection.id,
+    provider: connection.provider,
+    intent,
+    ...(result.handled
+      ? { handled: true, appointmentId: result.appointmentId, status: result.status }
+      : { handled: false, reason: result.reason }),
+  }));
   return result;
 }
 
@@ -151,7 +162,7 @@ async function applyReply(
   const reminders = await prisma.appointmentReminder.findMany({
     where: {
       channel: { startsWith: 'WHATSAPP' },
-      status: 'SENT',
+      status: { in: ['SENT', 'SENDING'] },
       updatedAt: { gte: new Date(now.getTime() - REPLY_WINDOW_MS) },
       appointment: { clinicId, startAt: { gte: now }, status: { in: ['SCHEDULED', 'CONFIRMED'] } },
     },

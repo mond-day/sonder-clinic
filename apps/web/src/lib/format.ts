@@ -336,7 +336,7 @@ const presentationLabels: Record<string, string> = {
   CANCELLED: 'Cancelado', FORECASTED: 'Previsto', GENERATED: 'Gerado', RELEASED: 'Liberado',
   REVERSED: 'Estornado', BLOCKED: 'Bloqueado', PAYMENT: 'Recebimento',
   PROCEDURE: 'Procedimento', PERCENTAGE: 'Percentual', FIXED: 'Valor fixo',
-  PENDING: 'Pendente', SENT: 'Enviado', DELIVERED: 'Entregue', READ: 'Lido', FAILED: 'Falhou',
+  PENDING: 'Pendente', SENDING: 'Enviando', SENT: 'Enviado', DELIVERED: 'Entregue', READ: 'Lido', FAILED: 'Falhou',
   ACTIVE: 'Ativo', DISABLED: 'Desativado', ERROR: 'Erro', REVIEW_REQUIRED: 'Revisão obrigatória',
   INACTIVE: 'Inativo', ARCHIVED: 'Arquivado', DRAFT: 'Rascunho', SIGNED: 'Assinado',
   PUBLISHED: 'Publicado', ARCHIVED_TEMPLATE: 'Arquivado',

@@ -9,6 +9,7 @@ import {
   Prisma,
   prisma,
   readMessageSchedule,
+  reminderCategoryFromChannel,
   WHATSAPP_NOT_CONFIGURED_REASON,
   WHATSAPP_REMINDER_EVENT,
 } from '@sonder/database';
@@ -27,6 +28,9 @@ export type AppointmentKind = (typeof APPOINTMENT_KINDS)[number];
 
 /** Compromisso não passa por confirmação/check-in: só agendado, concluído ou cancelado. */
 const COMMITMENT_STATUSES: ReadonlySet<string> = new Set(['SCHEDULED', 'COMPLETED', 'CANCELLED']);
+
+/** Lembrete que já saiu (ou está saindo) pelo worker e não deve ser recriado ao salvar. */
+const DISPATCHED_REMINDER_STATUSES = ['SENT', 'SENDING'] as const;
 
 const appointmentSchema = z.object({
   kind: z.enum(APPOINTMENT_KINDS).optional(),
@@ -326,7 +330,9 @@ export class SchedulingService {
         include: appointmentInclude,
       });
       const remind = input.kind === 'APPOINTMENT' && reminderEnabled;
-      await this.configureReminder(transaction, organizationId, id, input.clinicId, startAt, remind, reminderLeadMinutes);
+      await this.configureReminder(
+        transaction, organizationId, id, input.clinicId, startAt, remind, reminderLeadMinutes, appointment.startAt,
+      );
       await this.enqueueCalendarSync(transaction, id, 'UPSERT');
       // Automações de consulta concluída (retorno, comissão...) pressupõem paciente.
       if (input.kind === 'APPOINTMENT' && input.status === 'COMPLETED' && appointment.status !== 'COMPLETED') {
@@ -485,6 +491,8 @@ export class SchedulingService {
    * Lembrete (e pedido de confirmação, se houver modelo de Confirmação ativo) via WhatsApp.
    * Antecedência: a escolhida na consulta ou, sem escolha, a régua do modelo de Lembrete.
    * Consulta na segunda: o dia de envio segue `mondaySendDay` do modelo de Lembrete.
+   * Editar a consulta sem mudar horário nem antecedência mantém o lembrete já enviado
+   * (não reenvia a mesma mensagem e a resposta SIM/NÃO continua achando a consulta).
    */
   private async configureReminder(
     transaction: Prisma.TransactionClient,
@@ -494,12 +502,14 @@ export class SchedulingService {
     startAt: Date,
     enabled = false,
     leadMinutes?: number | number[],
+    previousStartAt?: Date,
   ) {
-    await transaction.appointmentReminder.deleteMany({
-      where: { appointmentId, channel: { startsWith: 'WHATSAPP' } },
-    });
-
-    if (!enabled) return;
+    if (!enabled) {
+      await transaction.appointmentReminder.deleteMany({
+        where: { appointmentId, channel: { startsWith: 'WHATSAPP' } },
+      });
+      return;
+    }
 
     const [whatsapp, templates, appointment] = await Promise.all([
       transaction.integrationConnection.findFirst({
@@ -542,7 +552,29 @@ export class SchedulingService {
       });
     }
 
+    const sameStart = previousStartAt?.getTime() === startAt.getTime();
+    const dispatched = sameStart
+      ? await transaction.appointmentReminder.findMany({
+          where: { appointmentId, channel: { startsWith: 'WHATSAPP' }, status: { in: [...DISPATCHED_REMINDER_STATUSES] } },
+          select: { id: true, channel: true, leadMinutes: true },
+        })
+      : [];
+    // Mesma mensagem = mesmo tipo (confirmação/lembrete) e mesma antecedência; o canal do
+    // lembrete muda de `WHATSAPP` para `WHATSAPP:<min>` quando há mais de uma antecedência.
+    const sameMessage = (reminder: { channel: string; leadMinutes: number }, item: { channel: string; minutes: number }) =>
+      reminderCategoryFromChannel(reminder.channel) === reminderCategoryFromChannel(item.channel)
+      && reminder.leadMinutes === item.minutes;
+    const kept = dispatched.filter((reminder) => planned.some((item) => sameMessage(reminder, item)));
+    await transaction.appointmentReminder.deleteMany({
+      where: {
+        appointmentId,
+        channel: { startsWith: 'WHATSAPP' },
+        ...(kept.length ? { id: { notIn: kept.map((reminder) => reminder.id) } } : {}),
+      },
+    });
+
     for (const { channel, minutes } of planned) {
+      if (kept.some((reminder) => sameMessage(reminder, { channel, minutes }))) continue;
       const scheduledFor = applyMondaySendDay({
         scheduledFor: new Date(startAt.getTime() - minutes * 60_000),
         appointmentStart: startAt,

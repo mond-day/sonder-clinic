@@ -123,6 +123,10 @@ const legalNames: Record<string, string> = {
   CONSENT: 'Consentimento LGPD',
 };
 
+function integrationStatusLabel(status: unknown): string {
+  return status === 'DISABLED' ? 'Desativada' : presentationLabel(status);
+}
+
 const procedureFormSchema = z.object({
   internalCode: z.string().trim().min(1, 'Informe o código interno.'),
   name: z.string().trim().min(2, 'Informe o nome do procedimento.'),
@@ -835,6 +839,27 @@ export function SettingsView() {
     }
   }
 
+  /** Desativar mantém as credenciais; sem credenciais salvas, reativar abre o formulário. */
+  async function reactivateIntegration(item: RecordValue) {
+    setIntegrationMenuId(null);
+    const credentials = item.credentials && typeof item.credentials === 'object' ? item.credentials as RecordValue : {};
+    if (!credentials.configured) {
+      openIntegrationConfig(item);
+      return;
+    }
+    try {
+      const result = await api.patch<{ reactivatedReminders?: number }>(`/integrations/${String(item.id)}`, { status: 'ACTIVE' });
+      const reactivated = Number(result?.reactivatedReminders ?? 0);
+      showSuccess([
+        'Integração reativada. Use “Testar conexão” para validar.',
+        reactivated > 0 ? `${reactivated} lembrete(s) de WhatsApp voltaram para a fila.` : '',
+      ].filter(Boolean).join(' '));
+      load();
+    } catch (cause) {
+      showFailure(cause instanceof ApiError ? cause.message : 'Não foi possível reativar a integração.');
+    }
+  }
+
   async function testIntegrationConnection(id: string) {
     setIntegrationMenuId(null);
     try {
@@ -1084,7 +1109,7 @@ export function SettingsView() {
         {viewingIntegration ? (
           <div className="info-grid">
             <div className="info-item"><small>Provedor</small><strong>{text(viewingIntegration.provider) === 'GOOGLE_CALENDAR' ? 'Google Agenda' : text(viewingIntegration.provider)}</strong></div>
-            <div className="info-item"><small>Status</small><strong>{presentationLabel(viewingIntegration.status)}</strong></div>
+            <div className="info-item"><small>Status</small><strong>{integrationStatusLabel(viewingIntegration.status)}</strong></div>
             <div className="info-item"><small>Vínculo</small><strong>{
               text(viewingIntegration.scopeLabel)
               || (text(viewingIntegration.scopeType) === 'PROFESSIONAL'
@@ -1113,7 +1138,7 @@ export function SettingsView() {
                 </strong>
                 <span>
                   {String(viewingIntegration.provider).toUpperCase() === 'CHATWOOT'
-                    ? 'Cadastre no Chatwoot (Configurações → Integrações → Webhooks) com o evento “Mensagem criada”.'
+                    ? 'Sem este webhook o Sonder não recebe o “Sim”. No Chatwoot: Configurações → Integrações → Webhooks → Adicionar novo webhook, cole a URL inteira (o token já vai nela; não há segredo nem header extra) e marque o evento “Mensagem criada”.'
                     : 'Cadastre na instância da Evolution (Webhook) com o evento MESSAGES_UPSERT.'}
                   {' '}Respostas SIM/1 confirmam e NÃO/2 cancelam a próxima consulta do paciente que recebeu lembrete. Não compartilhe esta URL.
                 </span>
@@ -2101,18 +2126,12 @@ export function SettingsView() {
               className="allow-popover"
             >
               <p className="muted-note" style={{ padding: '0 14px' }}>
-                Só listamos integrações ativas ou com erro. Use “Adicionar” para configurar um provedor novo ou reativar um desativado. Duplicados de pacientes criados pelo Nibo: Configurações → Pacientes duplicados.
+                Integrações desativadas continuam na lista com as credenciais guardadas: use “Reativar” para voltar a usar. “Adicionar” configura um provedor novo. Duplicados de pacientes criados pelo Nibo: Configurações → Pacientes duplicados.
               </p>
               {(() => {
-                const visibleIntegrations = integrations.filter((item) => {
-                  if (!item.id) return false;
-                  const status = text(item.status);
-                  return status === 'ACTIVE' || status === 'ERROR';
-                });
+                const visibleIntegrations = integrations.filter((item) => Boolean(item.id));
                 const configuredProviders = new Set(
-                  integrations
-                    .filter((item) => item.id && text(item.status) !== 'DISABLED')
-                    .map((item) => text(item.provider)),
+                  visibleIntegrations.map((item) => text(item.provider)),
                 );
                 const addableProviders = [
                   'GOOGLE_CALENDAR',
@@ -2137,13 +2156,14 @@ export function SettingsView() {
                   <>
               {loading && <div className="state-message">Carregando integrações…</div>}
               {!loading && visibleIntegrations.length === 0 && (
-                <EmptyState title="Nenhuma integração ativa" description="Clique em Adicionar para conectar um provedor." />
+                <EmptyState title="Nenhuma integração configurada" description="Clique em Adicionar para conectar um provedor." />
               )}
               {visibleIntegrations.length > 0 && (
                 <div className="settings-list">
                   {visibleIntegrations.map((item, index) => {
                     const rowId = text(item.id, `${text(item.provider)}-${index}`);
                     const hasId = Boolean(item.id);
+                    const isDisabled = text(item.status) === 'DISABLED';
                     const isGoogle = text(item.provider) === 'GOOGLE_CALENDAR';
                     const googleScopeLabel = text(item.scopeLabel)
                       || (text(item.scopeType) === 'PROFESSIONAL'
@@ -2159,7 +2179,7 @@ export function SettingsView() {
                           {integrationClinicName ? <span>Clínica: {integrationClinicName}</span> : null}
                           {isGoogle ? <span>{googleScopeLabel}</span> : null}
                           <span>
-                            {presentationLabel(item.status)}
+                            {integrationStatusLabel(item.status)}
                             {item.lastSyncAt ? ` · última sincronização ${dateOnly(item.lastSyncAt)}` : ''}
                           </span>
                           {isGoogle ? (
@@ -2264,8 +2284,18 @@ export function SettingsView() {
                         </div>
                         <div className="row-actions">
                           <StatusBadge tone={item.status === 'ACTIVE' ? 'green' : item.status === 'ERROR' ? 'red' : 'gray'}>
-                            {presentationLabel(item.status)}
+                            {integrationStatusLabel(item.status)}
                           </StatusBadge>
+                          {isDisabled ? (
+                            <button
+                              type="button"
+                              className="button small"
+                              aria-label={`Reativar ${text(item.provider)}`}
+                              onClick={() => void reactivateIntegration(item)}
+                            >
+                              Reativar
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="icon-button"
@@ -2340,13 +2370,23 @@ export function SettingsView() {
                                       Sincronizar com Nibo
                                     </button>
                                   ) : null}
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => void disableIntegration(String(item.id))}
-                                  >
-                                    Desativar
-                                  </button>
+                                  {isDisabled ? (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => void reactivateIntegration(item)}
+                                    >
+                                      Reativar
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => void disableIntegration(String(item.id))}
+                                    >
+                                      Desativar
+                                    </button>
+                                  )}
                                 </div>
                               ) : null}
                             </div>
@@ -2389,26 +2429,6 @@ export function SettingsView() {
                           </button>
                         ))
                       )}
-                      {integrations.some((item) => text(item.status) === 'DISABLED') ? (
-                        <>
-                          <hr style={{ margin: '4px 0', border: 0, borderTop: '1px solid var(--border, #ddd)' }} />
-                          {integrations
-                            .filter((item) => text(item.status) === 'DISABLED')
-                            .map((item) => (
-                              <button
-                                key={String(item.id)}
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setShowAddIntegrationMenu(false);
-                                  openIntegrationConfig(item);
-                                }}
-                              >
-                                Reativar {providerLabel[text(item.provider)] ?? text(item.provider)}
-                              </button>
-                            ))}
-                        </>
-                      ) : null}
                     </div>
                   ) : null}
                 </div>

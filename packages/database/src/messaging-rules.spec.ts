@@ -69,6 +69,10 @@ describe('parseInboundReply', () => {
     ['2', 'CANCEL'],
     ['cancelar', 'CANCEL'],
     ['Não, obrigado', 'CANCEL'],
+    ['✅Sim', 'CONFIRM'],
+    ['  sim  ', 'CONFIRM'],
+    ['SIM ✅', 'CONFIRM'],
+    ['📅 Cancelar', 'CANCEL'],
   ])('%s → %s', (text, intent) => {
     expect(parseInboundReply(text)).toBe(intent);
   });
