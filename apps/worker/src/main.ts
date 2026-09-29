@@ -115,6 +115,15 @@ async function tick(): Promise<void> {
         }));
       }
     }
+  } catch (error) {
+    // Falha transitória (ex.: Postgres reiniciando) não pode derrubar o processo:
+    // o Prisma reconecta sozinho e o próximo tick tenta de novo.
+    console.error(JSON.stringify({
+      service: 'sonder-worker',
+      event: 'tick.failed',
+      error: error instanceof Error ? error.message : 'unknown',
+      code: (error as { code?: unknown } | null)?.code ?? null,
+    }));
   } finally {
     tickRunning = false;
   }
