@@ -1,3 +1,5 @@
+import { envFlagEnabled, integrationMockFallback } from '@sonder/observability';
+
 export type ChatwootConfiguration = {
   baseUrl: string;
   token: string;
@@ -20,8 +22,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/** Mesmo critério da API (teste de conexão): em produção, CHATWOOT_MOCK ausente = live. */
 export function isChatwootMock() {
-  return (process.env.CHATWOOT_MOCK ?? 'true').toLowerCase() === 'true';
+  return envFlagEnabled('CHATWOOT_MOCK', integrationMockFallback());
 }
 
 export function readChatwootConfiguration(

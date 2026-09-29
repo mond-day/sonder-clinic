@@ -256,9 +256,9 @@ O fail-fast **não** exige `GOOGLE_CLIENT_*`. Em **1.3.8+** também **não** exi
 Só necessário quando os secrets `SWARM_HOST` / `SWARM_SSH_KEY` não estão no GitHub. Com o `.env` de produção já na VPS:
 
 ```bash
-export API_IMAGE=ghcr.io/mond-day/sonder-clinic-api:1.3.19
-export WEB_IMAGE=ghcr.io/mond-day/sonder-clinic-web:1.3.19
-export WORKER_IMAGE=ghcr.io/mond-day/sonder-clinic-worker:1.3.19
+export API_IMAGE=ghcr.io/mond-day/sonder-clinic-api:1.3.20
+export WEB_IMAGE=ghcr.io/mond-day/sonder-clinic-web:1.3.20
+export WORKER_IMAGE=ghcr.io/mond-day/sonder-clinic-worker:1.3.20
 ./infra/swarm/scripts/deploy.sh
 ```
 

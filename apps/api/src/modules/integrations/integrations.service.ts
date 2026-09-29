@@ -1,6 +1,11 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { Prisma, prisma } from '@sonder/database';
+import {
+  Prisma,
+  prisma,
+  WHATSAPP_NOT_CONFIGURED_REASON,
+  WHATSAPP_REMINDER_EVENT,
+} from '@sonder/database';
 import { envelopeDecryptJson, envelopeEncryptJson, readIntegrationMockFlag } from '@sonder/observability';
 import { storageStatus } from '@sonder/storage';
 import { z } from 'zod';
@@ -84,6 +89,9 @@ export type PersonalCalendarEventDto = {
 };
 
 export type Provider = 'NIBO' | 'ABACATEPAY' | 'EVOLUTION' | 'CHATWOOT';
+
+const WHATSAPP_PROVIDERS: ReadonlySet<string> = new Set(['EVOLUTION', 'CHATWOOT']);
+const REACTIVATE_REMINDERS_LIMIT = 1000;
 
 const credentialsSchema = z.record(z.string(), z.string().min(1)).refine(
   (value) => Object.keys(value).length > 0,
@@ -270,7 +278,14 @@ export class IntegrationsService {
           status: result.success ? 'ACTIVE' : connection.status === 'DISABLED' ? 'DISABLED' : 'ERROR',
         },
       });
-      return { ...result, connectionId: id, mode: 'live', credentialsConfigured: true };
+      if (!result.success) {
+        return { ...result, connectionId: id, mode: 'live', credentialsConfigured: true };
+      }
+      const reactivatedReminders = await this.reactivateWhatsAppReminders(organizationId, connection.clinicId);
+      const message = resolved.inboxId
+        ? result.message
+        : `${result.message} Atenção: sem ID da caixa de entrada (inbox), os lembretes por WhatsApp vão falhar no envio.`;
+      return { ...result, message, connectionId: id, mode: 'live', credentialsConfigured: true, reactivatedReminders };
     }
     if (provider === 'ABACATEPAY') {
       const { testAbacatePay, resolveAbacatePayConfig } = await import('../../integrations/abacatepay.js');
@@ -319,7 +334,16 @@ export class IntegrationsService {
           status: result.success ? 'ACTIVE' : connection.status === 'DISABLED' ? 'DISABLED' : 'ERROR',
         },
       });
-      return { ...result, connectionId: id, mode: result.enabled ? 'live' : 'stub', credentialsConfigured: true };
+      const reactivatedReminders = result.success
+        ? await this.reactivateWhatsAppReminders(organizationId, connection.clinicId)
+        : 0;
+      return {
+        ...result,
+        connectionId: id,
+        mode: result.enabled ? 'live' : 'stub',
+        credentialsConfigured: true,
+        reactivatedReminders,
+      };
     }
     const { testProvider } = await import('../../integrations/adapters.js');
     const result = await testProvider(provider);
@@ -1818,7 +1842,7 @@ export class IntegrationsService {
 
     const encryptedCredentials = this.encrypt(credentials);
 
-    return prisma.$transaction(async (tx) => {
+    const saved = await prisma.$transaction(async (tx) => {
       const existingRow = await tx.integrationConnection.findUnique({
         where: {
           clinicId_provider_scopeType_scopeId: {
@@ -1882,6 +1906,10 @@ export class IntegrationsService {
         },
       };
     });
+    if (WHATSAPP_PROVIDERS.has(provider)) {
+      await this.reactivateWhatsAppReminders(organizationId, input.clinicId);
+    }
+    return saved;
   }
 
   async remove(organizationId: string, actorId: string, id: string) {
@@ -1931,7 +1959,64 @@ export class IntegrationsService {
         },
       }),
     ]);
+    if (status === 'ACTIVE' && WHATSAPP_PROVIDERS.has(connection.provider)) {
+      await this.reactivateWhatsAppReminders(organizationId, connection.clinicId);
+    }
     return { id, status };
+  }
+
+  /**
+   * Lembretes gravados DISABLED por falta de WhatsApp na clínica voltam à fila quando a
+   * clínica ganha conexão Evolution/Chatwoot ativa. Só futuros, de consulta com paciente e
+   * não encerrada; falha aqui não desfaz a ativação da integração.
+   */
+  private async reactivateWhatsAppReminders(organizationId: string, clinicId: string): Promise<number> {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const reminders = await tx.appointmentReminder.findMany({
+          where: {
+            organizationId,
+            status: 'DISABLED',
+            statusReason: WHATSAPP_NOT_CONFIGURED_REASON,
+            scheduledFor: { gt: new Date() },
+            appointment: {
+              organizationId,
+              clinicId,
+              kind: 'APPOINTMENT',
+              patientId: { not: null },
+              status: { notIn: ['CANCELLED', 'COMPLETED', 'NO_SHOW'] },
+            },
+          },
+          select: { id: true, appointmentId: true, scheduledFor: true, leadMinutes: true },
+          orderBy: { scheduledFor: 'asc' },
+          take: REACTIVATE_REMINDERS_LIMIT,
+        });
+        if (!reminders.length) return 0;
+        await tx.appointmentReminder.updateMany({
+          where: { id: { in: reminders.map((reminder) => reminder.id) }, status: 'DISABLED' },
+          data: { status: 'PENDING', statusReason: null },
+        });
+        await tx.outboxEvent.createMany({
+          data: reminders.map((reminder) => ({
+            aggregateType: 'AppointmentReminder',
+            aggregateId: reminder.id,
+            eventType: WHATSAPP_REMINDER_EVENT,
+            payload: {
+              reminderId: reminder.id,
+              appointmentId: reminder.appointmentId,
+              scheduledFor: reminder.scheduledFor.toISOString(),
+              leadMinutes: reminder.leadMinutes,
+            },
+          })),
+        });
+        return reminders.length;
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao reativar lembretes WhatsApp da clínica ${clinicId}: ${error instanceof Error ? error.message : 'desconhecido'}`,
+      );
+      return 0;
+    }
   }
 
   private async listGoogleCalendarConnections(clinicId: string) {

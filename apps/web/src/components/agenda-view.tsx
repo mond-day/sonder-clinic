@@ -215,6 +215,22 @@ function reminderLeadMinutesOf(item: RecordValue): number[] {
     .filter((value) => Number.isFinite(value) && value > 0);
 }
 
+/** Precisa ser igual a WHATSAPP_NOT_CONFIGURED_REASON em @sonder/database. */
+const WHATSAPP_NOT_CONFIGURED_REASON = 'WhatsApp (Evolution ou Chatwoot) não configurado.';
+
+/** Um aviso por motivo real dos lembretes bloqueados; motivo vazio é legado de falta de WhatsApp. */
+function disabledReminderNotices(item: RecordValue): string[] {
+  const notices = list(item.reminders)
+    .filter((entry) => entry.status === 'DISABLED')
+    .map((entry) => {
+      const reason = text(entry.statusReason, '');
+      return !reason || reason === WHATSAPP_NOT_CONFIGURED_REASON
+        ? 'O lembrete foi salvo quando o WhatsApp não estava ativo para a clínica desta consulta e não será enviado. Ao ativar ou testar com sucesso o Evolution/Chatwoot desta clínica em Configurações → Integrações, lembretes futuros voltam para a fila; salvar esta consulta também reavalia.'
+        : `Lembrete não será enviado: ${reason}`;
+    });
+  return [...new Set(notices)];
+}
+
 function reminderLeadLabel(minutes: number) {
   if (minutes % 1440 === 0) return `${minutes / 1440} ${minutes === 1440 ? 'dia' : 'dias'}`;
   if (minutes % 60 === 0) return `${minutes / 60} ${minutes === 60 ? 'hora' : 'horas'}`;
@@ -1180,9 +1196,9 @@ export function AgendaView() {
                     <p className="field-hint span-2">
                       Sem antecedência escolhida, vale a do modelo de Lembrete (Configurações → Comunicação). O pedido de confirmação segue o modelo de Confirmação.
                     </p>
-                    {list(selectedAppointment.reminders).some((item) => item.status === 'DISABLED') ? (
-                      <p className="form-error span-2">WhatsApp ainda não está configurado: o lembrete foi salvo, mas não será enviado até a integração estar ativa.</p>
-                    ) : null}
+                    {disabledReminderNotices(selectedAppointment).map((notice) => (
+                      <p className="form-error span-2" key={notice}>{notice}</p>
+                    ))}
                   </>
                 )}
               </>

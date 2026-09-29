@@ -838,9 +838,16 @@ export function SettingsView() {
   async function testIntegrationConnection(id: string) {
     setIntegrationMenuId(null);
     try {
-      const result = await api.post<{ success?: boolean; message?: string }>(`/integrations/${id}/test-connection`, {});
+      const result = await api.post<{ success?: boolean; message?: string; reactivatedReminders?: number }>(
+        `/integrations/${id}/test-connection`,
+        {},
+      );
       if (result.success) {
-        showSuccess(result.message ?? 'Conexão testada com sucesso.');
+        const reactivated = Number(result.reactivatedReminders ?? 0);
+        showSuccess([
+          result.message ?? 'Conexão testada com sucesso.',
+          reactivated > 0 ? `${reactivated} lembrete(s) de WhatsApp voltaram para a fila.` : '',
+        ].filter(Boolean).join(' '));
         load();
       } else {
         showFailure(result.message ?? 'Teste da conexão sem sucesso. Verifique as credenciais.');
@@ -2142,10 +2149,14 @@ export function SettingsView() {
                       || (text(item.scopeType) === 'PROFESSIONAL'
                         ? text(professionals.find((professional) => professional.id === item.scopeId)?.name, 'Profissional')
                         : 'Clínica');
+                    const integrationClinicName = clinics.length > 1
+                      ? text(clinics.find((entry) => entry.id === item.clinicId)?.tradeName, 'Outra clínica')
+                      : '';
                     return (
                       <div className="settings-row" key={rowId}>
                         <div>
                           <strong>{isGoogle ? 'Google Agenda' : text(item.provider)}</strong>
+                          {integrationClinicName ? <span>Clínica: {integrationClinicName}</span> : null}
                           {isGoogle ? <span>{googleScopeLabel}</span> : null}
                           <span>
                             {presentationLabel(item.status)}

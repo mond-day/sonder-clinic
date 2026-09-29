@@ -8,9 +8,12 @@ const { tx, db } = vi.hoisted(() => {
       create: vi.fn(),
       update: vi.fn(),
       findUniqueOrThrow: vi.fn(),
+      findUnique: vi.fn(),
     },
     appointmentReminder: { deleteMany: vi.fn(), create: vi.fn() },
     outboxEvent: { create: vi.fn() },
+    integrationConnection: { findFirst: vi.fn() },
+    messageTemplate: { findMany: vi.fn() },
   };
   const db = {
     clinic: { findFirst: vi.fn() },
@@ -30,6 +33,7 @@ vi.mock('@sonder/database', async (importOriginal) => ({
   prisma: db,
 }));
 
+import { WHATSAPP_NOT_CONFIGURED_REASON } from '@sonder/database';
 import { SchedulingService, type AppointmentInput } from './scheduling.service';
 import type { IntegrationsService } from '../integrations/integrations.service';
 
@@ -124,5 +128,61 @@ describe('SchedulingService compromissos', () => {
     expect(tx.appointment.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ patientId: null, title: 'Reunião' }),
     }));
+  });
+});
+
+describe('SchedulingService lembrete WhatsApp ao salvar', () => {
+  const integrations = { findPersonalCalendarWarnings: vi.fn().mockResolvedValue([]) };
+  let service: SchedulingService;
+  const consulta = { ...base, patientId: ids.patient, reminderEnabled: true, reminderLeadMinutes: 1440 };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    service = new SchedulingService(integrations as unknown as IntegrationsService);
+    db.clinic.findFirst.mockResolvedValue({ id: ids.clinic });
+    db.unit.findFirst.mockResolvedValue({ id: ids.unit });
+    db.patient.findFirst.mockResolvedValue({ id: ids.patient });
+    db.professional.findFirst.mockResolvedValue({ id: ids.professional });
+    db.appointment.findFirst.mockResolvedValue({ id: ids.appointment, kind: 'APPOINTMENT', status: 'SCHEDULED' });
+    tx.appointment.findFirst.mockResolvedValue(null);
+    tx.appointment.update.mockResolvedValue({ id: ids.appointment });
+    tx.appointment.findUniqueOrThrow.mockResolvedValue({ id: ids.appointment });
+    tx.appointment.findUnique.mockResolvedValue({ unit: { timezone: 'America/Cuiaba' } });
+    tx.messageTemplate.findMany.mockResolvedValue([]);
+    tx.appointmentReminder.create.mockResolvedValue({ id: 'rem-1' });
+  });
+
+  it('com Chatwoot ativo na clínica da consulta, salvar recria o lembrete antigo como PENDING e enfileira', async () => {
+    tx.integrationConnection.findFirst.mockResolvedValue({ id: 'conn-cw' });
+
+    await service.reschedule('org-1', ids.appointment, consulta);
+
+    expect(tx.appointmentReminder.deleteMany).toHaveBeenCalledWith({
+      where: { appointmentId: ids.appointment, channel: { startsWith: 'WHATSAPP' } },
+    });
+    expect(tx.integrationConnection.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        clinicId: ids.clinic,
+        provider: { in: ['EVOLUTION', 'CHATWOOT'] },
+        status: 'ACTIVE',
+      }),
+    }));
+    expect(tx.appointmentReminder.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'PENDING', statusReason: null }),
+    }));
+    const eventTypes = tx.outboxEvent.create.mock.calls.map(([arg]) => (arg as { data: { eventType: string } }).data.eventType);
+    expect(eventTypes).toContain('appointment.whatsapp-reminder.requested');
+  });
+
+  it('sem WhatsApp ativo na clínica, grava DISABLED com o motivo compartilhado e não enfileira', async () => {
+    tx.integrationConnection.findFirst.mockResolvedValue(null);
+
+    await service.reschedule('org-1', ids.appointment, consulta);
+
+    expect(tx.appointmentReminder.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'DISABLED', statusReason: WHATSAPP_NOT_CONFIGURED_REASON }),
+    }));
+    const eventTypes = tx.outboxEvent.create.mock.calls.map(([arg]) => (arg as { data: { eventType: string } }).data.eventType);
+    expect(eventTypes).not.toContain('appointment.whatsapp-reminder.requested');
   });
 });

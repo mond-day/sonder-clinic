@@ -53,6 +53,15 @@ export const MAX_LEAD_MINUTES = 10080;
 /** Canal do AppointmentReminder que carrega o pedido de confirmação. */
 export const CONFIRMATION_REMINDER_CHANNEL = 'WHATSAPP:CONFIRMATION';
 
+/**
+ * `statusReason` do lembrete gravado DISABLED porque a clínica não tinha WhatsApp ativo.
+ * Só lembretes com este motivo voltam à fila quando a integração é ativada.
+ * A agenda (apps/web) compara com o mesmo texto para explicar o aviso.
+ */
+export const WHATSAPP_NOT_CONFIGURED_REASON = 'WhatsApp (Evolution ou Chatwoot) não configurado.';
+
+export const WHATSAPP_REMINDER_EVENT = 'appointment.whatsapp-reminder.requested';
+
 export function reminderCategoryFromChannel(channel: string): AppointmentMessageCategory {
   return channel === CONFIRMATION_REMINDER_CHANNEL ? 'CONFIRMATION' : 'REMINDER';
 }

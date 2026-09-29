@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { prisma } from '@sonder/database';
+import { prisma, WHATSAPP_NOT_CONFIGURED_REASON } from '@sonder/database';
 import { IntegrationsService } from './integrations.service';
 
 const MASTER_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -88,6 +88,7 @@ describe('IntegrationsService', () => {
       instanceName: 'clinic',
     });
     vi.spyOn(prisma.integrationConnection, 'update').mockResolvedValue({} as never);
+    vi.spyOn(prisma, '$transaction').mockResolvedValue(0 as never);
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -132,5 +133,104 @@ describe('IntegrationsService', () => {
     const result = await service.testConnection('org-1', 'conn-aba');
     expect(String(result.message ?? '')).not.toMatch(/MOCK/i);
     expect(fetchMock).toHaveBeenCalled();
+  });
+
+  describe('Chatwoot ativo reativa lembretes bloqueados por falta de WhatsApp', () => {
+    const chatwootConnection = {
+      id: 'conn-cw',
+      provider: 'CHATWOOT',
+      encryptedCredentials: 'stored',
+      configuration: {},
+      lastSyncAt: null,
+      status: 'ERROR',
+      clinicId: 'clinic-1',
+      scopeType: 'CLINIC',
+      scopeId: 'clinic-1',
+    };
+    const scheduledFor = new Date(Date.now() + 86_400_000);
+
+    function setup(credentials: Record<string, string>, fetchOk = true) {
+      vi.stubEnv('ENCRYPTION_MASTER_KEY', MASTER_KEY);
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('CHATWOOT_MOCK', 'false');
+      const service = new IntegrationsService();
+      vi.spyOn(prisma.integrationConnection, 'findFirst').mockResolvedValue(chatwootConnection as never);
+      vi.spyOn(service, 'decryptForAdapter').mockReturnValue(credentials);
+      const connectionUpdate = vi.spyOn(prisma.integrationConnection, 'update').mockResolvedValue({} as never);
+      const tx = {
+        appointmentReminder: {
+          findMany: vi.fn().mockResolvedValue([
+            { id: 'rem-1', appointmentId: 'appt-1', scheduledFor, leadMinutes: 1440 },
+          ]),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+        outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      };
+      vi.spyOn(prisma, '$transaction').mockImplementation(
+        ((run: (client: typeof tx) => unknown) => Promise.resolve(run(tx))) as never,
+      );
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: fetchOk,
+        status: fetchOk ? 200 : 401,
+        text: async () => '{}',
+      }));
+      return { service, tx, connectionUpdate };
+    }
+
+    const fullCredentials = { baseUrl: 'https://cw.example', apiToken: 'tok', accountId: '1', inboxId: '7' };
+
+    it('teste com sucesso marca ACTIVE e devolve à fila só lembretes DISABLED futuros da mesma clínica/organização', async () => {
+      const { service, tx, connectionUpdate } = setup(fullCredentials);
+
+      const result = await service.testConnection('org-1', 'conn-cw');
+
+      expect(result.success).toBe(true);
+      expect(connectionUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ status: 'ACTIVE' }),
+      }));
+      expect(tx.appointmentReminder.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: 'org-1',
+          status: 'DISABLED',
+          statusReason: WHATSAPP_NOT_CONFIGURED_REASON,
+          scheduledFor: { gt: expect.any(Date) },
+          appointment: expect.objectContaining({
+            organizationId: 'org-1',
+            clinicId: 'clinic-1',
+            kind: 'APPOINTMENT',
+            patientId: { not: null },
+          }),
+        }),
+      }));
+      expect(tx.appointmentReminder.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['rem-1'] }, status: 'DISABLED' },
+        data: { status: 'PENDING', statusReason: null },
+      });
+      expect(tx.outboxEvent.createMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({
+          aggregateId: 'rem-1',
+          eventType: 'appointment.whatsapp-reminder.requested',
+        })],
+      });
+      expect(result).toMatchObject({ reactivatedReminders: 1 });
+    });
+
+    it('teste com falha não reativa lembretes', async () => {
+      const { service, tx } = setup(fullCredentials, false);
+
+      const result = await service.testConnection('org-1', 'conn-cw');
+
+      expect(result.success).toBe(false);
+      expect(tx.appointmentReminder.findMany).not.toHaveBeenCalled();
+    });
+
+    it('sucesso sem inbox avisa que o envio vai falhar', async () => {
+      const { service } = setup({ baseUrl: 'https://cw.example', apiToken: 'tok', accountId: '1' });
+
+      const result = await service.testConnection('org-1', 'conn-cw');
+
+      expect(result.success).toBe(true);
+      expect(String(result.message)).toMatch(/inbox/i);
+    });
   });
 });

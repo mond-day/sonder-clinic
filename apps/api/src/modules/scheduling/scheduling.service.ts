@@ -9,6 +9,8 @@ import {
   Prisma,
   prisma,
   readMessageSchedule,
+  WHATSAPP_NOT_CONFIGURED_REASON,
+  WHATSAPP_REMINDER_EVENT,
 } from '@sonder/database';
 import { z } from 'zod';
 import {
@@ -555,7 +557,7 @@ export class SchedulingService {
           leadMinutes: minutes,
           scheduledFor,
           status: whatsapp ? 'PENDING' : 'DISABLED',
-          statusReason: whatsapp ? null : 'WhatsApp (Evolution ou Chatwoot) não configurado.',
+          statusReason: whatsapp ? null : WHATSAPP_NOT_CONFIGURED_REASON,
         },
       });
       if (whatsapp) {
@@ -563,7 +565,7 @@ export class SchedulingService {
           data: {
             aggregateType: 'AppointmentReminder',
             aggregateId: reminder.id,
-            eventType: 'appointment.whatsapp-reminder.requested',
+            eventType: WHATSAPP_REMINDER_EVENT,
             payload: { reminderId: reminder.id, appointmentId, scheduledFor: scheduledFor.toISOString(), leadMinutes: minutes },
           },
         });
