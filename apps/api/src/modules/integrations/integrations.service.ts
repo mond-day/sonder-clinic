@@ -42,6 +42,7 @@ import {
 import { whatsappWebhookPath } from './whatsapp-inbound';
 import {
   googleCalendarConnectionOauthReady,
+  googleConnectionAcceptsAppointment,
   isClinicScopedGoogleCalendar,
   mergePersonalGoogleEvents,
   selectGoogleCalendarsToLoad,
@@ -1215,8 +1216,12 @@ export class IntegrationsService {
         organizationId,
         externalCalendarEventId: { not: null },
         status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+        // PROFESSIONAL: só horários daquele profissional. CLINIC: comportamento atual.
+        ...(connection.scopeType === 'PROFESSIONAL'
+          ? { professionalId: connection.scopeId }
+          : {}),
       },
-      select: { id: true, startAt: true, endAt: true, externalCalendarEventId: true, version: true },
+      select: { id: true, professionalId: true, startAt: true, endAt: true, externalCalendarEventId: true, version: true },
       take: 200,
     });
     let updated = 0;
@@ -1224,6 +1229,7 @@ export class IntegrationsService {
     let remoteMissing = 0;
     for (const appointment of appointments) {
       if (!appointment.externalCalendarEventId) continue;
+      if (!googleConnectionAcceptsAppointment(connection, appointment.professionalId)) continue;
       checked += 1;
       const remote = await getGoogleCalendarEvent(
         fresh.accessToken,

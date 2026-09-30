@@ -107,6 +107,55 @@ describe('SchedulingService compromissos', () => {
     expect(tx.appointmentReminder.create).not.toHaveBeenCalled();
   });
 
+  it('recusa a mesma cadeira em outro profissional com mensagem específica', async () => {
+    const chairId = '66666666-6666-4666-8666-666666666666';
+    db.chair.findFirst.mockResolvedValue({ id: chairId });
+    tx.appointment.findFirst.mockResolvedValue({
+      id: '88888888-8888-4888-8888-888888888888',
+      professionalId: '77777777-7777-4777-8777-777777777777',
+      chairId,
+    });
+
+    const error = await service.create('org-1', {
+      ...base,
+      patientId: ids.patient,
+      chairId,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      message: 'Essa cadeira já tem um atendimento nesse horário.',
+      details: { resourceType: 'CHAIR' },
+    });
+    expect(tx.appointment.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        status: { in: ['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'] },
+        OR: [{ professionalId: ids.professional }, { chairId }],
+      }),
+    }));
+    expect(tx.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it('consulta sem cadeira não entra no filtro de cadeira', async () => {
+    await service.create('org-1', { ...base, patientId: ids.patient });
+    const where = tx.appointment.findFirst.mock.calls[0]?.[0] as { where: { OR: unknown[] } };
+    expect(where.where.OR).toEqual([{ professionalId: ids.professional }]);
+  });
+
+  it('check-conflicts devolve a mensagem da cadeira', async () => {
+    const chairId = '66666666-6666-4666-8666-666666666666';
+    db.appointment.findFirst.mockResolvedValue({
+      id: '88888888-8888-4888-8888-888888888888',
+      professionalId: '77777777-7777-4777-8777-777777777777',
+      chairId,
+    });
+    await expect(service.checkConflict('org-1', { ...base, patientId: ids.patient, chairId })).resolves.toMatchObject({
+      conflict: true,
+      message: 'Essa cadeira já tem um atendimento nesse horário.',
+      details: { resourceType: 'CHAIR' },
+    });
+  });
+
   it('consulta ignora título e mantém paciente', async () => {
     await service.create('org-1', { ...base, patientId: ids.patient, title: 'ignorado' });
     expect(tx.appointment.create).toHaveBeenCalledWith(expect.objectContaining({

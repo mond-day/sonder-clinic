@@ -13,6 +13,7 @@ import {
   readCalendarId,
   readTokens,
   resolveGoogleOAuth,
+  selectGoogleCalendarConnectionForAppointment,
   upsertCalendarEvent,
 } from './google-calendar';
 import {
@@ -999,7 +1000,7 @@ async function processCalendarSync(event: OutboxEvent): Promise<void> {
     return;
   }
 
-  const connection = await prisma.integrationConnection.findFirst({
+  const connections = await prisma.integrationConnection.findMany({
     where: {
       clinicId: appointment.clinicId,
       provider: 'GOOGLE_CALENDAR',
@@ -1007,13 +1008,20 @@ async function processCalendarSync(event: OutboxEvent): Promise<void> {
       encryptedCredentials: { not: null },
     },
   });
+  const connection = selectGoogleCalendarConnectionForAppointment(
+    connections,
+    appointment.professionalId,
+  );
   if (!connection?.encryptedCredentials) {
+    const ignoredOtherProfessional = connections.some((item) => item.scopeType === 'PROFESSIONAL');
     await prisma.outboxEvent.update({
       where: { id: event.id },
       data: {
         processedAt: new Date(),
         attempts: { increment: 1 },
-        lastError: 'Google Calendar não configurado para a clínica.',
+        lastError: ignoredOtherProfessional
+          ? 'Agenda Google de outro profissional ignorada; esta consulta não foi sincronizada.'
+          : 'Google Calendar não configurado para a clínica.',
       },
     });
     return;
@@ -1056,10 +1064,9 @@ async function processCalendarSync(event: OutboxEvent): Promise<void> {
       });
     }
   } else {
-    const eventId = await upsertCalendarEvent({
+    const eventBody = {
       accessToken: fresh.accessToken,
       calendarId,
-      eventId: appointment.externalCalendarEventId,
       summary: `${eventLabel} · ${appointment.professional.name}`,
       description: [
         `Clínica: ${appointment.clinic.tradeName}`,
@@ -1073,7 +1080,19 @@ async function processCalendarSync(event: OutboxEvent): Promise<void> {
       endAt: appointment.endAt,
       timeZone: appointment.unit.timezone || 'America/Cuiaba',
       appointmentId: appointment.id,
-    });
+    };
+    let eventId: string;
+    try {
+      eventId = await upsertCalendarEvent({
+        ...eventBody,
+        eventId: appointment.externalCalendarEventId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      // Evento gravado na agenda de outra conta: cria de novo na agenda certa.
+      if (!appointment.externalCalendarEventId || !message.includes('HTTP 404')) throw error;
+      eventId = await upsertCalendarEvent(eventBody);
+    }
     if (eventId !== appointment.externalCalendarEventId) {
       await prisma.appointment.update({
         where: { id: appointment.id },

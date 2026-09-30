@@ -27,6 +27,19 @@ export function isClinicScopedGoogleCalendar(scopeType: string) {
   return scopeType !== 'PROFESSIONAL';
 }
 
+/**
+ * Pull/push de uma conexão PROFESSIONAL só enxerga consultas daquele profissional.
+ * Escopo CLINIC mantém o comportamento atual: a agenda da clínica pode refletir
+ * consultas de quem não tem conexão própria. Não encaminha isso para outra conta pessoal.
+ */
+export function googleConnectionAcceptsAppointment(
+  connection: { scopeType: string; scopeId: string },
+  professionalId: string,
+) {
+  if (connection.scopeType === 'PROFESSIONAL') return connection.scopeId === professionalId;
+  return true;
+}
+
 export function googleCalendarConnectionOauthReady(credentials: Record<string, string>) {
   return Boolean(resolveGoogleOAuthCredentials(credentials) && tokensFromCredentials(credentials));
 }

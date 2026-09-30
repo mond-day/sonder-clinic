@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { SearchableSelect } from '@/components/searchable-select';
+import { SearchableSelect, type SelectOption } from '@/components/searchable-select';
 import { formatMoneyInputFromValue, maskMoneyInput, moneyInputToApi } from '@/lib/format';
 import {
   FACES,
@@ -14,6 +14,22 @@ import type { Procedure } from './treatment-types';
 
 const TOOTH_OPTIONS = toothSelectOptions();
 
+function procedureOptions(procedures: Procedure[]): SelectOption[] {
+  return procedures.flatMap((procedure) => {
+    const label = procedure.name?.trim();
+    if (!procedure.id || !label || procedure.active === false) return [];
+    const description = [procedure.internalCode, procedure.tussCode]
+      .map((part) => part?.trim())
+      .filter((part): part is string => Boolean(part))
+      .join(' · ');
+    return [{
+      value: procedure.id,
+      label,
+      description: description || undefined,
+    }];
+  });
+}
+
 export function ProcedureSearchSelect({
   name,
   value,
@@ -25,18 +41,18 @@ export function ProcedureSearchSelect({
   procedures: Procedure[];
   onChange: (value: string) => void;
 }) {
+  const options = procedureOptions(procedures);
   return (
     <SearchableSelect
       name={name}
       label="Procedimento"
       required
+      portal
       value={value}
       placeholder="Buscar procedimento"
-      options={procedures.map((procedure) => ({
-        value: procedure.id,
-        label: procedure.name,
-        description: procedure.internalCode,
-      }))}
+      searchPlaceholder="Buscar por nome ou código"
+      emptyMessage={options.length ? 'Nenhum procedimento encontrado.' : 'Nenhum procedimento cadastrado.'}
+      options={options}
       onChange={onChange}
     />
   );
@@ -60,6 +76,7 @@ export function ToothSelect({
     <SearchableSelect
       name={name}
       label="Dente / região"
+      portal
       value={value}
       required={required}
       placeholder={required ? 'Obrigatório' : 'Opcional'}

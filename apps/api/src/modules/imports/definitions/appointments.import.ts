@@ -10,6 +10,7 @@ import {
   type PatientIndex,
   type Resolution,
 } from '../import-lookups';
+import { CHAIR_OVERLAP_MESSAGE } from '../../scheduling/appointment-conflict';
 import { parsedRow, PlanBuilder } from '../import-plan';
 import type { AppointmentStatus, Db, ImportDefinition, ImportPlan, ParsedRow, SheetRow, WrittenRecord } from '../import-types';
 import {
@@ -72,6 +73,8 @@ export type AppointmentRow = z.infer<typeof appointmentRowSchema>;
 export type AppointmentPlanned = AppointmentRow & {
   patientId: string;
   professionalId: string;
+  /** Preenchido quando a unidade tem uma única cadeira de agenda. */
+  chairId?: string;
   startAt: Date;
   endAt: Date;
   status: AppointmentStatus;
@@ -82,6 +85,7 @@ export type ExistingAppointment = {
   /** Nulo em compromissos (sem paciente); ainda ocupam o horário do profissional. */
   patientId: string | null;
   professionalId: string;
+  chairId?: string | null;
   startAt: Date;
   endAt: Date;
   status: AppointmentStatus;
@@ -143,6 +147,8 @@ export function planAppointments(
     tags: Map<string, { id: string; name: string }>;
     alreadyImported: Set<string>;
     existing: ExistingAppointment[];
+    /** Cadeira única da unidade. Sem ela, linhas importadas não ocupam cadeira. */
+    chairId?: string;
     now: Date;
   },
 ): ImportPlan<AppointmentPlanned> {
@@ -155,9 +161,13 @@ export function planAppointments(
   const valid = PlanBuilder.valid(rows);
   const keys = appointmentNaturalKeys(valid.map((row) => row.data));
   const activeByProfessional = new Map<string, Array<{ startAt: Date; endAt: Date; rowNumber?: number }>>();
+  const activeByChair = new Map<string, Array<{ startAt: Date; endAt: Date; rowNumber?: number }>>();
   for (const appointment of input.existing) {
     if (!ACTIVE_STATUSES.has(appointment.status)) continue;
     activeByProfessional.set(appointment.professionalId, [...(activeByProfessional.get(appointment.professionalId) ?? []), appointment]);
+    if (input.chairId && appointment.chairId === input.chairId) {
+      activeByChair.set(input.chairId, [...(activeByChair.get(input.chairId) ?? []), appointment]);
+    }
   }
   const newTags = new Map<string, string>();
   let futureActive = 0;
@@ -195,6 +205,17 @@ export function planAppointments(
           : 'Conflito de horário com consulta ou compromisso já existente na agenda (mesmo profissional).', rowWarnings);
         return;
       }
+      if (input.chairId) {
+        const busyChair = activeByChair.get(input.chairId) ?? [];
+        const chairClash = busyChair.find((item) => overlaps(item, { startAt, endAt }));
+        if (chairClash) {
+          builder.error(rowNumber, chairClash.rowNumber
+            ? `${CHAIR_OVERLAP_MESSAGE} (linha ${chairClash.rowNumber}).`
+            : CHAIR_OVERLAP_MESSAGE, rowWarnings);
+          return;
+        }
+        activeByChair.set(input.chairId, [...busyChair, { startAt, endAt, rowNumber }]);
+      }
       activeByProfessional.set(professional.value.id, [...busy, { startAt, endAt, rowNumber }]);
       futureActive += 1;
     }
@@ -207,6 +228,7 @@ export function planAppointments(
       ...data,
       patientId: patient.value.id,
       professionalId: professional.value.id,
+      chairId: input.chairId,
       startAt,
       endAt,
       status: resolved.status,
@@ -230,6 +252,15 @@ export function planAppointments(
   return builder.build();
 }
 
+async function soleSchedulingChairId(db: Db, unitId: string): Promise<string | undefined> {
+  const chairs = await db.chair.findMany({
+    where: { unitId, status: 'ACTIVE', isSchedulingEnabled: true },
+    select: { id: true },
+    take: 2,
+  });
+  return chairs.length === 1 ? chairs[0]!.id : undefined;
+}
+
 async function loadExistingAppointments(db: Db, organizationId: string, rows: AppointmentRow[], timezone: string) {
   if (!rows.length) return [];
   const starts = rows.map((row) => zonedToUtc(row.wall, timezone).getTime());
@@ -237,7 +268,7 @@ async function loadExistingAppointments(db: Db, organizationId: string, rows: Ap
   const to = new Date(Math.max(...starts) + 24 * 3_600_000);
   return db.appointment.findMany({
     where: { organizationId, startAt: { lt: to }, endAt: { gt: from } },
-    select: { patientId: true, professionalId: true, startAt: true, endAt: true, status: true },
+    select: { patientId: true, professionalId: true, chairId: true, startAt: true, endAt: true, status: true },
   });
 }
 
@@ -266,6 +297,7 @@ export const appointmentsImport: ImportDefinition<AppointmentRow, AppointmentPla
       loadImportedKeys(db, ctx.organizationId, 'Appointment', appointmentNaturalKeys(validRows)),
       unit.ok ? loadExistingAppointments(db, ctx.organizationId, validRows, unit.value.timezone) : Promise.resolve([]),
     ]);
+    const chairId = unit.ok ? await soleSchedulingChairId(db, unit.value.id) : undefined;
     return planAppointments(rows, {
       unit,
       patients,
@@ -273,6 +305,7 @@ export const appointmentsImport: ImportDefinition<AppointmentRow, AppointmentPla
       tags,
       alreadyImported: imported,
       existing,
+      chairId,
       now: ctx.now,
     });
   },
@@ -307,6 +340,7 @@ export const appointmentsImport: ImportDefinition<AppointmentRow, AppointmentPla
         unitId: unit.value.id,
         patientId: data.patientId,
         professionalId: data.professionalId,
+        chairId: data.chairId ?? null,
         startAt: data.startAt,
         endAt: data.endAt,
         status: data.status,

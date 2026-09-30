@@ -609,20 +609,24 @@ export function AgendaView() {
 
   type ConflictCheckResult = {
     conflict?: boolean;
+    message?: string;
     warnings?: Array<{ type?: string; message?: string }>;
   };
 
   async function checkAppointmentSlot(payload: Record<string, unknown>, options?: {
     excludeAppointmentId?: string;
     allowPersonalWarning?: boolean;
-  }): Promise<{ blocked: boolean; personalMessage?: string }> {
+  }): Promise<{ blocked: boolean; message?: string; personalMessage?: string }> {
     const check = await api.post<ConflictCheckResult>('/appointments/check-conflicts', {
       ...payload,
       ...(options?.excludeAppointmentId ? { excludeAppointmentId: options.excludeAppointmentId } : {}),
-    }).catch(() => ({ conflict: false, warnings: [] as Array<{ type?: string; message?: string }> }));
+    }).catch(() => ({ conflict: false, message: undefined, warnings: [] as Array<{ type?: string; message?: string }> }));
 
     if (check.conflict) {
-      return { blocked: true };
+      return {
+        blocked: true,
+        message: check.message || 'O horário selecionado está em conflito com outro agendamento.',
+      };
     }
     const personal = (check.warnings ?? []).find((item) => item.type === 'personal_calendar');
     if (personal && !options?.allowPersonalWarning) {
@@ -716,7 +720,7 @@ export function AgendaView() {
         allowPersonalWarning: false,
       });
       if (check.blocked) {
-        setError('O horário selecionado está em conflito com outro agendamento.');
+        setError(check.message || 'O horário selecionado está em conflito com outro agendamento.');
         return;
       }
       if (check.personalMessage) {
@@ -875,7 +879,7 @@ export function AgendaView() {
       if (check.blocked) {
         setPersonalWarning('');
         setAcknowledgePersonalWarning(false);
-        setFormError('O horário selecionado está em conflito com outro agendamento.');
+        setFormError(check.message || 'O horário selecionado está em conflito com outro agendamento.');
         return;
       }
       if (check.personalMessage) {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   anyGoogleCalendarOauthReady,
+  googleConnectionAcceptsAppointment,
   mergePersonalGoogleEvents,
   selectGoogleCalendarsToLoad,
 } from './google-calendar-events';
@@ -10,6 +11,26 @@ const connections = [
   { id: 'ana', scopeType: 'PROFESSIONAL', scopeId: 'pro-ana' },
   { id: 'bruno', scopeType: 'PROFESSIONAL', scopeId: 'pro-bruno' },
 ];
+
+describe('googleConnectionAcceptsAppointment', () => {
+  it('conexão do profissional só aceita as consultas dele', () => {
+    expect(googleConnectionAcceptsAppointment(
+      { scopeType: 'PROFESSIONAL', scopeId: 'pro-ana' },
+      'pro-ana',
+    )).toBe(true);
+    expect(googleConnectionAcceptsAppointment(
+      { scopeType: 'PROFESSIONAL', scopeId: 'pro-ana' },
+      'pro-bruno',
+    )).toBe(false);
+  });
+
+  it('conexão da clínica continua aceitando qualquer profissional', () => {
+    expect(googleConnectionAcceptsAppointment(
+      { scopeType: 'CLINIC', scopeId: 'clinic-1' },
+      'pro-bruno',
+    )).toBe(true);
+  });
+});
 
 describe('selectGoogleCalendarsToLoad', () => {
   it('sem filtro une clínica e todos os profissionais', () => {

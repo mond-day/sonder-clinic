@@ -21,7 +21,12 @@ import {
 } from '../../common/clinic-scope';
 import { parseWithZod } from '../../common/zod-validation';
 import { IntegrationsService, type PersonalCalendarWarning } from '../integrations/integrations.service';
-import { rethrowAppointmentConstraint } from './appointment-conflict';
+import {
+  appointmentConflictBody,
+  appointmentOccupiesAgenda,
+  OCCUPYING_APPOINTMENT_STATUSES,
+  rethrowAppointmentConstraint,
+} from './appointment-conflict';
 
 export const APPOINTMENT_KINDS = ['APPOINTMENT', 'COMMITMENT'] as const;
 export type AppointmentKind = (typeof APPOINTMENT_KINDS)[number];
@@ -205,7 +210,7 @@ export class SchedulingService {
       where: { id },
       data: { status, version: { increment: 1 } },
       include: appointmentInclude,
-    });
+    }).catch(rethrowAppointmentConstraint);
   }
 
   personalCalendarStatus(organizationId: string, clinicId: string) {
@@ -237,28 +242,12 @@ export class SchedulingService {
     if (startAt >= endAt) throw new ConflictException('O término deve ser posterior ao início.');
 
     const created = await prisma.$transaction(async (transaction) => {
-      const conflict = await transaction.appointment.findFirst({
-        where: {
-          organizationId,
-          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
-          startAt: { lt: endAt },
-          endAt: { gt: startAt },
-          OR: [
-            { professionalId: input.professionalId },
-            ...(input.chairId ? [{ chairId: input.chairId }] : []),
-          ],
-        },
-        select: { id: true, professionalId: true, chairId: true },
-      });
-      if (conflict) {
-        throw new ConflictException({
-          code: 'APPOINTMENT_RESOURCE_CONFLICT',
-          message: 'O horário selecionado está em conflito com outro agendamento.',
-          details: {
-            conflictingAppointmentId: conflict.id,
-            resourceType: conflict.professionalId === input.professionalId ? 'PROFESSIONAL' : 'CHAIR',
-          },
+      if (appointmentOccupiesAgenda(input.status)) {
+        const conflict = await transaction.appointment.findFirst({
+          where: this.overlapWhere(organizationId, input, startAt, endAt),
+          select: { id: true, professionalId: true, chairId: true },
         });
+        if (conflict) throw new ConflictException(appointmentConflictBody(conflict, input));
       }
 
       const { tagIds = [], reminderEnabled, reminderLeadMinutes } = input;
@@ -303,20 +292,13 @@ export class SchedulingService {
     const endAt = new Date(input.endAt);
     if (startAt >= endAt) throw new ConflictException('O término deve ser posterior ao início.');
     const updated = await prisma.$transaction(async (transaction) => {
-      const conflict = await transaction.appointment.findFirst({
-        where: {
-          id: { not: id },
-          organizationId,
-          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
-          startAt: { lt: endAt },
-          endAt: { gt: startAt },
-          OR: [
-            { professionalId: input.professionalId },
-            ...(input.chairId ? [{ chairId: input.chairId }] : []),
-          ],
-        },
-      });
-      if (conflict) throw new ConflictException('O horário selecionado está em conflito com outro agendamento.');
+      if (appointmentOccupiesAgenda(input.status)) {
+        const conflict = await transaction.appointment.findFirst({
+          where: this.overlapWhere(organizationId, input, startAt, endAt, id),
+          select: { id: true, professionalId: true, chairId: true },
+        });
+        if (conflict) throw new ConflictException(appointmentConflictBody(conflict, input));
+      }
       const { tagIds, reminderEnabled, reminderLeadMinutes } = input;
       const row = await transaction.appointment.update({
         where: { id },
@@ -375,21 +357,22 @@ export class SchedulingService {
   }
 
   async checkConflict(organizationId: string, input: CheckConflictInput) {
-    const conflict = await this.findConflict(organizationId, input);
+    const conflict = appointmentOccupiesAgenda(input.status)
+      ? await this.findConflict(organizationId, input)
+      : null;
     const warnings = await this.safePersonalWarnings(
       organizationId,
       input,
       input.excludeAppointmentId,
     );
+    const body = conflict ? appointmentConflictBody(conflict, input) : null;
     return {
       conflict: Boolean(conflict),
       warnings,
-      ...(conflict
+      ...(body
         ? {
-            details: {
-              conflictingAppointmentId: conflict.id,
-              resourceType: conflict.professionalId === input.professionalId ? 'PROFESSIONAL' : 'CHAIR',
-            },
+            message: body.message,
+            details: body.details,
           }
         : {}),
     };
@@ -413,19 +396,35 @@ export class SchedulingService {
     }
   }
 
+  private overlapWhere(
+    organizationId: string,
+    input: { professionalId: string; chairId?: string },
+    startAt: Date,
+    endAt: Date,
+    excludeAppointmentId?: string,
+  ) {
+    return {
+      organizationId,
+      ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+      status: { in: [...OCCUPYING_APPOINTMENT_STATUSES] },
+      startAt: { lt: endAt },
+      endAt: { gt: startAt },
+      OR: [
+        { professionalId: input.professionalId },
+        ...(input.chairId ? [{ chairId: input.chairId }] : []),
+      ],
+    };
+  }
+
   private findConflict(organizationId: string, input: CheckConflictInput) {
     return prisma.appointment.findFirst({
-      where: {
+      where: this.overlapWhere(
         organizationId,
-        ...(input.excludeAppointmentId ? { id: { not: input.excludeAppointmentId } } : {}),
-        status: { notIn: ['CANCELLED', 'NO_SHOW'] },
-        startAt: { lt: new Date(input.endAt) },
-        endAt: { gt: new Date(input.startAt) },
-        OR: [
-          { professionalId: input.professionalId },
-          ...(input.chairId ? [{ chairId: input.chairId }] : []),
-        ],
-      },
+        input,
+        new Date(input.startAt),
+        new Date(input.endAt),
+        input.excludeAppointmentId,
+      ),
       select: { id: true, professionalId: true, chairId: true },
     });
   }

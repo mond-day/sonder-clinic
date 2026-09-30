@@ -110,6 +110,9 @@ function translateWriteError(error: unknown): never {
     throw new ConflictException('Um registro da planilha já existe no sistema (conflito de chave única). Nada foi gravado; gere a prévia novamente.');
   }
   const message = error instanceof Error ? error.message : '';
+  if (message.includes('appointment_chair_no_overlap')) {
+    throw new ConflictException('Essa cadeira já tem um atendimento nesse horário. Nada foi gravado; gere a prévia novamente.');
+  }
   if (message.includes('no_overlap')) {
     throw new ConflictException('Conflito de horário na agenda durante a gravação. Nada foi gravado; gere a prévia novamente.');
   }

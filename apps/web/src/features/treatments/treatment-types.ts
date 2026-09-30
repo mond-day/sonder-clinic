@@ -18,6 +18,7 @@ export type Procedure = {
   id: string;
   name: string;
   internalCode?: string;
+  tussCode?: string | null;
   defaultSessions?: number;
   requiresTooth?: boolean;
   requiresFace?: boolean;

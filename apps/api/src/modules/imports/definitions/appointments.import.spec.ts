@@ -67,6 +67,63 @@ describe('importação de consultas', () => {
     expect(result.rows[1]!.messages[0]).toMatch(/já existente/);
   });
 
+  it('acusa conflito de cadeira entre profissionais diferentes sem derrubar as outras linhas', () => {
+    const result = plan([
+      { ...base, Data: '10/12/2026', Hora: '09:00', Status: 'Agendada' },
+      { ...base, Paciente: 'Paciente Agenda Dois', Profissional: 'Bruno Lima', Data: '10/12/2026', Hora: '09:15', Status: 'Agendada' },
+      { ...base, Paciente: 'Paciente Agenda Dois', Profissional: 'Bruno Lima', Data: '10/12/2026', Hora: '11:00', Status: 'Agendada' },
+    ], { chairId: 'chair-1' });
+    expect(result.rows.map((row) => row.status)).toEqual(['CREATE', 'ERROR', 'CREATE']);
+    expect(result.rows[1]!.messages[0]).toMatch(/Essa cadeira já tem um atendimento nesse horário/);
+    expect(result.items.map((item) => item.data.chairId)).toEqual(['chair-1', 'chair-1']);
+  });
+
+  it('não inventa conflito de cadeira quando a linha não ocupa cadeira', () => {
+    const result = plan([
+      { ...base, Data: '10/12/2026', Hora: '09:00', Status: 'Agendada' },
+      { ...base, Paciente: 'Paciente Agenda Dois', Profissional: 'Bruno Lima', Data: '10/12/2026', Hora: '09:00', Status: 'Agendada' },
+    ]);
+    expect(result.rows.map((row) => row.status)).toEqual(['CREATE', 'CREATE']);
+    expect(result.items.every((item) => item.data.chairId == null)).toBe(true);
+  });
+
+  it('cadeira ocupada por outro profissional na agenda bloqueia a linha', () => {
+    const startAt = new Date('2026-12-10T13:00:00.000Z');
+    const result = plan([
+      { ...base, Data: '10/12/2026', Hora: '09:00', Status: 'Agendada' },
+    ], {
+      chairId: 'chair-1',
+      existing: [{
+        patientId: 'pat-2',
+        professionalId: 'prof-bruno',
+        chairId: 'chair-1',
+        startAt,
+        endAt: new Date('2026-12-10T13:30:00.000Z'),
+        status: 'SCHEDULED',
+      }],
+    });
+    expect(result.rows[0]!.status).toBe('ERROR');
+    expect(result.rows[0]!.messages[0]).toBe('Essa cadeira já tem um atendimento nesse horário.');
+  });
+
+  it('cancelamento na mesma cadeira não bloqueia a linha', () => {
+    const startAt = new Date('2026-12-10T13:00:00.000Z');
+    const result = plan([
+      { ...base, Data: '10/12/2026', Hora: '09:00', Status: 'Agendada' },
+    ], {
+      chairId: 'chair-1',
+      existing: [{
+        patientId: 'pat-2',
+        professionalId: 'prof-bruno',
+        chairId: 'chair-1',
+        startAt,
+        endAt: new Date('2026-12-10T13:30:00.000Z'),
+        status: 'CANCELLED',
+      }],
+    });
+    expect(result.rows[0]!.status).toBe('CREATE');
+  });
+
   it('não inventa profissional nem paciente', () => {
     const result = plan([
       { ...base, Profissional: 'Fulano Inexistente', Data: '10/03/2026', Hora: '09:00', Status: 'Finalizada' },

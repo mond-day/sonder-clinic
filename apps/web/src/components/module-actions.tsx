@@ -975,15 +975,17 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           try {
             const check = await api.post<{
               conflict?: boolean;
+              message?: string;
               warnings?: Array<{ type?: string; message?: string }>;
             }>('/appointments/check-conflicts', payload).catch(() => ({
               conflict: false,
+              message: undefined as string | undefined,
               warnings: [] as Array<{ type?: string; message?: string }>,
             }));
             if (check.conflict) {
               setPersonalWarning('');
               setAcknowledgePersonalWarning(false);
-              setError('O horário selecionado está em conflito com outro agendamento.');
+              setError(check.message || 'O horário selecionado está em conflito com outro agendamento.');
               return;
             }
             const personal = (check.warnings ?? []).find((item) => item.type === 'personal_calendar');

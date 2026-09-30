@@ -58,6 +58,28 @@ export function isGoogleCalendarMock(): boolean {
   return envFlagEnabled('GOOGLE_CALENDAR_MOCK', integrationMockFallback());
 }
 
+export type GoogleCalendarConnectionRef = {
+  scopeType: string;
+  scopeId: string;
+};
+
+/**
+ * Conexão que pode receber o agendamento.
+ * Profissional: só a conexão cujo scopeId é o professionalId da consulta.
+ * Sem essa conexão, cai na agenda da clínica (escopo diferente de PROFESSIONAL).
+ * Nunca usa a conta Google de outro profissional.
+ */
+export function selectGoogleCalendarConnectionForAppointment<T extends GoogleCalendarConnectionRef>(
+  connections: T[],
+  professionalId: string,
+): T | null {
+  const own = connections.find(
+    (item) => item.scopeType === 'PROFESSIONAL' && item.scopeId === professionalId,
+  );
+  if (own) return own;
+  return connections.find((item) => item.scopeType !== 'PROFESSIONAL') ?? null;
+}
+
 async function refreshAccessToken(
   oauth: GoogleOAuthEnv,
   refreshToken: string,
