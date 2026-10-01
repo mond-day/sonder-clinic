@@ -71,6 +71,8 @@ const REPORT_COLUMN_LABELS: Record<string, string> = {
   laboratoryName: 'Laboratório',
   daysOverdue: 'Dias em atraso',
   overdueAmount: 'Valor em atraso',
+  inflow: 'Entrada',
+  outflow: 'Saída',
   templateName: 'Modelo',
   templateType: 'Tipo de documento',
   dueAt: 'Prazo',
@@ -100,6 +102,25 @@ function localizeExportRows(rows: Array<Record<string, unknown>>) {
 }
 
 type Period = { from: Date; to: Date };
+
+/** Fuso civil da clínica. Datas @db.Date são comparadas à meia-noite UTC desse dia. */
+const CLINIC_TIME_ZONE = 'America/Cuiaba';
+
+export function startOfClinicDay(now = new Date(), timeZone = CLINIC_TIME_ZONE): Date {
+  const day = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
+function daysBeforeClinicToday(dueDate: Date, today = startOfClinicDay()): number {
+  const due = Date.parse(`${dueDate.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  if (!Number.isFinite(due)) return 0;
+  return Math.max(0, Math.round((today.getTime() - due) / 86_400_000));
+}
 
 function parsePeriod(from?: string, to?: string): Period {
   if (from && Number.isNaN(Date.parse(from))) throw new BadRequestException('Data inicial inválida.');
@@ -182,6 +203,7 @@ export class ReportsService {
           },
           select: {
             id: true, startAt: true, endAt: true, status: true, category: true, source: true,
+            professionalId: true,
             patient: { select: { fullName: true } },
             professional: { select: { name: true } },
           },
@@ -194,6 +216,7 @@ export class ReportsService {
           category: item.category,
           patient: item.patient?.fullName ?? null,
           professional: item.professional.name,
+          professionalId: item.professionalId,
         }));
         break;
       }
@@ -223,14 +246,18 @@ export class ReportsService {
       }
       case 'new-patients': {
         const data = await prisma.patient.findMany({
-          where: { organizationId, createdAt: { gte: period.from, lte: period.to } },
+          where: {
+            organizationId,
+            createdAt: { gte: period.from, lte: period.to },
+            ...(query.clinicId ? { clinics: { some: { clinicId: query.clinicId } } } : {}),
+          },
           select: { id: true, fullName: true, primaryPhone: true, createdAt: true, status: true },
           orderBy: { createdAt: 'desc' },
         });
         rows = data.map((item) => ({
           id: item.id,
-          name: item.fullName,
-          phone: item.primaryPhone,
+          fullName: item.fullName,
+          primaryPhone: item.primaryPhone,
           createdAt: item.createdAt.toISOString(),
           status: item.status,
         }));
@@ -269,6 +296,7 @@ export class ReportsService {
         });
         const map = new Map(pros.map((item) => [item.id, item.name]));
         rows = aggregated.map((item) => ({
+          professionalId: item.professionalId,
           professional: map.get(item.professionalId) ?? 'Profissional não encontrado',
           sessions: item.sessions,
           clinicalProduction: item.total,
@@ -315,9 +343,12 @@ export class ReportsService {
         }).map((row) => ({
           procedureId: row.procedureId,
           procedure: row.procedure,
+          procedureName: row.procedure,
+          code: row.internalCode,
           internalCode: row.internalCode,
           quantity: row.sessions,
           sessions: row.sessions,
+          clinicalProduction: row.total,
           total: row.total,
         }));
         meta = {
@@ -372,7 +403,7 @@ export class ReportsService {
               netReceived: Math.max(0, Number(payment.amount) - refunded),
             };
           });
-        rows = allocateReceiptByProcedure({
+        const allocatedReceipts = allocateReceiptByProcedure({
           sessions: sessions.map((session) => ({
             id: session.id,
             correctionOfId: session.correctionOfId,
@@ -387,13 +418,19 @@ export class ReportsService {
           payments: paymentRows,
           from: period.from,
           to: period.to,
-        }).map((row) => ({
+        });
+        const receiptTotal = allocatedReceipts.reduce((sum, row) => sum + row.total, 0);
+        rows = allocatedReceipts.map((row) => ({
           procedureId: row.procedureId,
           procedure: row.procedure,
+          procedureName: row.procedure,
+          code: row.internalCode,
           internalCode: row.internalCode,
           quantity: row.sessions,
           sessions: row.sessions,
+          netReceipt: row.total,
           total: row.total,
+          share: receiptTotal > 0 ? Number(((row.total / receiptTotal) * 100).toFixed(1)) : 0,
         }));
         meta = {
           ...meta,
@@ -416,7 +453,7 @@ export class ReportsService {
           },
         });
         const patients = await prisma.patient.findMany({
-          where: { id: { in: data.map((item) => item.patientId) } },
+          where: { organizationId, id: { in: data.map((item) => item.patientId) } },
           select: { id: true, fullName: true },
         });
         const patientMap = new Map(patients.map((item) => [item.id, item.fullName]));
@@ -455,7 +492,7 @@ export class ReportsService {
           include: { payments: { include: { refunds: true } } },
         });
         const patients = await prisma.patient.findMany({
-          where: { id: { in: [...new Set(data.map((item) => item.patientId))] } },
+          where: { organizationId, id: { in: [...new Set(data.map((item) => item.patientId))] } },
           select: { id: true, fullName: true },
         });
         const patientMap = new Map(patients.map((item) => [item.id, item.fullName]));
@@ -477,12 +514,13 @@ export class ReportsService {
         break;
       }
       case 'delinquency': {
+        const today = startOfClinicDay();
         const data = await prisma.receivable.findMany({
           where: {
             organizationId,
             ...clinicFilter,
             status: { in: ['OPEN', 'PARTIALLY_PAID', 'OVERDUE'] },
-            dueDate: { lt: new Date() },
+            dueDate: { lt: today },
           },
           include: {
             payments: {
@@ -492,20 +530,23 @@ export class ReportsService {
           },
         });
         const patients = await prisma.patient.findMany({
-          where: { id: { in: [...new Set(data.map((item) => item.patientId))] } },
+          where: { organizationId, id: { in: [...new Set(data.map((item) => item.patientId))] } },
           select: { id: true, fullName: true },
         });
         const patientMap = new Map(patients.map((item) => [item.id, item.fullName]));
         rows = data
           .map((item) => {
             const finance = buildReceivableFinanceView(item);
+            const outstanding = Number(finance.outstandingAmount);
             return {
               id: item.id,
               patient: patientMap.get(item.patientId) ?? 'Paciente não encontrado',
               description: item.description,
-              balance: Number(finance.outstandingAmount),
+              balance: outstanding,
               paidAmount: Number(finance.paidAmount),
-              outstandingAmount: Number(finance.outstandingAmount),
+              outstandingAmount: outstanding,
+              overdueAmount: outstanding,
+              daysOverdue: daysBeforeClinicToday(item.dueDate, today),
               dueDate: item.dueDate.toISOString().slice(0, 10),
               status: finance.effectiveStatus,
             };
@@ -527,7 +568,7 @@ export class ReportsService {
           },
         });
         const patients = await prisma.patient.findMany({
-          where: { id: { in: [...new Set(data.map((item) => item.receivable.patientId))] } },
+          where: { organizationId, id: { in: [...new Set(data.map((item) => item.receivable.patientId))] } },
           select: { id: true, fullName: true },
         });
         const patientMap = new Map(patients.map((item) => [item.id, item.fullName]));
@@ -561,9 +602,11 @@ export class ReportsService {
           ...expenses.map((item) => ({
             source: 'expense',
             description: item.description,
+            category: item.category,
             amount: Number(item.amount),
             dueDate: item.dueDate.toISOString().slice(0, 10),
             paidAt: item.paidAt?.toISOString() ?? null,
+            status: item.paidAt ? 'PAID' : 'OPEN',
           })),
           ...payables.map((item) => {
             const paidNet = item.payments.reduce(
@@ -573,6 +616,7 @@ export class ReportsService {
             return {
               source: 'payable',
               description: item.description,
+              category: null,
               amount: Number(item.originalAmount),
               paidAmount: Number(paidNet),
               outstandingAmount: Math.max(0, Number(item.originalAmount) - Number(paidNet)),
@@ -603,10 +647,11 @@ export class ReportsService {
         const outflow = Number(
           payablePayments.reduce((sum, payment) => sum.add(netPayablePaid(payment)), money('0')),
         );
+        const net = inflow - outflow;
         rows = [
-          { kind: 'inflow', amount: inflow },
-          { kind: 'outflow', amount: outflow },
-          { kind: 'net', amount: inflow - outflow },
+          { type: 'Entrada', description: 'Recebimentos confirmados', amount: inflow, balance: null },
+          { type: 'Saída', description: 'Pagamentos confirmados', amount: outflow, balance: null },
+          { type: 'Saldo', description: 'Saldo do período', amount: net, balance: net },
         ];
         break;
       }
@@ -618,11 +663,11 @@ export class ReportsService {
             createdAt: { gte: period.from, lte: period.to },
           },
           select: {
-            code: true, description: true, status: true, detailedStage: true, laboratoryName: true, dueAt: true, patientId: true,
+            code: true, description: true, status: true, detailedStage: true, laboratoryName: true, dueAt: true, patientId: true, cost: true,
           },
         });
         const patients = await prisma.patient.findMany({
-          where: { id: { in: [...new Set(data.map((item) => item.patientId))] } },
+          where: { organizationId, id: { in: [...new Set(data.map((item) => item.patientId))] } },
           select: { id: true, fullName: true },
         });
         const patientMap = new Map(patients.map((item) => [item.id, item.fullName]));
@@ -631,9 +676,10 @@ export class ReportsService {
           description: item.description,
           status: item.status,
           stage: item.detailedStage,
-          laboratory: item.laboratoryName,
+          laboratoryName: item.laboratoryName,
           patient: patientMap.get(item.patientId) ?? 'Paciente não encontrado',
           dueAt: item.dueAt?.toISOString() ?? null,
+          cost: item.cost == null ? null : Number(item.cost),
         }));
         break;
       }
@@ -650,17 +696,17 @@ export class ReportsService {
           },
         });
         const patients = await prisma.patient.findMany({
-          where: { id: { in: [...new Set(data.map((item) => item.patientId))] } },
+          where: { organizationId, id: { in: [...new Set(data.map((item) => item.patientId))] } },
           select: { id: true, fullName: true },
         });
         const patientMap = new Map(patients.map((item) => [item.id, item.fullName]));
         rows = data.map((item) => ({
           id: item.id,
-          template: item.template.name,
-          type: item.template.type,
+          templateName: item.template.name,
+          templateType: item.template.type,
           status: item.status,
           patient: patientMap.get(item.patientId) ?? 'Paciente não encontrado',
-          createdAt: item.generatedAt.toISOString(),
+          generatedAt: item.generatedAt.toISOString(),
         }));
         break;
       }
@@ -719,7 +765,7 @@ export class ReportsService {
         subtitle: 'Sonder Clinic · exportação',
         meta: [
           ['Relatório', catalogItem?.name ?? reportId],
-          ['Período', `${period.from.toLocaleDateString('pt-BR')} — ${period.to.toLocaleDateString('pt-BR')}`],
+          ['Período', `${period.from.toLocaleDateString('pt-BR', { timeZone: CLINIC_TIME_ZONE })} — ${period.to.toLocaleDateString('pt-BR', { timeZone: CLINIC_TIME_ZONE })}`],
           ['Registros', String(rows.length)],
         ],
         rows: localized,

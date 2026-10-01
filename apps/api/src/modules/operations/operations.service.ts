@@ -47,6 +47,7 @@ import {
   updateProcedure as catalogUpdateProcedure,
   upsertPriceTableItem as catalogUpsertPriceItem,
 } from './operations-catalog.utils';
+import { ensureDefaultProcedures } from './default-procedures';
 import {
   createMessageTemplate,
   listMessageTemplates,
@@ -198,7 +199,8 @@ export class OperationsService {
     return { clinic, city, primaryColor };
   }
 
-  procedures(organizationId: string, includeInactive = false) {
+  async procedures(organizationId: string, includeInactive = false) {
+    await ensureDefaultProcedures(organizationId);
     return prisma.procedure.findMany({
       where: { organizationId, ...(includeInactive ? {} : { active: true }) },
       orderBy: { name: 'asc' },

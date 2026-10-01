@@ -977,7 +977,7 @@ export function TreatmentWorkspace({
         busy={busy}
         error={actionError}
         onClose={() => setEditorMode(null)}
-        key={`editor-${editorMode ?? 'closed'}-${selected?.id ?? 'new'}`}
+        key={`editor-${patientId}-${editorMode ?? 'closed'}-${selected?.id ?? 'new'}`}
         onCreate={async (input) => {
           setBusy(true);
           setActionError('');

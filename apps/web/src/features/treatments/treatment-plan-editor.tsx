@@ -7,6 +7,7 @@ import type { Professional } from '@/components/selection-provider';
 import { formatMoneyInputFromValue, moneyInputToApi } from '@/lib/format';
 import { FaceSelect, MoneyField, ProcedureSearchSelect, ToothSelect } from './treatment-field-inputs';
 import { createTreatmentSchema, updateTreatmentSchema } from './treatment-schemas';
+import { treatmentTitleDefault } from './treatment-title';
 import type { DraftItemInput, Procedure, TreatmentPlan } from './treatment-types';
 
 function blankItem(): DraftItemInput {
@@ -161,7 +162,7 @@ export function TreatmentPlanEditor({
       >
         <label>
           Nome do tratamento
-          <input name="title" required minLength={3} defaultValue={plan?.title ?? ''} placeholder="Ex.: Reabilitação estética anterior" />
+          <input name="title" required minLength={3} defaultValue={treatmentTitleDefault(mode, plan?.title)} placeholder="Ex.: Reabilitação estética anterior" />
         </label>
         <label>
           Profissional responsável

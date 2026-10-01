@@ -9,6 +9,7 @@ import {
   isTechnicalIdKey,
   presentationFor,
   resolveColumns,
+  rowsForSummary,
   type ReportColumnDefinition,
   type ReportFilterKey,
 } from '@/lib/report-presentation';
@@ -92,7 +93,7 @@ function computeSummaries(
       return { label: def.label, value: number(rows.length, { maximumFractionDigits: 0 }) };
     }
     const key = def.sourceKey ?? def.key;
-    const values = rows
+    const values = rowsForSummary(rows, def)
       .map((row) => Number(row[key]))
       .filter((n) => !Number.isNaN(n));
     if (!values.length) {

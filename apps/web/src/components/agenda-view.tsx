@@ -16,6 +16,7 @@ import {
   type BusinessHours,
 } from '@/lib/business-hours';
 import { APPOINTMENT_DURATIONS, nearestDurationMinutes } from '@/lib/duration';
+import { reminderLeadMinutesFromForm, reminderLeadOptions } from '@/lib/reminder-lead';
 import { appointmentEventTone, list, nested, statusTone, text, timeOnly, toDatetimeLocalValue, type RecordValue } from '@/lib/format';
 import { ImportButton } from '@/features/imports/import-button';
 import { ModuleActions, type AppointmentFormDefaults } from './module-actions';
@@ -229,17 +230,6 @@ function disabledReminderNotices(item: RecordValue): string[] {
         : `Lembrete não será enviado: ${reason}`;
     });
   return [...new Set(notices)];
-}
-
-function reminderLeadLabel(minutes: number) {
-  if (minutes % 1440 === 0) return `${minutes / 1440} ${minutes === 1440 ? 'dia' : 'dias'}`;
-  if (minutes % 60 === 0) return `${minutes / 60} ${minutes === 60 ? 'hora' : 'horas'}`;
-  return `${minutes} min`;
-}
-
-function reminderLeadOptions(current: number[]) {
-  const values = [...new Set([120, 1440, 2880, ...current])].sort((a, b) => a - b);
-  return values.map((value) => ({ value: String(value), label: reminderLeadLabel(value) }));
 }
 
 function startOfDay(reference: Date) {
@@ -851,7 +841,7 @@ export function AgendaView() {
     const startAt = new Date(String(data.get('startAt'))).toISOString();
     const duration = Number(data.get('duration'));
     const endAt = new Date(new Date(startAt).getTime() + duration * 60_000).toISOString();
-    const reminderLeads = data.getAll('reminderLeadMinutes').map(Number).filter((value) => Number.isFinite(value) && value > 0);
+    const reminderLeads = reminderLeadMinutesFromForm(data);
     const unitId = String(data.get('unitId') || editUnitId || selectedAppointment.unitId);
     const chairId = String(data.get('chairId') ?? editChairId ?? '') || undefined;
     const professionalId = String(data.get('professionalId'));
@@ -1076,7 +1066,10 @@ export function AgendaView() {
           selectedPatientId={queryPatientId}
           appointmentDefaults={formDefaults}
           onPatientChange={() => undefined}
-          onSaved={load}
+          onSaved={() => {
+            setFormOpen(false);
+            load();
+          }}
         />
       </Modal>
       <Modal

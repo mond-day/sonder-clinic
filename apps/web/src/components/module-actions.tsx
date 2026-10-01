@@ -5,6 +5,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { z } from 'zod';
 import { api, ApiError, getApiUrl } from '@/lib/api';
 import { APPOINTMENT_DURATIONS } from '@/lib/duration';
+import { reminderLeadMinutesFromForm, reminderLeadOptions } from '@/lib/reminder-lead';
 import {
   cpfDigits,
   currency,
@@ -969,7 +970,18 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           ? validate(commitmentSchema, { ...slot, title: data.get('title') })
           : validate(appointmentSchema, { ...slot, patientId: data.get('patientId') });
         if (!parsed) return;
-        const payload = { ...parsed, clinicId, kind: agendaKind };
+        const reminderLeads = isCommitment ? [] : reminderLeadMinutesFromForm(data);
+        const payload = {
+          ...parsed,
+          clinicId,
+          kind: agendaKind,
+          ...(isCommitment
+            ? {}
+            : {
+                reminderEnabled: true,
+                ...(reminderLeads.length ? { reminderLeadMinutes: reminderLeads } : {}),
+              }),
+        };
         setBusy(true); setError(''); setMessage('');
         void (async () => {
           try {
@@ -1052,12 +1064,25 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             </select>
           </label>
         </Disclosure>
+        {isCommitment ? null : (
+          <>
+            <MultiSelect
+              name="reminderLeadMinutes"
+              label="Antecedência"
+              options={reminderLeadOptions()}
+              placeholder="Padrão do modelo de Lembrete"
+            />
+            <p className="field-hint span-2">
+              Sem antecedência escolhida, vale a do modelo de Lembrete (Configurações → Comunicação). O pedido de confirmação segue o modelo de Confirmação.
+            </p>
+          </>
+        )}
         <Disclosure title={isCommitment ? 'Detalhes' : 'Detalhes e comunicação'} defaultOpen={false}>
           <label className="span-2">Observações<input name="notes" /></label>
           <p className="muted-note span-2">
             {isCommitment
               ? 'Compromissos não enviam lembrete ao paciente. Para remarcar ou cancelar, abra o compromisso na agenda.'
-              : 'Etiquetas e lembrete de WhatsApp podem ser ajustados nos detalhes após criar a consulta. Para remarcar ou cancelar, abra a consulta na agenda.'}
+              : 'Etiquetas podem ser ajustadas nos detalhes após criar a consulta. Para remarcar ou cancelar, abra a consulta na agenda.'}
           </p>
         </Disclosure>
         {personalWarning ? (

@@ -103,7 +103,7 @@ export const REPORT_COLUMN_LABELS: Record<string, string> = {
 
 export const REPORT_PRESENTATIONS: Record<string, ReportPresentation> = {
   appointments: {
-    description: 'Consultas e compromissos no período, com paciente e profissional.',
+    description: 'Consultas no período, com paciente e profissional.',
     filters: ['period', 'clinic', 'professional', 'status'],
     columns: [
       { key: 'startAt', label: 'Início', type: 'date' },
@@ -136,7 +136,7 @@ export const REPORT_PRESENTATIONS: Record<string, ReportPresentation> = {
     summaries: [
       { key: 'clinicalProduction', label: 'Produção clínica', type: 'currency', aggregate: 'sum', sourceKey: 'clinicalProduction' },
       { key: 'sessions', label: 'Sessões concluídas', type: 'integer', aggregate: 'sum', sourceKey: 'sessions' },
-      { key: 'averagePerSession', label: 'Média por sessão', type: 'currency', aggregate: 'avg', sourceKey: 'clinicalProduction' },
+      { key: 'averagePerSession', label: 'Média por sessão', type: 'currency', aggregate: 'avg', sourceKey: 'averagePerSession' },
     ],
     chart: { enabled: true, labelKey: 'professional', valueKey: 'clinicalProduction' },
   },
@@ -294,7 +294,7 @@ export const REPORT_PRESENTATIONS: Record<string, ReportPresentation> = {
       { key: 'share', label: 'Participação', type: 'percent', align: 'right' },
     ],
     summaries: [
-      { key: 'count', label: 'Apresentados', type: 'integer', aggregate: 'sum', sourceKey: 'count' },
+      { key: 'count', label: 'Planos', type: 'integer', aggregate: 'sum', sourceKey: 'count' },
     ],
   },
   laboratories: {
@@ -334,6 +334,20 @@ export const REPORT_PRESENTATIONS: Record<string, ReportPresentation> = {
     summaries: [{ key: 'count', label: 'Evoluções', type: 'integer', aggregate: 'count' }],
   },
 };
+
+/** Entradas e saídas do fluxo de caixa somam só a linha do próprio tipo. */
+export function rowsForSummary<T extends { key: string }>(
+  rows: Array<Record<string, unknown>>,
+  def: T,
+): Array<Record<string, unknown>> {
+  if (def.key !== 'inflow' && def.key !== 'outflow') return rows;
+  const label = def.key === 'inflow' ? 'entrada' : 'saída';
+  const matched = rows.filter((row) => {
+    const kind = String(row.type ?? row.kind ?? '').toLowerCase();
+    return kind === label || kind === def.key;
+  });
+  return matched.length ? matched : rows;
+}
 
 export function presentationFor(reportId: string): ReportPresentation {
   return REPORT_PRESENTATIONS[reportId] ?? {

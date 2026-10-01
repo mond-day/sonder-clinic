@@ -309,6 +309,54 @@ describe('SchedulingService lembrete WhatsApp ao salvar', () => {
     });
   });
 
+  it('sem antecedência explícita usa só o primeiro Lembrete por nome e um pedido de Confirmação', async () => {
+    tx.integrationConnection.findFirst.mockResolvedValue({ id: 'conn-cw' });
+    tx.appointment.create.mockResolvedValue({ id: ids.appointment });
+    tx.messageTemplate.findMany.mockResolvedValue([
+      { category: 'REMINDER', schedule: { leadMinutes: 120 } },
+      { category: 'REMINDER', schedule: { leadMinutes: 2880 } },
+      { category: 'CONFIRMATION', schedule: { leadMinutes: 1500 } },
+    ]);
+
+    await service.create('org-1', { ...base, patientId: ids.patient, reminderEnabled: true });
+
+    expect(tx.messageTemplate.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ active: true, category: { in: ['REMINDER', 'CONFIRMATION'] } }),
+      orderBy: { name: 'asc' },
+    }));
+    const created = tx.appointmentReminder.create.mock.calls.map(([arg]) => (
+      arg as { data: { channel: string; leadMinutes: number } }
+    ).data);
+    expect(created).toEqual([
+      expect.objectContaining({ channel: 'WHATSAPP', leadMinutes: 120 }),
+      expect.objectContaining({ channel: 'WHATSAPP:CONFIRMATION', leadMinutes: 1500 }),
+    ]);
+  });
+
+  it('antecedência escolhida na consulta prevalece sobre a do modelo de Lembrete', async () => {
+    tx.integrationConnection.findFirst.mockResolvedValue({ id: 'conn-cw' });
+    tx.appointment.create.mockResolvedValue({ id: ids.appointment });
+    tx.messageTemplate.findMany.mockResolvedValue([
+      { category: 'REMINDER', schedule: { leadMinutes: 1440 } },
+      { category: 'CONFIRMATION', schedule: { leadMinutes: 1500 } },
+    ]);
+
+    await service.create('org-1', {
+      ...base,
+      patientId: ids.patient,
+      reminderEnabled: true,
+      reminderLeadMinutes: 2880,
+    });
+
+    const created = tx.appointmentReminder.create.mock.calls.map(([arg]) => (
+      arg as { data: { channel: string; leadMinutes: number } }
+    ).data);
+    expect(created).toEqual([
+      expect.objectContaining({ channel: 'WHATSAPP', leadMinutes: 2880 }),
+      expect.objectContaining({ channel: 'WHATSAPP:CONFIRMATION', leadMinutes: 1500 }),
+    ]);
+  });
+
   it('remarcar para outro horário recria os lembretes (paciente precisa do aviso novo)', async () => {
     db.appointment.findFirst.mockResolvedValue({
       id: ids.appointment, kind: 'APPOINTMENT', status: 'SCHEDULED', startAt: new Date('2026-10-01T13:00:00.000Z'),
