@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   applyMondaySendDay,
   CONFIRMATION_REMINDER_CHANNEL,
@@ -58,6 +58,13 @@ const appointmentSchema = z.object({
     z.array(z.number().int().min(15).max(10080)).max(5),
   ]).optional(),
   source: z.enum(['INTERNAL', 'API']).optional(),
+  /** Retorno pedido já na consulta: cria um alerta na Central de Retornos. */
+  returnAlert: z.object({
+    dueAt: z.string().datetime(),
+    reason: z.string().trim().min(3).max(200).optional(),
+  }).optional(),
+  /** Alerta existente que esta consulta resolve (marca como Agendado e vincula). */
+  returnAlertId: z.string().uuid().optional(),
 }).superRefine((value, ctx) => {
   if (
     Array.isArray(value.reminderLeadMinutes)
@@ -75,6 +82,9 @@ const appointmentSchema = z.object({
       ctx.addIssue({ code: 'custom', message: 'Selecione o paciente da consulta.', path: ['patientId'] });
     }
     return;
+  }
+  if (value.returnAlert || value.returnAlertId) {
+    ctx.addIssue({ code: 'custom', message: 'Compromisso não tem retorno.', path: ['returnAlert'] });
   }
   if (!value.title) {
     ctx.addIssue({ code: 'custom', message: 'Informe o título do compromisso.', path: ['title'] });
@@ -134,6 +144,8 @@ export type AppointmentInput = {
   reminderEnabled?: boolean;
   reminderLeadMinutes?: number | number[];
   source?: 'INTERNAL' | 'API';
+  returnAlert?: { dueAt: string; reason?: string };
+  returnAlertId?: string;
 };
 
 export type CheckConflictInput = AppointmentInput & {
@@ -265,11 +277,56 @@ export class SchedulingService {
       const remind = input.kind === 'APPOINTMENT' && reminderEnabled;
       await this.configureReminder(transaction, organizationId, row.id, input.clinicId, startAt, remind, reminderLeadMinutes);
       await this.enqueueCalendarSync(transaction, row.id, 'UPSERT');
+      await this.syncReturnAlerts(transaction, organizationId, row.id, input, endAt);
       return transaction.appointment.findUniqueOrThrow({ where: { id: row.id }, include: appointmentInclude });
     }, { isolationLevel: 'Serializable' }).catch(rethrowAppointmentConstraint);
 
     const warnings = await this.safePersonalWarnings(organizationId, input);
     return { ...created, warnings };
+  }
+
+  /** Retorno pedido na consulta (novo alerta) e/ou alerta existente que esta consulta resolve. */
+  private async syncReturnAlerts(
+    transaction: Prisma.TransactionClient,
+    organizationId: string,
+    appointmentId: string,
+    input: ParsedAppointment,
+    endAt: Date,
+  ) {
+    if (input.kind !== 'APPOINTMENT' || !input.patientId) return;
+    if (input.returnAlertId) {
+      const alert = await transaction.returnAlert.findFirst({
+        where: {
+          id: input.returnAlertId,
+          organizationId,
+          patientId: input.patientId,
+          status: { in: ['PENDING', 'CONTACTED'] },
+        },
+        select: { id: true },
+      });
+      if (!alert) throw new NotFoundException('Retorno pendente não encontrado para este paciente.');
+      await transaction.returnAlert.update({
+        where: { id: alert.id },
+        data: { status: 'SCHEDULED', appointmentId },
+      });
+    }
+    if (input.returnAlert) {
+      const dueAt = new Date(input.returnAlert.dueAt);
+      if (dueAt <= endAt) throw new BadRequestException('A data de retorno deve ser posterior à consulta.');
+      await transaction.returnAlert.create({
+        data: {
+          organizationId,
+          clinicId: input.clinicId,
+          patientId: input.patientId,
+          professionalId: input.professionalId,
+          reason: input.returnAlert.reason ?? 'Retorno',
+          specialty: input.category,
+          dueAt,
+          notes: `Retorno solicitado ao agendar a consulta ${appointmentId}`,
+          appointmentId,
+        },
+      });
+    }
   }
 
   async reschedule(organizationId: string, id: string, rawInput: AppointmentInput, scope?: ClinicScope) {

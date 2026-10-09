@@ -8,6 +8,7 @@ import { parseWithZod } from '../../common/zod-validation';
 import { resolvePublicWebUrl } from '../../common/public-web-url';
 import { CertificateService } from '../settings/certificate.service';
 import { TreatmentContractService } from '../documents/treatment-contract.service';
+import { DEFAULT_TEMPLATE_ALLOWED_VARIABLES, missingDefaultTemplates } from '../documents/document-template.defaults';
 import {
   assertContractSignatureAllowed,
   ELECTRONIC_SIGNATURE_CONSENT_V1,
@@ -1532,7 +1533,34 @@ export class OperationsService {
     });
   }
 
-  documentTemplates(organizationId: string, includeArchived = false) {
+  /** Cria os modelos padrão dos tipos que a clínica ainda não tem; não recria os que ela arquivou. */
+  private async ensureDefaultDocumentTemplates(organizationId: string) {
+    const existing = await prisma.documentTemplate.findMany({
+      where: { organizationId },
+      select: { type: true, name: true },
+    });
+    const missing = missingDefaultTemplates(existing);
+    if (!missing.length) return;
+    await prisma.documentTemplate.createMany({
+      data: missing.map((row) => ({
+        organizationId,
+        type: row.type,
+        name: row.name,
+        isSystem: true,
+        status: 'PUBLISHED' as const,
+        active: true,
+        version: 1,
+        publishedAt: new Date(),
+        structuredContent: json({ title: row.title, header: '', body: row.body, footer: row.footer, signature: row.signature }),
+        allowedVariables: json([...DEFAULT_TEMPLATE_ALLOWED_VARIABLES]),
+        signatureRules: json({ requiredRoles: ['PROFESSIONAL'], minSignatures: 1 }),
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  async documentTemplates(organizationId: string, includeArchived = false) {
+    await this.ensureDefaultDocumentTemplates(organizationId);
     return prisma.documentTemplate.findMany({
       where: {
         organizationId,

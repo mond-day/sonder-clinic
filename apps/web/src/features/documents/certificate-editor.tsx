@@ -279,6 +279,11 @@ export function CertificateEditor({
           Complemento
           <textarea rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} />
         </label>
+        {!options.length ? (
+          <p className="form-error span-2" role="alert">
+            Nenhum modelo publicado. Publique um modelo em Configurações → Modelos de documentos.
+          </p>
+        ) : null}
         {(formError || error) ? <p className="form-error span-2" role="alert">{formError || error}</p> : null}
         <div className="form-actions span-2">
           <button type="button" className="button ghost" onClick={onClose} disabled={busy}>Cancelar</button>

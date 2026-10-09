@@ -25,6 +25,8 @@ class CreateAppointmentDto {
   @IsOptional() @IsArray() @IsUUID(undefined, { each: true }) tagIds?: string[];
   @IsOptional() reminderEnabled?: boolean;
   @IsOptional() reminderLeadMinutes?: number | number[];
+  @IsOptional() returnAlert?: { dueAt: string; reason?: string };
+  @IsOptional() @IsUUID() returnAlertId?: string;
 }
 
 class CheckConflictsDto extends CreateAppointmentDto {

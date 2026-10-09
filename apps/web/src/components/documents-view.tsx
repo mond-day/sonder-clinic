@@ -6,7 +6,6 @@ import { list, text, type RecordValue } from '@/lib/format';
 import { useSelection } from './selection-provider';
 import { EmptyState, PageHeader, Panel } from './ui';
 import { PatientDocumentWorkspace } from '@/features/documents/patient-document-workspace';
-import { DocumentTemplatesAdminPanel } from '@/features/documents/document-templates-admin';
 
 export function DocumentsView() {
   const { clinicId, professionals } = useSelection();
@@ -49,7 +48,7 @@ export function DocumentsView() {
       <PageHeader
         eyebrow="Clínico"
         title="Documentos"
-        description="Biblioteca unificada de modelos, documentos gerados, prescrições, atestados e arquivos do paciente."
+        description="Biblioteca unificada de documentos gerados, prescrições, atestados e arquivos do paciente."
         actions={(
           <button type="button" className="button soft" disabled={loading} onClick={() => void loadPatients()}>
             Atualizar
@@ -57,8 +56,6 @@ export function DocumentsView() {
         )}
       />
       {error ? <div className="secure-notice form-error" role="alert">{error}</div> : null}
-
-      <DocumentTemplatesAdminPanel />
 
       <Panel title="Paciente" description="Selecione o paciente para abrir o workspace de documentos.">
         <label className="field-block">

@@ -433,8 +433,7 @@ export function ReturnsView() {
                           disabled={busy || !patient.id}
                           onClick={() => {
                             setOpenMenuId('');
-                            // Agenda cria a consulta; ao voltar, vincule via POST /return-alerts/:id/schedule com appointmentId.
-                            void patch(String(item.id), { status: 'SCHEDULED' }, 'Retorno marcado como agendado. Vincule a consulta depois se necessário.');
+                            // A agenda marca o retorno como agendado e o vincula ao salvar a consulta (returnId).
                             router.push(`/agenda?patientId=${String(patient.id)}&new=1&returnId=${String(item.id)}`);
                           }}
                         >Agendar consulta</button>

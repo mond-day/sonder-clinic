@@ -270,8 +270,9 @@ test.describe('Anamnese E2E', () => {
   });
 
   test('Document templates admin — editar/preview', async ({ page }) => {
-    await page.goto('/documentos');
+    await page.goto('/configuracoes');
     await dismissAlertsDrawer(page);
+    await page.getByRole('button', { name: /modelos de documentos/i }).click();
     await expect(page.getByText(/modelos de documento/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('button', { name: /novo modelo/i })).toBeVisible();
   });

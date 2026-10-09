@@ -43,6 +43,7 @@ import { formatDnSummary } from '@/lib/dn-parse';
 import { currency, dateOnly, formatCpf, list, moneyInputToApi, presentationLabel, text, type RecordValue } from '@/lib/format';
 import { notifyBrandingUpdated, resolveMediaUrl } from '@/lib/branding';
 import { AnamnesisTemplateEditor } from '@/features/anamnesis/template-editor';
+import { DocumentTemplatesAdminPanel } from '@/features/documents/document-templates-admin';
 import {
   ClinicsAdminPanel,
   CommunicationTemplatesPanel,
@@ -68,6 +69,7 @@ import { UncontrolledMoneyInput } from '@/features/treatments/treatment-field-in
 type SectionKey =
   | 'overview'
   | 'anamnesis'
+  | 'documentTemplates'
   | 'medications'
   | 'exams'
   | 'units'
@@ -94,6 +96,7 @@ const sections: Array<{
 }> = [
   { key: 'overview', label: 'Visão geral', description: 'Todas as áreas de configuração da clínica.', icon: ShieldCheck },
   { key: 'anamnesis', label: 'Modelos de anamnese', description: 'Gerencie os modelos de anamnese utilizados nos atendimentos.', icon: ClipboardList },
+  { key: 'documentTemplates', label: 'Modelos de documentos', description: 'Atestados, receitas, encaminhamentos, termos e demais modelos de documentos.', icon: FileText },
   { key: 'medications', label: 'Medicamentos e protocolos', description: 'Catálogo para agilizar prescrições com revisão clínica.', icon: Pill },
   { key: 'exams', label: 'Tipos de exame', description: 'Catálogo editável usado nas solicitações.', icon: FlaskConical },
   { key: 'units', label: 'Unidades e cadeiras', description: 'Estrutura física, cadeiras e profissionais ativos.', icon: Building2 },
@@ -1497,6 +1500,7 @@ export function SettingsView() {
           )}
 
           {section === 'anamnesis' && <AnamnesisTemplateEditor />}
+          {section === 'documentTemplates' && <DocumentTemplatesAdminPanel />}
           {section === 'medications' && <MedicationCatalogPanel />}
           {section === 'exams' && <ExamCatalogPanel />}
 

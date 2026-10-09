@@ -466,7 +466,8 @@ export function AgendaView() {
 
   useEffect(() => {
     if (searchParams.get('new') === '1' || searchParams.get('patientId')) {
-      setFormDefaults(undefined);
+      const returnAlertId = searchParams.get('returnId');
+      setFormDefaults(returnAlertId ? { returnAlertId } : undefined);
       setFormOpen(true);
     }
   }, [searchParams]);

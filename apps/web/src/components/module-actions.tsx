@@ -243,7 +243,25 @@ export type AppointmentFormDefaults = {
   professionalId?: string;
   unitId?: string;
   chairId?: string;
+  /** Retorno pendente da Central de Retornos que esta consulta vai resolver. */
+  returnAlertId?: string;
 };
+
+const RETURN_DAY_OPTIONS = [7, 15, 30, 60, 90, 180, 365] as const;
+
+/** Data do retorno: dias após o início da consulta, ou data escolhida (09:00 locais). */
+function returnDueAt(startAt: string, choice: string, customDate: string): string | null {
+  if (choice === 'custom') {
+    if (!customDate) return null;
+    const due = new Date(`${customDate}T09:00`);
+    return Number.isNaN(due.getTime()) ? null : due.toISOString();
+  }
+  const days = Number(choice);
+  if (!days) return null;
+  const due = new Date(startAt);
+  due.setDate(due.getDate() + days);
+  return due.toISOString();
+}
 
 export function ModuleActions({ module, clinicId, clinics, professionals, patients, selectedPatientId, defaultPatientId, appointmentDefaults, onPatientChange, onSaved, configurationKind, initialIntegrationProvider, initialIntegration }: {
   module: ModuleKey;
@@ -327,6 +345,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
   const lockedPatientEdit = Boolean(selectedPatientId);
   const agendaPatientDefault = selectedPatientId || defaultPatientId || '';
   const [agendaKind, setAgendaKind] = useState<AgendaEntryKind>(appointmentDefaults?.kind ?? 'APPOINTMENT');
+  const [returnChoice, setReturnChoice] = useState('');
   const [agendaUnitId, setAgendaUnitId] = useState(appointmentDefaults?.unitId ?? '');
   // undefined = nenhuma escolha explícita (clique/usuário); permite o default de "única cadeira".
   const [agendaChairId, setAgendaChairId] = useState<string | undefined>(appointmentDefaults?.chairId);
@@ -971,6 +990,16 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           : validate(appointmentSchema, { ...slot, patientId: data.get('patientId') });
         if (!parsed) return;
         const reminderLeads = isCommitment ? [] : reminderLeadMinutesFromForm(data);
+        let returnAlert: { dueAt: string; reason?: string } | undefined;
+        if (!isCommitment && returnChoice) {
+          const dueAt = returnDueAt(slot.startAt, returnChoice, String(data.get('returnDate') ?? ''));
+          if (!dueAt) {
+            setError('Informe a data do retorno.');
+            return;
+          }
+          const reason = String(data.get('returnReason') ?? '').trim();
+          returnAlert = { dueAt, ...(reason ? { reason } : {}) };
+        }
         const payload = {
           ...parsed,
           clinicId,
@@ -978,6 +1007,8 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
           ...(isCommitment
             ? {}
             : {
+                ...(returnAlert ? { returnAlert } : {}),
+                ...(appointmentDefaults?.returnAlertId ? { returnAlertId: appointmentDefaults.returnAlertId } : {}),
                 reminderEnabled: true,
                 ...(reminderLeads.length ? { reminderLeadMinutes: reminderLeads } : {}),
               }),
@@ -1012,6 +1043,7 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
             const created = isCommitment ? 'Compromisso criado' : 'Consulta criada';
             setMessage(acknowledgePersonalWarning ? `${created} (com aviso de agenda pessoal).` : `${created}.`);
             form.reset();
+            setReturnChoice('');
             setResourceRevision((value) => value + 1);
             onSaved();
           } catch (cause) {
@@ -1076,6 +1108,35 @@ export function ModuleActions({ module, clinicId, clinics, professionals, patien
               Sem antecedência escolhida, vale a do modelo de Lembrete (Configurações → Comunicação). O pedido de confirmação segue o modelo de Confirmação.
             </p>
           </>
+        )}
+        {isCommitment ? null : (
+          <Disclosure
+            title="Retorno"
+            description={appointmentDefaults?.returnAlertId
+              ? 'Esta consulta resolve um retorno da Central de Retornos'
+              : 'Opcional: cria um alerta na Central de Retornos'}
+            defaultOpen={false}
+          >
+            {appointmentDefaults?.returnAlertId ? (
+              <p className="muted-note span-2">Ao salvar, o retorno pendente será marcado como agendado e vinculado a esta consulta.</p>
+            ) : (
+              <>
+                <label>Retornar em
+                  <select name="returnChoice" value={returnChoice} onChange={(event) => setReturnChoice(event.target.value)}>
+                    <option value="">Sem retorno</option>
+                    {RETURN_DAY_OPTIONS.map((days) => <option key={days} value={days}>{days} dias</option>)}
+                    <option value="custom">Escolher data</option>
+                  </select>
+                </label>
+                {returnChoice === 'custom' ? (
+                  <label>Data do retorno<input name="returnDate" type="date" required /></label>
+                ) : null}
+                {returnChoice ? (
+                  <label className="span-2">Motivo do retorno<input name="returnReason" maxLength={200} placeholder="Ex.: Reavaliação, revisão de manutenção" /></label>
+                ) : null}
+              </>
+            )}
+          </Disclosure>
         )}
         <Disclosure title={isCommitment ? 'Detalhes' : 'Detalhes e comunicação'} defaultOpen={false}>
           <label className="span-2">Observações<input name="notes" /></label>

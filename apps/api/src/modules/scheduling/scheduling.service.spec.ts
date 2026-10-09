@@ -12,6 +12,7 @@ const { tx, db } = vi.hoisted(() => {
     },
     appointmentReminder: { deleteMany: vi.fn(), create: vi.fn(), findMany: vi.fn() },
     outboxEvent: { create: vi.fn() },
+    returnAlert: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     integrationConnection: { findFirst: vi.fn() },
     messageTemplate: { findMany: vi.fn() },
   };
@@ -372,5 +373,42 @@ describe('SchedulingService lembrete WhatsApp ao salvar', () => {
     expect(tx.appointmentReminder.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: 'PENDING' }),
     }));
+  });
+
+  it('cria alerta de retorno junto com a consulta', async () => {
+    await service.create('org-1', {
+      ...base,
+      patientId: ids.patient,
+      returnAlert: { dueAt: '2026-11-01T15:00:00.000Z', reason: 'Reavaliação' },
+    });
+
+    expect(tx.returnAlert.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        patientId: ids.patient,
+        reason: 'Reavaliação',
+        appointmentId: ids.appointment,
+        dueAt: new Date('2026-11-01T15:00:00.000Z'),
+      }),
+    });
+  });
+
+  it('recusa retorno anterior ao fim da consulta', async () => {
+    await expect(service.create('org-1', {
+      ...base,
+      patientId: ids.patient,
+      returnAlert: { dueAt: '2026-10-01T15:30:00.000Z' },
+    })).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.returnAlert.create).not.toHaveBeenCalled();
+  });
+
+  it('marca como agendado o retorno que a consulta resolve', async () => {
+    tx.returnAlert.findFirst.mockResolvedValue({ id: 'alert-1' });
+
+    await service.create('org-1', { ...base, patientId: ids.patient, returnAlertId: '99999999-9999-4999-8999-999999999999' });
+
+    expect(tx.returnAlert.update).toHaveBeenCalledWith({
+      where: { id: 'alert-1' },
+      data: { status: 'SCHEDULED', appointmentId: ids.appointment },
+    });
   });
 });
